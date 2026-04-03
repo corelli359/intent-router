@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intent-admin-web
+  namespace: intent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intent-admin-web
+  template:
+    metadata:
+      labels:
+        app: intent-admin-web
+    spec:
+      containers:
+        - name: admin-web
+          image: node:20-bookworm-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace/frontend
+          env:
+            - name: INTENT_BACKEND_ORIGIN
+              value: http://intent-backend.intent.svc.cluster.local:8000
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              npm_config_cache=/tmp/npm-cache npm install && \
+              npm run build --workspace @intent-router/admin-web && \
+              npm run start --workspace @intent-router/admin-web
+          ports:
+            - containerPort: 3001
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /admin
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /admin
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: repo
+              mountPath: /workspace
+            - name: npm-cache
+              mountPath: /tmp/npm-cache
+            - name: node-modules
+              mountPath: /workspace/frontend/node_modules
+            - name: app-next
+              mountPath: /workspace/frontend/apps/admin-web/.next
+      volumes:
+        - name: repo
+          hostPath:
+            path: /mnt/intent-router
+            type: Directory
+        - name: npm-cache
+          emptyDir: {}
+        - name: node-modules
+          emptyDir: {}
+        - name: app-next
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intent-admin-web
+  namespace: intent
+spec:
+  selector:
+    app: intent-admin-web
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+  type: ClusterIP

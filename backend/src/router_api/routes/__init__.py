@@ -1,0 +1,2 @@
+"""Router API route registration."""
+

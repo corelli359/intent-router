@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": {
+      "@intent-router/shared-types": ["packages/shared-types/src/index.ts"],
+      "@intent-router/api-client": ["packages/api-client/src/index.ts"],
+      "@intent-router/ui": ["packages/ui/src/index.tsx"]
+    }
+  }
+}
+

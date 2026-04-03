@@ -1,0 +1,17 @@
+{
+  "name": "@intent-router/api-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@intent-router/shared-types": "file:../shared-types"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

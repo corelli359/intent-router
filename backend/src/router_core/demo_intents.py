@@ -1,0 +1,61 @@
+from router_core.domain import IntentDefinition
+
+
+DEMO_INTENTS: list[IntentDefinition] = [
+    IntentDefinition(
+        intent_code="query_order_status",
+        name="查询订单状态",
+        description="查询订单状态、物流状态、订单进度。",
+        examples=["帮我查下订单状态", "订单 123 到哪了", "查一下订单 456"],
+        keywords=["订单", "物流", "状态", "发货"],
+        agent_url="mock://query_order_status",
+        dispatch_priority=100,
+        primary_threshold=0.68,
+        candidate_threshold=0.45,
+    ),
+    IntentDefinition(
+        intent_code="cancel_appointment",
+        name="取消预约",
+        description="取消明天或指定日期的预约、面试、上门服务。",
+        examples=["帮我取消明天的预约", "取消一下上门预约"],
+        keywords=["取消", "预约", "明天", "上门"],
+        agent_url="mock://cancel_appointment",
+        dispatch_priority=80,
+        primary_threshold=0.62,
+        candidate_threshold=0.42,
+    ),
+    IntentDefinition(
+        intent_code="update_shipping_address",
+        name="修改收货地址",
+        description="更新订单收货地址、配送地址。",
+        examples=["帮我改一下收货地址", "更新配送地址"],
+        keywords=["地址", "收货", "配送", "改成"],
+        agent_url="mock://update_shipping_address",
+        dispatch_priority=90,
+        primary_threshold=0.65,
+        candidate_threshold=0.45,
+    ),
+    IntentDefinition(
+        intent_code="transfer_money",
+        name="转账",
+        description="执行转账、收款账户确认、付款账户确认。",
+        examples=["给张三转 200 元", "帮我转账给李四"],
+        keywords=["转账", "给", "元", "账户", "付款"],
+        agent_url="mock://transfer_money",
+        dispatch_priority=95,
+        primary_threshold=0.72,
+        candidate_threshold=0.5,
+    ),
+    IntentDefinition(
+        intent_code="pay_bill",
+        name="缴费",
+        description="水电煤、话费、生活缴费。",
+        examples=["帮我缴电费", "交一下话费"],
+        keywords=["缴费", "交费", "电费", "水费", "话费"],
+        agent_url="mock://pay_bill",
+        dispatch_priority=70,
+        primary_threshold=0.72,
+        candidate_threshold=0.55,
+    ),
+]
+

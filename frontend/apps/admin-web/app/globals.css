@@ -1,0 +1,144 @@
+:root {
+  color-scheme: light;
+  --bg-a: #f4f0e6;
+  --bg-b: #dbe8ef;
+  --ink: #12202e;
+  --muted: #58687a;
+  --accent: #0d7c86;
+  --accent-soft: #95d4d5;
+  --warn: #b65b47;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  color: var(--ink);
+  font-family: var(--font-display), "Avenir Next", sans-serif;
+  background:
+    radial-gradient(900px 360px at 10% -10%, rgba(13, 124, 134, 0.18), transparent 64%),
+    radial-gradient(700px 320px at 100% 0%, rgba(149, 212, 213, 0.35), transparent 58%),
+    linear-gradient(180deg, var(--bg-a), var(--bg-b));
+}
+
+.shell {
+  width: min(1280px, 100% - 28px);
+  margin: 20px auto 32px;
+  display: grid;
+  gap: 18px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  border-radius: 20px;
+  padding: 18px 20px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(92, 110, 129, 0.28);
+}
+
+.topbar h1 {
+  margin: 0;
+}
+
+.topbar p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.main-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(420px, 0.95fr) minmax(0, 1.05fr);
+}
+
+.form-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.88rem;
+}
+
+.form-grid input,
+.form-grid select,
+.form-grid textarea {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(91, 112, 130, 0.4);
+  background: rgba(252, 254, 255, 0.88);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.form-grid textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
+.primary-button {
+  justify-self: end;
+  border: 1px solid rgba(13, 124, 134, 0.5);
+  background: linear-gradient(180deg, rgba(14, 143, 154, 0.95), rgba(10, 113, 123, 0.95));
+  color: white;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.intent-list {
+  display: grid;
+  gap: 12px;
+}
+
+.intent-card {
+  display: grid;
+  gap: 8px;
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(95, 114, 133, 0.28);
+}
+
+.line-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.error-text {
+  margin: 0;
+  color: var(--warn);
+}
+
+@media (max-width: 980px) {
+  .main-grid,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span-2 {
+    grid-column: auto;
+  }
+}
+
