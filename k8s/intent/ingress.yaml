@@ -12,7 +12,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: ai.intent-router.cc
+    - host: intent-router.kkrrc-359.top
       http:
         paths:
           - path: /api

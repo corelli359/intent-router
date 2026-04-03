@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KUBECTL_BIN="${SCRIPT_DIR}/bin/kubectl"
+
+if [[ ! -x "${KUBECTL_BIN}" ]]; then
+  echo "kubectl binary not found at ${KUBECTL_BIN}" >&2
+  exit 1
+fi
+
+exec "${KUBECTL_BIN}" "$@"

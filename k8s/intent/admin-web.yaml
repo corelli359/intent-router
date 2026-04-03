@@ -21,28 +21,37 @@ spec:
           env:
             - name: INTENT_BACKEND_ORIGIN
               value: http://intent-backend.intent.svc.cluster.local:8000
+            - name: NEXT_TELEMETRY_DISABLED
+              value: "1"
           command:
             - /bin/sh
             - -lc
           args:
             - |
-              npm_config_cache=/tmp/npm-cache npm install && \
+              rm -rf /workspace/frontend/node_modules/* /workspace/frontend/apps/admin-web/.next/* && \
+              npm_config_cache=/tmp/npm-cache npm ci && \
               npm run build --workspace @intent-router/admin-web && \
-              npm run start --workspace @intent-router/admin-web
+              npm run start --workspace @intent-router/admin-web -- --hostname 0.0.0.0
           ports:
             - containerPort: 3001
               name: http
+          startupProbe:
+            httpGet:
+              path: /admin
+              port: http
+            failureThreshold: 90
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /admin
               port: http
-            initialDelaySeconds: 20
+            initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /admin
               port: http
-            initialDelaySeconds: 30
+            initialDelaySeconds: 10
             periodSeconds: 10
           volumeMounts:
             - name: repo
