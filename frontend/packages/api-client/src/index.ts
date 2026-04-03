@@ -174,29 +174,29 @@ export class IntentRouterApiClient {
 
   subscribeSession(sessionId: string, onEvent: (event: RouterSseEvent) => void): () => void {
     const source = new EventSource(`${this.options.routerBaseUrl}/sessions/${sessionId}/events`);
-    source.onmessage = (message) => {
+    const forward = (eventName: string, message: MessageEvent<string>) => {
       const data = JSON.parse(message.data) as RouterTaskEvent;
-      onEvent({ event: "message", data, at: data.createdAt });
+      onEvent({ event: eventName, data, at: data.createdAt });
     };
-    source.addEventListener("task.created", (message) => {
-      const data = JSON.parse((message as MessageEvent<string>).data) as RouterTaskEvent;
-      onEvent({ event: "task.created", data, at: data.createdAt });
-    });
-    source.addEventListener("task.running", (message) => {
-      const data = JSON.parse((message as MessageEvent<string>).data) as RouterTaskEvent;
-      onEvent({ event: "task.running", data, at: data.createdAt });
-    });
-    source.addEventListener("task.waiting_user_input", (message) => {
-      const data = JSON.parse((message as MessageEvent<string>).data) as RouterTaskEvent;
-      onEvent({ event: "task.waiting_user_input", data, at: data.createdAt });
-    });
-    source.addEventListener("task.completed", (message) => {
-      const data = JSON.parse((message as MessageEvent<string>).data) as RouterTaskEvent;
-      onEvent({ event: "task.completed", data, at: data.createdAt });
-    });
-    source.addEventListener("task.failed", (message) => {
-      const data = JSON.parse((message as MessageEvent<string>).data) as RouterTaskEvent;
-      onEvent({ event: "task.failed", data, at: data.createdAt });
+    [
+      "recognition.started",
+      "recognition.delta",
+      "recognition.completed",
+      "task.created",
+      "task.dispatching",
+      "task.running",
+      "task.message",
+      "task.resuming",
+      "task.waiting_user_input",
+      "task.completed",
+      "task.failed",
+      "session.recognized",
+      "session.idle",
+      "session.waiting_user_input"
+    ].forEach((eventName) => {
+      source.addEventListener(eventName, (message) => {
+        forward(eventName, message as MessageEvent<string>);
+      });
     });
     return () => source.close();
   }

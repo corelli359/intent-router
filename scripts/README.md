@@ -46,6 +46,20 @@ RUN_ROUTER_SSE_TEST=1 bash scripts/run_mvp_checks.sh
 
 If `RUN_ROUTER_SSE_TEST` is not `1`, the SSE check is skipped.
 
+### 4) Real LLM runtime smoke test
+
+This test reads local router runtime env from `.env` / `.env.local` and calls the configured model directly through the backend LangChain client.
+
+```bash
+python scripts/verify_real_llm_runtime.py
+```
+
+Pytest wrapper:
+
+```bash
+RUN_REAL_LLM_TEST=1 pytest backend/tests/integration/test_real_llm_runtime_script.py
+```
+
 ## Pytest integration wrapper
 
 `backend/tests/integration/test_mvp_validation_scripts.py` wraps these scripts.
@@ -53,4 +67,3 @@ It only runs when:
 
 - `RUN_INTEGRATION=1`
 - and for SSE lifecycle test: `RUN_ROUTER_SSE_TEST=1`
-

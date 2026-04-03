@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
-from router_core.agent_client import MockStreamingAgentClient
+from router_core.agent_client import AgentClient, MockStreamingAgentClient
 from router_core.context_builder import ContextBuilder
 from router_core.domain import (
     ChatMessage,
@@ -17,7 +17,7 @@ from router_core.domain import (
     TaskEvent,
     TaskStatus,
 )
-from router_core.recognizer import SimpleIntentRecognizer
+from router_core.recognizer import IntentRecognizer, SimpleIntentRecognizer
 from router_core.task_queue import next_runnable_task, queue_pending_tasks, waiting_task
 
 
@@ -95,9 +95,9 @@ class RouterOrchestrator:
         publish_event: Callable[[TaskEvent], Any],
         session_store: SessionStore | None = None,
         intent_catalog: Any | None = None,
-        recognizer: SimpleIntentRecognizer | None = None,
+        recognizer: IntentRecognizer | None = None,
         context_builder: ContextBuilder | None = None,
-        agent_client: MockStreamingAgentClient | None = None,
+        agent_client: AgentClient | None = None,
     ) -> None:
         self.publish_event = publish_event
         self.session_store = session_store or SessionStore()
@@ -158,13 +158,61 @@ class RouterOrchestrator:
 
         long_term_memory = self.session_store.long_term_memory.recall(session.cust_id)
         context = self.context_builder.build_task_context(session, task=None, long_term_memory=long_term_memory)
-        recognition = self.recognizer.recognize(
+        await self._publish(
+            TaskEvent(
+                event="recognition.started",
+                task_id="recognition",
+                session_id=session.session_id,
+                intent_code="recognition",
+                status=TaskStatus.RUNNING,
+                message="开始意图识别",
+                payload={"cust_id": session.cust_id},
+            )
+        )
+
+        async def publish_recognition_delta(delta: str) -> None:
+            if not delta:
+                return
+            await self._publish(
+                TaskEvent(
+                    event="recognition.delta",
+                    task_id="recognition",
+                    session_id=session.session_id,
+                    intent_code="recognition",
+                    status=TaskStatus.RUNNING,
+                    message=delta,
+                    payload={"cust_id": session.cust_id},
+                )
+            )
+
+        recognition = await self.recognizer.recognize(
             message=content,
             intents=self.intent_catalog.list_active(),
             recent_messages=context["recent_messages"],
             long_term_memory=context["long_term_memory"],
+            on_delta=publish_recognition_delta,
         )
         session.candidate_intents = recognition.candidates
+        primary_intent_codes = [match.intent_code for match in recognition.primary]
+        await self._publish(
+            TaskEvent(
+                event="recognition.completed",
+                task_id="recognition",
+                session_id=session.session_id,
+                intent_code="recognition",
+                status=TaskStatus.COMPLETED,
+                message=(
+                    f"意图识别完成: {', '.join(primary_intent_codes)}"
+                    if primary_intent_codes
+                    else "意图识别完成: 未命中主意图"
+                ),
+                payload={
+                    "cust_id": session.cust_id,
+                    "primary": [match.model_dump() for match in recognition.primary],
+                    "candidates": [match.model_dump() for match in recognition.candidates],
+                },
+            )
+        )
 
         existing_intents = {
             task.intent_code
@@ -180,6 +228,11 @@ class RouterOrchestrator:
                 session_id=session.session_id,
                 intent_code=intent.intent_code,
                 agent_url=intent.agent_url,
+                intent_name=intent.name,
+                intent_description=intent.description,
+                intent_examples=intent.examples,
+                request_schema=intent.request_schema,
+                field_mapping=intent.field_mapping,
                 confidence=match.confidence,
                 input_context=context,
             )
@@ -216,6 +269,11 @@ class RouterOrchestrator:
                 return
 
     async def _run_task(self, session: SessionState, task: Task, user_input: str) -> None:
+        task.input_context = self.context_builder.build_task_context(
+            session=session,
+            task=task,
+            long_term_memory=self.session_store.long_term_memory.recall(session.cust_id),
+        )
         task.touch(TaskStatus.DISPATCHING)
         await self._publish_task_state(task, session, "task.dispatching", "任务开始分发")
 
@@ -291,4 +349,3 @@ class RouterOrchestrator:
         result = self.publish_event(event)
         if result is not None and hasattr(result, "__await__"):
             await result
-

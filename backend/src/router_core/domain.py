@@ -72,6 +72,11 @@ class Task(BaseModel):
     session_id: str
     intent_code: str
     agent_url: str
+    intent_name: str = ""
+    intent_description: str = ""
+    intent_examples: list[str] = Field(default_factory=list)
+    request_schema: dict[str, Any] = Field(default_factory=dict)
+    field_mapping: dict[str, str] = Field(default_factory=dict)
     confidence: float
     status: TaskStatus = TaskStatus.CREATED
     input_context: dict[str, Any] = Field(default_factory=dict)
@@ -140,4 +145,3 @@ class AgentStreamChunk(BaseModel):
     ishandover: bool
     status: TaskStatus
     payload: dict[str, Any] = Field(default_factory=dict)
-

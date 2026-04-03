@@ -17,6 +17,8 @@ class ContextBuilder:
         long_term_memory: list[str],
     ) -> dict[str, object]:
         base = {
+            "session_id": session.session_id,
+            "cust_id": session.cust_id,
             "recent_messages": self.build_recent_messages(session),
             "long_term_memory": long_term_memory,
         }

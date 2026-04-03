@@ -12,7 +12,7 @@ const initialForm: IntentInput = {
   name: "",
   description: "",
   examples: [],
-  agentUrl: "mock://",
+  agentUrl: "",
   status: "active",
   dispatchPriority: 100,
   requestSchema: {
@@ -123,7 +123,12 @@ export default function AdminPage() {
             </label>
             <label>
               Agent URL
-              <input value={form.agentUrl} onChange={(event) => setForm({ ...form, agentUrl: event.target.value })} />
+              <input
+                placeholder="https://agent.example.com/stream"
+                value={form.agentUrl}
+                onChange={(event) => setForm({ ...form, agentUrl: event.target.value })}
+              />
+              <small>Business-side dispatch target only. Runtime model wiring stays in router config.</small>
             </label>
             <label>
               Dispatch Priority
@@ -196,4 +201,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
