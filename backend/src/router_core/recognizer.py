@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import json
 import re
 from typing import Awaitable, Callable, Protocol
 
 from router_core.domain import IntentDefinition, IntentMatch
-from router_core.llm_client import LLMClient
+from router_core.llm_client import IntentRecognitionPayload, JsonLLMClient
+from router_core.prompt_templates import (
+    DEFAULT_RECOGNIZER_HUMAN_PROMPT,
+    DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
+    build_recognizer_prompt,
+)
 
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]{2,}")
@@ -119,14 +125,20 @@ class SimpleIntentRecognizer:
 class LLMIntentRecognizer:
     def __init__(
         self,
-        llm_client: LLMClient,
+        llm_client: JsonLLMClient,
         *,
         model: str | None = None,
         fallback: IntentRecognizer | None = None,
+        system_prompt_template: str = DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
+        human_prompt_template: str = DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     ) -> None:
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or SimpleIntentRecognizer()
+        self.prompt = build_recognizer_prompt(
+            system_prompt=system_prompt_template,
+            human_prompt=human_prompt_template,
+        )
 
     async def recognize(
         self,
@@ -141,14 +153,22 @@ class LLMIntentRecognizer:
             return RecognitionResult(primary=[], candidates=[])
 
         try:
-            response = await self.llm_client.recognize(
-                message=message,
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
-                intents=[recognition_intent_payload(intent) for intent in active_intents],
+            raw_response = await self.llm_client.run_json(
+                prompt=self.prompt,
+                variables={
+                    "message": message,
+                    "recent_messages_json": json.dumps(recent_messages, ensure_ascii=False, indent=2),
+                    "long_term_memory_json": json.dumps(long_term_memory, ensure_ascii=False, indent=2),
+                    "intents_json": json.dumps(
+                        [recognition_intent_payload(intent) for intent in active_intents],
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                },
                 model=self.model,
                 on_delta=on_delta,
             )
+            response = IntentRecognitionPayload.model_validate(raw_response)
         except Exception:
             return await self.fallback.recognize(message, active_intents, recent_messages, long_term_memory)
 

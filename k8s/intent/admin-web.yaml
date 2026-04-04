@@ -19,8 +19,8 @@ spec:
           imagePullPolicy: IfNotPresent
           workingDir: /workspace/frontend
           env:
-            - name: INTENT_BACKEND_ORIGIN
-              value: http://intent-backend.intent.svc.cluster.local:8000
+            - name: INTENT_ADMIN_API_ORIGIN
+              value: http://intent-admin-api.intent.svc.cluster.local:8000
             - name: NEXT_TELEMETRY_DISABLED
               value: "1"
           command:
@@ -35,6 +35,10 @@ spec:
           ports:
             - containerPort: 3001
               name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 320Mi
           startupProbe:
             httpGet:
               path: /admin

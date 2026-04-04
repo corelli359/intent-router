@@ -34,6 +34,7 @@
 - `Intent Router Core`：负责意图识别、任务状态机、任务恢复、请求组装、Agent 调度
 - `Router API`：负责对话接入、SSE 推送、会话与任务查询
 - `Admin API`：负责意图注册、Agent 配置、Prompt 模板、运营查询
+- `Fallback Agent`：作为独立 Agent 服务，仅在无匹配意图时由 Router 分发调用
 
 这是对 DeerFlow 分层方式的借鉴，不是对其业务模型的复制。这个结论是基于 DeerFlow 公开 README 与目录说明的推断。
 
@@ -66,6 +67,9 @@ flowchart LR
 - 意图注册信息必须足够结构化，能够直接驱动请求组装
 - 前端页面层保持轻，核心逻辑下沉到独立模块
 - Router Core 必须独立于 Web 框架，便于后续测试和演进
+- `admin-api` 与 `router-api` 必须分开部署和发布
+- `admin-api` 默认单副本，`router-api` 支持多副本扩容
+- Router 只做识别与分发，不直接承载业务意图执行逻辑
 
 ## 4. 四个核心部分的职责
 ### 4.1 对话前端
@@ -106,6 +110,12 @@ flowchart LR
 
 - `Router API`：接收消息、输出 SSE、暴露查询接口
 - `Router Core`：上下文组装、多意图识别、候选意图判定、任务队列、状态机、Agent 调用、恢复原任务
+
+并且在部署层维持以下约束：
+
+- `Admin API` 与 `Router API` 为独立 Deployment
+- `Admin API` 单实例，`Router API` 可横向扩展
+- 每个 Deployment 必须声明 `resources.requests.cpu` 与 `resources.requests.memory`
 
 ## 5. 推荐分层与目录
 为了快速搭建且保持清晰，建议采用“前后端分仓式目录，但在同一仓库管理”的结构：
@@ -220,7 +230,7 @@ DeerFlow 后端区分了运行时核心与 Gateway API。我们建议：
 ### 7.3 借鉴 DeerFlow 的统一入口
 DeerFlow 用统一反向代理对接前端、LangGraph 与 Gateway。我们建议 V1 也保留统一入口思路：
 
-- `/` -> Chat Web
+- `/chat` -> Chat Web
 - `/admin` -> Admin Web
 - `/api/router/*` -> Router API
 - `/api/admin/*` -> Admin API

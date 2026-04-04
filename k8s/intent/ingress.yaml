@@ -9,17 +9,25 @@ metadata:
     nginx.ingress.kubernetes.io/session-cookie-name: "intent-router-affinity"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/app-root: /chat
 spec:
   ingressClassName: nginx
   rules:
     - host: intent-router.kkrrc-359.top
       http:
         paths:
-          - path: /api
+          - path: /api/router
             pathType: Prefix
             backend:
               service:
-                name: intent-backend
+                name: intent-router-api
+                port:
+                  number: 8000
+          - path: /api/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: intent-admin-api
                 port:
                   number: 8000
           - path: /admin
@@ -29,7 +37,7 @@ spec:
                 name: intent-admin-web
                 port:
                   number: 3001
-          - path: /
+          - path: /chat
             pathType: Prefix
             backend:
               service:

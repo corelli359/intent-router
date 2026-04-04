@@ -17,9 +17,9 @@ node_kubectl() {
   minikube_cmd ssh --profile "${MINIKUBE_PROFILE}" "KCTL=\$(echo /var/lib/minikube/binaries/*/kubectl); sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" ${quoted}"
 }
 
-node_kubectl -n "${NAMESPACE}" delete ingress intent-router --ignore-not-found || true
-node_kubectl -n "${NAMESPACE}" delete service intent-admin-web intent-backend intent-chat-web --ignore-not-found || true
-node_kubectl -n "${NAMESPACE}" delete deployment intent-admin-web intent-backend intent-chat-web --ignore-not-found || true
+node_kubectl -n "${NAMESPACE}" delete ingress intent-router intent-router-chat --ignore-not-found || true
+node_kubectl -n "${NAMESPACE}" delete service intent-admin-web intent-chat-web intent-router-api intent-admin-api intent-order-agent intent-appointment-agent intent-backend --ignore-not-found || true
+node_kubectl -n "${NAMESPACE}" delete deployment intent-admin-web intent-chat-web intent-router-api intent-admin-api intent-order-agent intent-appointment-agent intent-backend --ignore-not-found || true
 node_kubectl delete namespace "${NAMESPACE}" --ignore-not-found || true
 docker rm -f "${PROXY_CONTAINER}" >/dev/null 2>&1 || true
 docker rm -f "${MOUNT_CONTAINER}" >/dev/null 2>&1 || true

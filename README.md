@@ -1,17 +1,93 @@
 # intent-router
 
-Intent Router MVP with admin CRUD, serial task orchestration, SSE updates, and configurable real LLM / Agent connectivity.
+Intent Router MVP for intent registration, intent recognition, task dispatching, and SSE task state delivery.
 
-## Structure
+## Project Structure
 
-- `backend/`: FastAPI platform app, router core, admin API, tests
+- `backend/`: FastAPI services, router core, admin API, tests
 - `frontend/`: chat web, admin web, shared packages
-- `docs/`: product and architecture notes
+- `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
 - `scripts/`: local verification and cluster helper scripts
 - `design/`: flow diagrams
 
-## Setup
+## Target Service Topology
+
+The target architecture separates control plane and runtime plane:
+
+- `admin-api` service:
+  - owns intent registry CRUD and activation
+  - single replica by default
+- `router-api` service:
+  - owns session/message ingress, intent recognition, and agent dispatch
+  - can scale to multiple replicas
+- `intent-agent-*` services:
+  - one business capability per endpoint
+  - fallback must also be an independent agent service
+
+Critical boundary:
+
+- Router only does recognition + dispatch + task state orchestration.
+- Router does not execute business intent logic itself.
+- When no active business intent matches, router dispatches to fallback agent.
+- The default Minikube stack ships built-in demo agents for order status and appointment cancellation; register/deploy fallback separately when needed.
+
+## Ingress Path Rules
+
+Required ingress path conventions:
+
+- `/admin` -> Admin Web
+- `/chat` -> Chat Web
+- `/api/admin/*` -> Admin API
+- `/api/router/*` -> Router API
+
+This keeps UI routes and API routes explicit, and avoids mixing admin and chat traffic.
+
+## Runtime and LLM Wiring
+
+Connection secrets must stay in local env files or shell env vars. This repo ignores `.env` and `.env.*` by default.
+
+Router and agents support OpenAI-compatible model access via `langchain`:
+
+- Router recognizer: `router_core`
+- Built-in agents: `intent_agents.order_status_app`, `intent_agents.cancel_appointment_app`, `intent_agents.fallback_app`
+
+Minimum runtime env:
+
+1. Copy `.env.example` to `.env` or `.env.local`.
+2. Set:
+   - `ROUTER_LLM_API_BASE_URL`
+   - `ROUTER_LLM_API_KEY`
+   - `ROUTER_LLM_MODEL`
+   - `ADMIN_REPOSITORY_BACKEND=database`
+   - `ADMIN_DATABASE_URL` (SQLite or MySQL DSN)
+3. Set recognizer backend with `ROUTER_RECOGNIZER_BACKEND=llm` (or `rules`).
+
+Supported `agent_url`:
+
+- `http://...` / `https://...`
+
+Intent lifecycle:
+
+- New intent defaults to `inactive`.
+- Admin activates/deactivates intents explicitly.
+- Router recognizes only active non-fallback intents.
+- Fallback intent is excluded from recognizer candidates and dispatched only when no match is selected.
+
+## Deployment Requirements
+
+Kubernetes deployments must define resource `requests` at minimum:
+
+- `resources.requests.cpu`
+- `resources.requests.memory`
+
+Rationale:
+
+- predictable scheduling and memory pressure control
+- safer multi-replica router scaling
+- cleaner SLO isolation between admin and router workloads
+
+## Local Development
 
 Install backend dependencies:
 
@@ -19,10 +95,19 @@ Install backend dependencies:
 python -m pip install -e .[dev]
 ```
 
-Run the backend locally:
+Run split backend services:
 
 ```bash
-uvicorn app:app --app-dir backend/src --reload --port 8011
+uvicorn admin_entry:app --app-dir backend/src --reload --port 8011
+uvicorn router_entry:app --app-dir backend/src --reload --port 8012
+```
+
+Run built-in agents:
+
+```bash
+uvicorn intent_agents.order_status_app:app --app-dir backend/src --reload --port 8101
+uvicorn intent_agents.cancel_appointment_app:app --app-dir backend/src --reload --port 8102
+uvicorn intent_agents.fallback_app:app --app-dir backend/src --reload --port 8103
 ```
 
 Run tests:
@@ -31,52 +116,16 @@ Run tests:
 pytest
 ```
 
-Run the frontends:
+Compatibility note:
+
+- `backend/src/app.py` still exists as an aggregate app for local integration tests.
+- Deployment entrypoints should use `admin_entry:app` and `router_entry:app`.
+
+Run frontends:
 
 ```bash
 cd frontend
 npm install
 npm run dev:chat
-```
-
-In another terminal:
-
-```bash
-cd frontend
 npm run dev:admin
 ```
-
-## Runtime LLM Wiring
-
-Connection secrets must stay in local env files or shell env vars. This repo ignores `.env` and `.env.*` by default, so do not put secrets in committed files.
-
-The LLM-facing paths are implemented with `langchain` async chains:
-
-- `ChatPromptTemplate` for prompt engineering and variable injection
-- `ChatOpenAI` for OpenAI-compatible model access
-- structured output parsing for intent recognition and `llm://` task execution
-
-This is router runtime config only. Admin API / Admin Web do not manage model providers, API keys, or model parameters.
-
-1. Copy `.env.example` to `.env` or `.env.local`.
-2. Fill in your provider settings:
-   - `ROUTER_LLM_API_BASE_URL`
-   - `ROUTER_LLM_API_KEY`
-   - `ROUTER_LLM_MODEL`
-   - optional `ROUTER_LLM_STRUCTURED_OUTPUT_METHOD=json_mode`
-3. Enable LLM-based intent recognition with `ROUTER_RECOGNIZER_BACKEND=llm`.
-4. If you want the built-in demo intents (`mock://...`) to call the real model instead of the hardcoded simulator, set `ROUTER_ENABLE_LLM_FOR_MOCK_AGENT=1`.
-
-Supported `agent_url` modes:
-
-- `mock://...`: existing mock behavior, or real LLM when `ROUTER_ENABLE_LLM_FOR_MOCK_AGENT=1`
-- `llm://default`: execute this intent directly with the configured LangChain async model chain
-- `llm://your-model-name`: execute this intent with a model override
-- `https://...` / `http://...`: call an external Agent endpoint with JSON or streaming JSON/SSE responses
-
-For external HTTP Agents, the router now assembles request payloads from `request_schema` and `field_mapping` before dispatching.
-
-## Notes
-
-- Admin Web only manages business-side intent metadata and dispatch targets.
-- API keys stay on the backend only. Do not store them in `agent_url`, frontend code, or committed config files.

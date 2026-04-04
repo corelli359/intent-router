@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
@@ -9,7 +8,6 @@ from typing import Any, Protocol
 import httpx
 
 from router_core.domain import AgentStreamChunk, Task, TaskStatus
-from router_core.llm_client import LLMClient
 
 
 ORDER_RE = re.compile(r"\b(\d{3,})\b")
@@ -22,7 +20,7 @@ class AgentClient(Protocol):
 
 
 class MockStreamingAgentClient:
-    """Internal streaming agent simulator used before real agent URLs are wired in."""
+    """Test-only agent simulator. Production routing should dispatch over HTTP."""
 
     async def stream(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
         intent = task.intent_code
@@ -247,30 +245,17 @@ class StreamingAgentClient:
     def __init__(
         self,
         *,
-        llm_client: LLMClient | None = None,
-        llm_model: str | None = None,
-        enable_llm_for_mock_scheme: bool = False,
         http_client: httpx.AsyncClient | None = None,
         http_timeout_seconds: float = 60.0,
     ) -> None:
         self.mock_client = MockStreamingAgentClient()
         self.payload_builder = RequestPayloadBuilder()
-        self.llm_client = llm_client
-        self.llm_model = llm_model
-        self.enable_llm_for_mock_scheme = enable_llm_for_mock_scheme
         self.http_client = http_client
         self.http_timeout_seconds = http_timeout_seconds
 
     async def stream(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
-        if task.agent_url.startswith("mock://") and not self.enable_llm_for_mock_scheme:
+        if task.agent_url.startswith("mock://"):
             async for chunk in self.mock_client.stream(task, user_input):
-                yield chunk
-            return
-
-        if task.agent_url.startswith("llm://") or (
-            task.agent_url.startswith("mock://") and self.enable_llm_for_mock_scheme
-        ):
-            async for chunk in self._stream_via_llm(task, user_input):
                 yield chunk
             return
 
@@ -280,54 +265,6 @@ class StreamingAgentClient:
             return
 
         yield self._failure_chunk(task, f"Unsupported agent_url scheme: {task.agent_url}")
-
-    async def _stream_via_llm(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
-        if self.llm_client is None:
-            yield self._failure_chunk(task, "LLM agent is enabled but ROUTER_LLM_* is not fully configured")
-            return
-
-        model = self._resolve_llm_model(task.agent_url)
-        queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-
-        async def publish_delta(delta: str) -> None:
-            if not delta:
-                return
-            await queue.put(("delta", delta))
-
-        async def runner() -> None:
-            try:
-                response = await self.llm_client.run_agent(
-                    task=task,
-                    user_input=user_input,
-                    model=model or self.llm_model,
-                    on_delta=publish_delta,
-                )
-            except Exception as exc:
-                await queue.put(("error", exc))
-                return
-            await queue.put(("final", response))
-
-        runner_task = asyncio.create_task(runner())
-        try:
-            while True:
-                item_type, value = await queue.get()
-                if item_type == "delta":
-                    yield AgentStreamChunk(
-                        task_id=task.task_id,
-                        event="message",
-                        content=str(value),
-                        ishandover=False,
-                        status=TaskStatus.RUNNING,
-                    )
-                    continue
-                if item_type == "error":
-                    yield self._failure_chunk(task, f"LLM agent call failed: {value}")
-                    return
-                if item_type == "final":
-                    yield self._payload_to_chunk(task, value.model_dump())
-                    return
-        finally:
-            await runner_task
 
     async def _stream_via_http(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
         try:
@@ -456,14 +393,6 @@ class StreamingAgentClient:
         if ishandover is False:
             return TaskStatus.WAITING_USER_INPUT
         return TaskStatus.COMPLETED
-
-    def _resolve_llm_model(self, agent_url: str) -> str | None:
-        if not agent_url.startswith("llm://"):
-            return None
-        model = agent_url.removeprefix("llm://").strip().strip("/")
-        if not model or model == "default":
-            return None
-        return model
 
     def _failure_chunk(self, task: Task, message: str) -> AgentStreamChunk:
         return AgentStreamChunk(

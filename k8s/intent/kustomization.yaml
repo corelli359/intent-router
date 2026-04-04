@@ -2,7 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
-  - backend.yaml
+  - router-api.yaml
+  - admin-api.yaml
+  - order-agent.yaml
+  - appointment-agent.yaml
   - chat-web.yaml
   - admin-web.yaml
   - ingress.yaml

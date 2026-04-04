@@ -76,3 +76,48 @@ def delete_intent(
     except IntentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _set_intent_status(
+    repository: IntentRepository,
+    intent_code: str,
+    next_status: IntentStatus,
+) -> IntentResponse:
+    current = repository.get_intent(intent_code)
+    payload_data = current.model_dump(
+        exclude={
+            "created_at",
+            "updated_at",
+        }
+    )
+    payload_data["status"] = next_status
+    payload = IntentPayload(
+        **payload_data,
+    )
+    return IntentResponse.from_record(repository.update_intent(intent_code, payload))
+
+
+@router.post("/{intent_code}/activate", response_model=IntentResponse)
+def activate_intent(
+    intent_code: str,
+    repository: IntentRepository = Depends(get_intent_repository),
+) -> IntentResponse:
+    try:
+        return _set_intent_status(repository, intent_code, IntentStatus.ACTIVE)
+    except IntentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IntentAlreadyExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/{intent_code}/deactivate", response_model=IntentResponse)
+def deactivate_intent(
+    intent_code: str,
+    repository: IntentRepository = Depends(get_intent_repository),
+) -> IntentResponse:
+    try:
+        return _set_intent_status(repository, intent_code, IntentStatus.INACTIVE)
+    except IntentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except IntentAlreadyExistsError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

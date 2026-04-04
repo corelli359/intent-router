@@ -1,52 +1,52 @@
 # Minikube Deployment
 
-This stack deploys three services and one ingress into namespace `intent`:
+This document describes the target deployment model for namespace `intent`.
 
-- `intent-backend`
+## Target Topology
+
+Control plane and runtime plane are deployed separately:
+
+- `intent-admin-api` (Admin API, single replica by default)
+- `intent-router-api` (Router API, scalable replicas)
+- `intent-order-agent`
+- `intent-appointment-agent`
 - `intent-chat-web`
 - `intent-admin-web`
 - `intent-router` ingress
 
-All services use mounted source code from the host via Minikube mount. The manifests expect the repository to be mounted inside the Minikube node at `/mnt/intent-router`.
+Key boundary:
 
-## Requirements
+- Router performs intent recognition, task orchestration, and dispatch only.
+- Business execution is always handled by intent agent services.
+- Unmatched requests must be dispatched to a separately deployed fallback agent.
 
-1. Docker or another working Docker daemon
-2. `minikube`
+## Ingress Path Contract
 
-## Start
+Ingress must expose these stable paths:
 
-```bash
-minikube start --driver=docker
-bash scripts/minikube_deploy_intent.sh
-```
+- `/admin` -> `intent-admin-web`
+- `/chat` -> `intent-chat-web`
+- `/api/admin/*` -> `intent-admin-api`
+- `/api/router/*` -> `intent-router-api`
 
-The deploy script will:
+Do not use `/` as chat root in the target model. Chat entry should be explicit under `/chat`.
 
-- enable the Minikube ingress addon
-- keep the repository mounted into the node through a persistent Docker helper container
-- apply the Kustomize stack from `/mnt/intent-router/k8s/intent`
-- expose host port `80` to the Minikube ingress IP through a lightweight `socat` helper container
+## Resource Requests Requirement
 
-Access:
+Every deployment must define `resources.requests`:
 
-```bash
-open http://intent-router.kkrrc-359.top
-open http://intent-router.kkrrc-359.top/admin
-```
+- `resources.requests.cpu`
+- `resources.requests.memory`
 
-Delete:
+Reason:
 
-```bash
-bash scripts/minikube_delete_intent.sh
-```
+- improves scheduler predictability
+- prevents bursty pods from starving other services
+- creates a reliable baseline for scaling router replicas
 
-## Notes
+## Operational Notes
 
-- The pods install dependencies on startup because the source is mounted rather than baked into images.
-- Frontends proxy `/api/router/*` and `/api/admin/*` to `intent-backend` inside the cluster.
-- Short-term memory is session scoped and expires after 30 minutes. Expired session state is promoted into customer-scoped long-term memory keyed by `cust_id`.
-- Ingress uses sticky cookie affinity so one browser session keeps hitting the same pod when you scale replicas.
-- If the mount stops, the pods lose access to the live source tree.
-- The ingress host in this repository is `intent-router.kkrrc-359.top`.
-- `scripts/minikube_deploy_intent.sh` assumes Minikube is running with the Docker driver and that Docker can bind host port `80`.
+- Source is mounted into Minikube node at `/mnt/intent-router`.
+- Pods install dependencies on startup because source is mounted, not image-baked.
+- Router reads active intent registry from admin-owned storage and refreshes cache periodically.
+- Ingress should keep sticky affinity for SSE sessions when router is scaled.

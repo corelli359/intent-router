@@ -56,15 +56,17 @@ def _env_headers(name: str) -> dict[str, str]:
 class Settings(BaseModel):
     app_name: str = Field(default="Intent Router Admin API")
     env: str = Field(default="dev")
-    repository_backend: Literal["memory", "postgres"] = Field(default="memory")
-    postgres_dsn: str | None = Field(default=None)
+    repository_backend: Literal["memory", "database", "postgres"] = Field(default="memory")
+    database_url: str | None = Field(default=None)
     recognizer_backend: Literal["rules", "llm"] = Field(default="rules")
-    enable_llm_for_mock_agent: bool = Field(default=False)
+    router_use_demo_intents: bool = Field(default=False)
+    router_intent_refresh_interval_seconds: float = Field(default=5.0, gt=0)
     llm_api_base_url: str | None = Field(default=None)
     llm_api_key: str | None = Field(default=None)
     llm_model: str | None = Field(default=None)
     llm_recognizer_model: str | None = Field(default=None)
-    llm_agent_model: str | None = Field(default=None)
+    llm_recognizer_system_prompt_template: str | None = Field(default=None)
+    llm_recognizer_human_prompt_template: str | None = Field(default=None)
     llm_structured_output_method: Literal["function_calling", "json_mode", "json_schema"] = Field(
         default="json_mode"
     )
@@ -74,7 +76,7 @@ class Settings(BaseModel):
 
     @property
     def default_llm_model(self) -> str | None:
-        return self.llm_model or self.llm_recognizer_model or self.llm_agent_model
+        return self.llm_recognizer_model or self.llm_model
 
     @property
     def llm_connection_ready(self) -> bool:
@@ -87,14 +89,18 @@ class Settings(BaseModel):
             app_name=os.getenv("ADMIN_API_APP_NAME", "Intent Router Admin API"),
             env=os.getenv("ADMIN_API_ENV", "dev"),
             repository_backend=os.getenv("ADMIN_REPOSITORY_BACKEND", "memory"),
-            postgres_dsn=os.getenv("ADMIN_POSTGRES_DSN"),
+            database_url=os.getenv("ADMIN_DATABASE_URL") or os.getenv("ADMIN_POSTGRES_DSN"),
             recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "rules"),
-            enable_llm_for_mock_agent=_env_bool("ROUTER_ENABLE_LLM_FOR_MOCK_AGENT"),
+            router_use_demo_intents=_env_bool("ROUTER_USE_DEMO_INTENTS"),
+            router_intent_refresh_interval_seconds=float(
+                os.getenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "5")
+            ),
             llm_api_base_url=os.getenv("ROUTER_LLM_API_BASE_URL"),
             llm_api_key=os.getenv("ROUTER_LLM_API_KEY"),
             llm_model=os.getenv("ROUTER_LLM_MODEL"),
             llm_recognizer_model=os.getenv("ROUTER_LLM_RECOGNIZER_MODEL"),
-            llm_agent_model=os.getenv("ROUTER_LLM_AGENT_MODEL"),
+            llm_recognizer_system_prompt_template=os.getenv("ROUTER_LLM_RECOGNIZER_SYSTEM_PROMPT_TEMPLATE"),
+            llm_recognizer_human_prompt_template=os.getenv("ROUTER_LLM_RECOGNIZER_HUMAN_PROMPT_TEMPLATE"),
             llm_structured_output_method=os.getenv("ROUTER_LLM_STRUCTURED_OUTPUT_METHOD", "json_mode"),
             llm_timeout_seconds=float(os.getenv("ROUTER_LLM_TIMEOUT_SECONDS", "30")),
             agent_http_timeout_seconds=float(os.getenv("ROUTER_AGENT_HTTP_TIMEOUT_SECONDS", "60")),

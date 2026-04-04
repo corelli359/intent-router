@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
-from router_core.agent_client import AgentClient, MockStreamingAgentClient
+from router_core.agent_client import AgentClient, StreamingAgentClient
 from router_core.context_builder import ContextBuilder
 from router_core.domain import (
     ChatMessage,
@@ -16,6 +16,7 @@ from router_core.domain import (
     Task,
     TaskEvent,
     TaskStatus,
+    utc_now,
 )
 from router_core.recognizer import IntentRecognizer, SimpleIntentRecognizer
 from router_core.task_queue import next_runnable_task, queue_pending_tasks, waiting_task
@@ -104,13 +105,14 @@ class RouterOrchestrator:
         self.intent_catalog = intent_catalog
         self.recognizer = recognizer or SimpleIntentRecognizer()
         self.context_builder = context_builder or ContextBuilder()
-        self.agent_client = agent_client or MockStreamingAgentClient()
+        self.agent_client = agent_client or StreamingAgentClient()
         if self.intent_catalog is None:
-            from router_core.demo_intents import DEMO_INTENTS
-
             class _FallbackCatalog:
                 def list_active(self) -> list[IntentDefinition]:
-                    return list(DEMO_INTENTS)
+                    return []
+
+                def get_fallback_intent(self) -> IntentDefinition | None:
+                    return None
 
                 def priorities(self) -> dict[str, int]:
                     return {intent.intent_code: intent.dispatch_priority for intent in self.list_active()}
@@ -153,7 +155,7 @@ class RouterOrchestrator:
                 )
             )
             await self._run_task(session, current_waiting_task, content)
-            await self._drain_queue(session)
+            await self._drain_queue(session, content)
             return self.snapshot(session.session_id)
 
         long_term_memory = self.session_store.long_term_memory.recall(session.cust_id)
@@ -193,6 +195,17 @@ class RouterOrchestrator:
             on_delta=publish_recognition_delta,
         )
         session.candidate_intents = recognition.candidates
+        existing_intents = {
+            task.intent_code
+            for task in session.tasks
+            if task.status not in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        }
+        fallback_intent = self._fallback_intent()
+        should_dispatch_fallback = (
+            not recognition.primary
+            and fallback_intent is not None
+            and fallback_intent.intent_code not in existing_intents
+        )
         primary_intent_codes = [match.intent_code for match in recognition.primary]
         await self._publish(
             TaskEvent(
@@ -204,58 +217,37 @@ class RouterOrchestrator:
                 message=(
                     f"意图识别完成: {', '.join(primary_intent_codes)}"
                     if primary_intent_codes
-                    else "意图识别完成: 未命中主意图"
+                    else (
+                        f"意图识别完成: 未命中主意图，转入兜底意图 {fallback_intent.intent_code}"
+                        if should_dispatch_fallback and fallback_intent is not None
+                        else "意图识别完成: 未命中主意图"
+                    )
                 ),
                 payload={
                     "cust_id": session.cust_id,
                     "primary": [match.model_dump() for match in recognition.primary],
                     "candidates": [match.model_dump() for match in recognition.candidates],
+                    "fallback_intent_code": fallback_intent.intent_code if should_dispatch_fallback and fallback_intent else None,
                 },
             )
         )
 
-        existing_intents = {
-            task.intent_code
-            for task in session.tasks
-            if task.status not in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
-        }
         active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
         for match in recognition.primary:
             if match.intent_code in existing_intents:
                 continue
             intent = active_intents[match.intent_code]
-            task = Task(
-                session_id=session.session_id,
-                intent_code=intent.intent_code,
-                agent_url=intent.agent_url,
-                intent_name=intent.name,
-                intent_description=intent.description,
-                intent_examples=intent.examples,
-                request_schema=intent.request_schema,
-                field_mapping=intent.field_mapping,
-                confidence=match.confidence,
-                input_context=context,
-            )
-            task.touch(TaskStatus.CREATED)
-            session.tasks.append(task)
-            await self._publish(
-                TaskEvent(
-                    event="task.created",
-                    task_id=task.task_id,
-                    session_id=session.session_id,
-                    intent_code=task.intent_code,
-                    status=task.status,
-                    message=f"创建任务 {task.intent_code}",
-                    payload={"confidence": task.confidence, "cust_id": session.cust_id},
-                )
-            )
+            await self._create_task(session, context, intent=intent, confidence=match.confidence, is_fallback=False)
+
+        if should_dispatch_fallback and fallback_intent is not None:
+            await self._create_task(session, context, intent=fallback_intent, confidence=0.0, is_fallback=True)
 
         queue_pending_tasks(session, self.intent_catalog.priorities())
         await self._publish_session_state(session, "session.recognized")
-        await self._drain_queue(session)
+        await self._drain_queue(session, content)
         return self.snapshot(session.session_id)
 
-    async def _drain_queue(self, session: SessionState) -> None:
+    async def _drain_queue(self, session: SessionState, user_input: str) -> None:
         while True:
             next_task = next_runnable_task(session, self.intent_catalog.priorities())
             if next_task is None:
@@ -263,7 +255,7 @@ class RouterOrchestrator:
                 await self._publish_session_state(session, "session.idle")
                 return
             session.active_task_id = next_task.task_id
-            await self._run_task(session, next_task, session.messages[-1].content)
+            await self._run_task(session, next_task, user_input)
             if next_task.status == TaskStatus.WAITING_USER_INPUT:
                 await self._publish_session_state(session, "session.waiting_user_input")
                 return
@@ -287,18 +279,24 @@ class RouterOrchestrator:
                 TaskStatus.COMPLETED: "task.completed",
                 TaskStatus.FAILED: "task.failed",
             }.get(chunk.status, "task.message")
-            await self._publish(
-                TaskEvent(
-                    event=event_name,
-                    task_id=task.task_id,
-                    session_id=session.session_id,
-                    intent_code=task.intent_code,
-                    status=task.status,
-                    message=chunk.content,
-                    ishandover=chunk.ishandover,
-                    payload={**chunk.payload, "cust_id": session.cust_id},
-                )
+            event_time = utc_now()
+            task_event = TaskEvent(
+                event=event_name,
+                task_id=task.task_id,
+                session_id=session.session_id,
+                intent_code=task.intent_code,
+                status=task.status,
+                message=chunk.content,
+                ishandover=chunk.ishandover,
+                payload={**chunk.payload, "cust_id": session.cust_id},
+                created_at=event_time,
             )
+            if chunk.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.COMPLETED, TaskStatus.FAILED} and chunk.content:
+                session.messages.append(
+                    ChatMessage(role="assistant", content=chunk.content, created_at=event_time)
+                )
+                session.touch()
+            await self._publish(task_event)
             if chunk.status == TaskStatus.COMPLETED and task.slot_memory:
                 slot_pairs = ", ".join(f"{key}={value}" for key, value in sorted(task.slot_memory.items()))
                 self.session_store.long_term_memory.get_or_create(session.cust_id).remember(
@@ -311,6 +309,45 @@ class RouterOrchestrator:
                 )
             if chunk.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.COMPLETED, TaskStatus.FAILED}:
                 break
+
+    async def _create_task(
+        self,
+        session: SessionState,
+        context: dict[str, Any],
+        *,
+        intent: IntentDefinition,
+        confidence: float,
+        is_fallback: bool,
+    ) -> None:
+        task = Task(
+            session_id=session.session_id,
+            intent_code=intent.intent_code,
+            agent_url=intent.agent_url,
+            intent_name=intent.name,
+            intent_description=intent.description,
+            intent_examples=intent.examples,
+            request_schema=intent.request_schema,
+            field_mapping=intent.field_mapping,
+            confidence=confidence,
+            input_context=context,
+        )
+        task.touch(TaskStatus.CREATED)
+        session.tasks.append(task)
+        await self._publish(
+            TaskEvent(
+                event="task.created",
+                task_id=task.task_id,
+                session_id=session.session_id,
+                intent_code=task.intent_code,
+                status=task.status,
+                message=f"创建任务 {task.intent_code}",
+                payload={
+                    "confidence": task.confidence,
+                    "cust_id": session.cust_id,
+                    "is_fallback": is_fallback,
+                },
+            )
+        )
 
     async def _publish_task_state(self, task: Task, session: SessionState, event: str, message: str) -> None:
         await self._publish(
@@ -349,3 +386,9 @@ class RouterOrchestrator:
         result = self.publish_event(event)
         if result is not None and hasattr(result, "__await__"):
             await result
+
+    def _fallback_intent(self) -> IntentDefinition | None:
+        getter = getattr(self.intent_catalog, "get_fallback_intent", None)
+        if getter is None:
+            return None
+        return getter()

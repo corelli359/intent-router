@@ -67,6 +67,7 @@ export interface IntentDefinition {
   examples: string[];
   agentUrl: string;
   status: "active" | "inactive" | "grayscale";
+  isFallback: boolean;
   dispatchPriority: number;
   requestSchema: Record<string, unknown>;
   fieldMapping: Record<string, string>;
@@ -82,6 +83,7 @@ export interface IntentInput {
   examples: string[];
   agentUrl: string;
   status: "active" | "inactive" | "grayscale";
+  isFallback: boolean;
   dispatchPriority: number;
   requestSchema: Record<string, unknown>;
   fieldMapping: Record<string, string>;

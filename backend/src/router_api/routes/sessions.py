@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import suppress
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, model_validator
@@ -38,6 +40,11 @@ class MessageRequest(BaseModel):
         return self
 
 
+def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
+    body = json.dumps(payload, ensure_ascii=False)
+    return f"event: {event_name}\ndata: {body}\n\n"
+
+
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: CreateSessionRequest | None = None,
@@ -71,6 +78,52 @@ async def post_message(
         content=request.content or "",
     )
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
+
+
+@router.post("/sessions/{session_id}/messages/stream")
+async def post_message_stream(
+    session_id: str,
+    request: MessageRequest,
+    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    broker: EventBroker = Depends(get_event_broker),
+) -> StreamingResponse:
+    async def event_generator():
+        queue = broker.register(session_id)
+        processing_task = asyncio.create_task(
+            orchestrator.handle_user_message(
+                session_id=session_id,
+                cust_id=request.cust_id or "cust_demo",
+                content=request.content or "",
+            )
+        )
+        try:
+            while True:
+                if processing_task.done() and queue.empty():
+                    await processing_task
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+
+                yield _encode_sse(event.event, event.model_dump(mode="json"))
+        finally:
+            broker.unregister(session_id, queue)
+            if not processing_task.done():
+                processing_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await processing_task
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/sessions/{session_id}/events")

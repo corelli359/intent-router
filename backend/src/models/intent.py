@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def utcnow() -> datetime:
@@ -23,14 +24,21 @@ class IntentPayload(BaseModel):
     description: str = Field(min_length=1, max_length=4000)
     examples: list[str] = Field(default_factory=list)
     agent_url: str = Field(min_length=1, max_length=2048)
-    status: IntentStatus = IntentStatus.ACTIVE
+    status: IntentStatus = IntentStatus.INACTIVE
+    is_fallback: bool = False
     dispatch_priority: int = Field(default=100, ge=0, le=10_000)
     request_schema: dict[str, Any] = Field(default_factory=dict)
     field_mapping: dict[str, str] = Field(default_factory=dict)
     resume_policy: str = Field(default="resume_same_task", min_length=1, max_length=128)
 
+    @model_validator(mode="after")
+    def validate_agent_url(self) -> "IntentPayload":
+        scheme = urlparse(self.agent_url.strip()).scheme.lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError("agent_url must use http:// or https://")
+        return self
+
 
 class IntentRecord(IntentPayload):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
-

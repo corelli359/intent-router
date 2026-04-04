@@ -66,18 +66,29 @@ start_ingress_proxy() {
     -lc "exec socat TCP-LISTEN:80,reuseaddr,fork TCP:${minikube_ip}:80" >/dev/null
 }
 
-minikube_cmd addons enable ingress >/dev/null
+ensure_ingress() {
+  if node_kubectl -n ingress-nginx get deployment ingress-nginx-controller >/dev/null 2>&1; then
+    return 0
+  fi
+  minikube_cmd addons enable ingress >/dev/null
+}
+
+ensure_ingress
 node_kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=5m || true
 start_mount_container
 wait_for_mount
+node_kubectl -n "${NAMESPACE}" delete ingress intent-router-chat --ignore-not-found || true
+node_kubectl -n "${NAMESPACE}" delete service intent-backend --ignore-not-found || true
+node_kubectl -n "${NAMESPACE}" delete deployment intent-backend --ignore-not-found || true
 node_kubectl apply -k "${TARGET_PATH}/k8s/intent"
-node_kubectl -n "${NAMESPACE}" rollout status deploy/intent-backend --timeout=10m
-node_kubectl -n "${NAMESPACE}" rollout status deploy/intent-chat-web --timeout=20m
-node_kubectl -n "${NAMESPACE}" rollout status deploy/intent-admin-web --timeout=20m
+for deployment in intent-router-api intent-admin-api intent-order-agent intent-appointment-agent intent-chat-web intent-admin-web; do
+  node_kubectl -n "${NAMESPACE}" rollout restart deployment/"${deployment}"
+  node_kubectl -n "${NAMESPACE}" rollout status deployment/"${deployment}" --timeout=20m
+done
 start_ingress_proxy
 
 echo
 echo "Ingress:"
-node_kubectl -n "${NAMESPACE}" get ingress intent-router
-echo "Chat:  http://${INGRESS_HOST}"
+node_kubectl -n "${NAMESPACE}" get ingress
+echo "Chat:  http://${INGRESS_HOST}/chat"
 echo "Admin: http://${INGRESS_HOST}/admin"

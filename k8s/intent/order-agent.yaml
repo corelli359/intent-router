@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: intent-backend
+  name: intent-order-agent
   namespace: intent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: intent-backend
+      app: intent-order-agent
   template:
     metadata:
       labels:
-        app: intent-backend
+        app: intent-order-agent
     spec:
       containers:
-        - name: backend
+        - name: order-agent
           image: python:3.12-slim
           imagePullPolicy: IfNotPresent
           workingDir: /workspace
@@ -29,21 +29,32 @@ spec:
           args:
             - |
               pip install --no-cache-dir /workspace && \
-              python -m uvicorn app:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
+              python -m uvicorn intent_agents.order_status_app:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
               name: http
+          resources:
+            requests:
+              cpu: 200m
+              memory: 320Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 180
           readinessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
+            initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 20
+            initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:
             - name: repo
@@ -57,11 +68,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: intent-backend
+  name: intent-order-agent
   namespace: intent
 spec:
   selector:
-    app: intent-backend
+    app: intent-order-agent
   ports:
     - name: http
       port: 8000

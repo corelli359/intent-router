@@ -8,10 +8,7 @@ from typing import Any, Awaitable, Callable, Literal, Protocol
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
-
-from router_core.domain import Task
-
+from pydantic import BaseModel, Field, model_validator
 
 AsyncDeltaCallback = Callable[[str], Awaitable[None]]
 
@@ -76,73 +73,15 @@ class IntentRecognitionPayload(BaseModel):
         return value
 
 
-class IntentAgentPayload(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    status: Literal["waiting_user_input", "completed", "failed"]
-    event: Literal["message", "final"] = "final"
-    ishandover: bool
-    content: str = Field(validation_alias=AliasChoices("content", "response", "message"))
-    slot_memory: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices("slot_memory", "slots"))
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_payload(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        normalized = dict(value)
-
-        if "content" not in normalized:
-            for key in ("response", "message", "text"):
-                if key in normalized:
-                    normalized["content"] = normalized[key]
-                    break
-
-        if "slot_memory" not in normalized and "slots" in normalized:
-            normalized["slot_memory"] = normalized["slots"]
-
-        if "status" not in normalized:
-            if "ishandover" in normalized:
-                normalized["status"] = "completed" if normalized["ishandover"] else "waiting_user_input"
-            else:
-                content = str(normalized.get("content", ""))
-                if any(marker in content for marker in ("请", "?", "？")):
-                    normalized["status"] = "waiting_user_input"
-                    normalized.setdefault("ishandover", False)
-                else:
-                    normalized["status"] = "completed"
-                    normalized.setdefault("ishandover", True)
-
-        if "ishandover" not in normalized:
-            normalized["ishandover"] = normalized["status"] in {"completed", "failed"}
-
-        if "event" not in normalized:
-            normalized["event"] = "final" if normalized["ishandover"] else "message"
-
-        return normalized
-
-
-class LLMClient(Protocol):
-    async def recognize(
+class JsonLLMClient(Protocol):
+    async def run_json(
         self,
         *,
-        message: str,
-        recent_messages: list[str],
-        long_term_memory: list[str],
-        intents: list[dict[str, Any]],
+        prompt: ChatPromptTemplate,
+        variables: dict[str, Any],
         model: str | None = None,
         on_delta: AsyncDeltaCallback | None = None,
-    ) -> IntentRecognitionPayload: ...
-
-    async def run_agent(
-        self,
-        *,
-        task: Task,
-        user_input: str,
-        model: str | None = None,
-        on_delta: AsyncDeltaCallback | None = None,
-    ) -> IntentAgentPayload: ...
+    ) -> Any: ...
 
 
 @dataclass(slots=True)
@@ -155,119 +94,16 @@ class LangChainLLMClient:
     structured_output_method: Literal["function_calling", "json_mode", "json_schema"] = "json_mode"
     http_async_client: httpx.AsyncClient | None = None
 
-    async def recognize(
+    async def run_json(
         self,
         *,
-        message: str,
-        recent_messages: list[str],
-        long_term_memory: list[str],
-        intents: list[dict[str, Any]],
+        prompt: ChatPromptTemplate,
+        variables: dict[str, Any],
         model: str | None = None,
         on_delta: AsyncDeltaCallback | None = None,
-    ) -> IntentRecognitionPayload:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    (
-                        "你是一个多意图识别器。"
-                        "只能从已注册 intent 中选择，不能虚构新的 intent_code。"
-                        "你可以返回多个意图，但必须保持谨慎。"
-                        "confidence 必须在 0 到 1 之间。"
-                        "如果当前消息与某个已注册意图明显匹配，不要返回空列表。"
-                    ),
-                ),
-                (
-                    "human",
-                    (
-                        "当前消息:\n{message}\n\n"
-                        "最近对话(JSON):\n{recent_messages_json}\n\n"
-                        "长期记忆(JSON):\n{long_term_memory_json}\n\n"
-                        "已注册意图(JSON):\n{intents_json}"
-                    ),
-                ),
-            ]
-        )
-        response_text = await self._stream_prompt(
-            prompt,
-            {
-                "message": message,
-                "recent_messages_json": json.dumps(recent_messages, ensure_ascii=False, indent=2),
-                "long_term_memory_json": json.dumps(long_term_memory, ensure_ascii=False, indent=2),
-                "intents_json": json.dumps(intents, ensure_ascii=False, indent=2),
-            },
-            model=model,
-            on_delta=on_delta,
-        )
-        return IntentRecognitionPayload.model_validate(extract_json_value(response_text))
-
-    async def run_agent(
-        self,
-        *,
-        task: Task,
-        user_input: str,
-        model: str | None = None,
-        on_delta: AsyncDeltaCallback | None = None,
-    ) -> IntentAgentPayload:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    (
-                        "你是意图路由器中的单意图执行 Agent。"
-                        "你只能处理当前 intent，不能扩展到未注册任务。"
-                        "当信息不足时，返回 waiting_user_input 并清楚告诉用户缺什么；此时 ishandover 必须为 false。"
-                        "只有任务完成或明确失败时，ishandover 才能为 true。"
-                        "如果你识别到了结构化槽位，请放到 slot_memory。"
-                        "回复主文本字段请使用 content。"
-                    ),
-                ),
-                (
-                    "human",
-                    (
-                        "当前用户输入:\n{user_input}\n\n"
-                        "Intent(JSON):\n{intent_json}\n\n"
-                        "最近对话(JSON):\n{recent_messages_json}\n\n"
-                        "长期记忆(JSON):\n{long_term_memory_json}\n\n"
-                        "已有槽位(JSON):\n{slot_memory_json}\n\n"
-                        "字段映射(JSON):\n{field_mapping_json}\n\n"
-                        "请求结构(JSON):\n{request_schema_json}"
-                    ),
-                ),
-            ]
-        )
-        response_text = await self._stream_prompt(
-            prompt,
-            {
-                "user_input": user_input,
-                "intent_json": json.dumps(
-                    {
-                        "intent_code": task.intent_code,
-                        "name": task.intent_name,
-                        "description": task.intent_description,
-                        "examples": task.intent_examples,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                "recent_messages_json": json.dumps(
-                    task.input_context.get("recent_messages", []),
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                "long_term_memory_json": json.dumps(
-                    task.input_context.get("long_term_memory", []),
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                "slot_memory_json": json.dumps(task.slot_memory, ensure_ascii=False, indent=2, default=str),
-                "field_mapping_json": json.dumps(task.field_mapping, ensure_ascii=False, indent=2),
-                "request_schema_json": json.dumps(task.request_schema, ensure_ascii=False, indent=2),
-            },
-            model=model,
-            on_delta=on_delta,
-        )
-        return IntentAgentPayload.model_validate(extract_json_value(response_text))
+    ) -> Any:
+        response_text = await self._stream_prompt(prompt, variables, model=model, on_delta=on_delta)
+        return extract_json_value(response_text)
 
     def _create_model(self, model: str | None = None) -> ChatOpenAI:
         return ChatOpenAI(

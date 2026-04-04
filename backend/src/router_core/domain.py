@@ -41,6 +41,7 @@ class IntentDefinition(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     agent_url: str
     status: str = "active"
+    is_fallback: bool = False
     dispatch_priority: int = 0
     primary_threshold: float = 0.75
     candidate_threshold: float = 0.5

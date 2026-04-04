@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,6 @@ if str(BACKEND_SRC) not in sys.path:
 from router_core.agent_client import StreamingAgentClient  # noqa: E402
 from router_core.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
 from router_core.llm_client import (  # noqa: E402
-    IntentAgentPayload,
     IntentRecognitionMatchPayload,
     IntentRecognitionPayload,
 )
@@ -21,62 +21,29 @@ from router_core.recognizer import LLMIntentRecognizer  # noqa: E402
 
 
 class FakeLangChainClient:
-    def __init__(
-        self,
-        *,
-        recognition_response: IntentRecognitionPayload | None = None,
-        agent_response: IntentAgentPayload | None = None,
-    ) -> None:
+    def __init__(self, *, recognition_response: IntentRecognitionPayload | None = None) -> None:
         self.recognition_response = recognition_response or IntentRecognitionPayload()
-        self.agent_response = agent_response or IntentAgentPayload(
-            status="completed",
-            event="final",
-            ishandover=True,
-            content="ok",
-        )
         self.last_recognition_call: dict[str, Any] | None = None
-        self.last_agent_call: dict[str, Any] | None = None
 
-    async def recognize(
+    async def run_json(
         self,
         *,
-        message: str,
-        recent_messages: list[str],
-        long_term_memory: list[str],
-        intents: list[dict[str, Any]],
+        prompt,
+        variables: dict[str, Any],
         model: str | None = None,
         on_delta=None,
-    ) -> IntentRecognitionPayload:
+    ) -> Any:
         self.last_recognition_call = {
-            "message": message,
-            "recent_messages": recent_messages,
-            "long_term_memory": long_term_memory,
-            "intents": intents,
+            "prompt": prompt,
+            "variables": variables,
             "model": model,
         }
         if on_delta is not None:
             await on_delta('{"matches":')
-        return self.recognition_response
-
-    async def run_agent(
-        self,
-        *,
-        task: Task,
-        user_input: str,
-        model: str | None = None,
-        on_delta=None,
-    ) -> IntentAgentPayload:
-        self.last_agent_call = {
-            "task": task,
-            "user_input": user_input,
-            "model": model,
-        }
-        if on_delta is not None:
-            await on_delta('{"status":"waiting_user_input"')
-        return self.agent_response
+        return self.recognition_response.model_dump()
 
 
-def test_llm_intent_recognizer_uses_langchain_structured_output() -> None:
+def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
     async def run() -> None:
         intents = [
             IntentDefinition(
@@ -85,7 +52,7 @@ def test_llm_intent_recognizer_uses_langchain_structured_output() -> None:
                 description="执行转账",
                 examples=["给张三转 200 元"],
                 keywords=["转账"],
-                agent_url="llm://default",
+                agent_url="https://agent.example.com/transfer",
                 dispatch_priority=100,
                 primary_threshold=0.7,
                 candidate_threshold=0.5,
@@ -96,7 +63,7 @@ def test_llm_intent_recognizer_uses_langchain_structured_output() -> None:
                 description="处理生活缴费",
                 examples=["交电费"],
                 keywords=["缴费"],
-                agent_url="llm://default",
+                agent_url="https://agent.example.com/bill",
                 dispatch_priority=90,
                 primary_threshold=0.8,
                 candidate_threshold=0.6,
@@ -129,7 +96,7 @@ def test_llm_intent_recognizer_uses_langchain_structured_output() -> None:
 
         assert llm_client.last_recognition_call is not None
         assert llm_client.last_recognition_call["model"] == "recognizer-model"
-        first_intent_payload = llm_client.last_recognition_call["intents"][0]
+        first_intent_payload = json.loads(llm_client.last_recognition_call["variables"]["intents_json"])[0]
         assert "agent_url" not in first_intent_payload
         assert "request_schema" not in first_intent_payload
         assert "field_mapping" not in first_intent_payload
@@ -139,44 +106,7 @@ def test_llm_intent_recognizer_uses_langchain_structured_output() -> None:
     asyncio.run(run())
 
 
-def test_streaming_agent_client_supports_langchain_llm_scheme() -> None:
-    async def run() -> None:
-        llm_client = FakeLangChainClient(
-            agent_response=IntentAgentPayload(
-                status="waiting_user_input",
-                event="message",
-                ishandover=False,
-                content="请确认付款账户",
-                slot_memory={"payee": "张三", "amount": "200"},
-            )
-        )
-        task = Task(
-            session_id="session_001",
-            intent_code="transfer_money",
-            agent_url="llm://default",
-            intent_name="转账",
-            intent_description="处理转账请求",
-            confidence=0.92,
-            input_context={"recent_messages": [], "long_term_memory": []},
-            slot_memory={"payee": "张三"},
-        )
-
-        client = StreamingAgentClient(llm_client=llm_client, llm_model="agent-model")
-        chunks = [chunk async for chunk in client.stream(task, "转 200 元")]
-
-        assert llm_client.last_agent_call is not None
-        assert llm_client.last_agent_call["model"] == "agent-model"
-        assert len(chunks) == 2
-        assert chunks[0].status == TaskStatus.RUNNING
-        assert chunks[1].status == TaskStatus.WAITING_USER_INPUT
-        assert chunks[1].content == "请确认付款账户"
-        assert task.slot_memory["amount"] == "200"
-
-    asyncio.run(run())
-
-
 def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
-    import json
     import httpx
 
     async def run() -> None:

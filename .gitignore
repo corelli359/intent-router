@@ -14,6 +14,9 @@ __pycache__/
 .env
 .env.*
 .python-version
+.venv/
+.local-codex/
+.local-data/
 
 # Node / Next.js
 node_modules/
@@ -29,3 +32,7 @@ node_modules/
 
 # Downloaded local tooling
 /scripts/bin/
+
+# Local build / workspace artifacts
+/build/
+/.codex

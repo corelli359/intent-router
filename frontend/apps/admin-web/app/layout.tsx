@@ -15,15 +15,14 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Intent Router | Admin Console",
-  description: "Intent registry and routing configuration console"
+  title: "意图路由控制台",
+  description: "意图注册、路由配置与生效管理控制台"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <body className={`${grotesk.variable} ${mono.variable}`}>{children}</body>
     </html>
   );
 }
-
