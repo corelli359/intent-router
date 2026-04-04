@@ -384,6 +384,62 @@ SSE 推送规则：
 - 当任务完成或失败时，Router 推送 `task.completed` 或 `task.failed`
 - 若存在多个排队任务，SSE 中应能体现当前激活任务与其余 `queued` 任务状态
 
+#### 7.4.1 SSE 事件清单说明
+当前实现中，Router 对外 SSE 统一采用如下事件信封：
+
+```json
+{
+  "event": "task.waiting_user_input",
+  "task_id": "task_001",
+  "session_id": "session_001",
+  "intent_code": "transfer_money",
+  "status": "waiting_user_input",
+  "message": "请提供收款卡号、收款人手机号后4位",
+  "ishandover": false,
+  "payload": {},
+  "created_at": "2026-04-04T08:49:29.050607Z"
+}
+```
+
+字段约定如下：
+
+- `event`：SSE 事件名，前端与调用方应优先依据它分发逻辑
+- `task_id`：任务唯一标识；对 `recognition.*` 事件固定为 `recognition`；对 `session.*` 事件固定为 `session`
+- `session_id`：会话 ID
+- `intent_code`：意图编码；对 `session.*` 事件固定为 `session`
+- `status`：任务状态，取值见 7.5 任务状态机
+- `message`：展示给前端或调用方的可读消息；部分事件可为空
+- `ishandover`：是否已完成当前任务交接；仅在 `task.*` 终态事件中有意义
+- `payload`：扩展字段；用于携带候选意图、激活任务、排队任务、槽位等补充信息
+- `created_at`：事件时间戳，UTC
+
+当前实现对外可见的事件名如下：
+
+| 事件名 | 触发时机 | 主要用途 | 关键 payload |
+| --- | --- | --- | --- |
+| `recognition.started` | Router 开始意图识别 | 前端显示“识别中”状态 | `cust_id` |
+| `recognition.delta` | LLM 识别器流式输出中间文本 | 调试用；生产 UI 可忽略或折叠 | `cust_id` |
+| `recognition.completed` | 意图识别完成 | 展示命中主意图与候选意图 | `primary`、`candidates`、`fallback_intent_code` |
+| `task.created` | Router 为某个主意图或兜底意图创建任务 | 建立任务列表 | `confidence`、`is_fallback` |
+| `task.dispatching` | Router 准备调用某个 Agent | 展示“分发中” | `cust_id` |
+| `task.running` | Agent 已开始执行 | 展示“执行中” | `cust_id` |
+| `task.message` | Agent 流式中间消息 | 适合做逐字/逐段增量展示 | 取决于 agent 返回 |
+| `task.resuming` | 用户补充信息后，Router 恢复原等待任务 | 标记恢复执行，不应新建同意图任务 | `cust_id` |
+| `task.waiting_user_input` | Agent 缺少执行参数，要求用户补充 | 前端进入“等待补充信息”状态 | 常见含 `missing_fields`、`slot_memory` |
+| `task.completed` | 任务成功完成 | 展示结果并结束当前任务 | 常见含业务结果、`slot_memory` |
+| `task.failed` | 任务失败 | 展示失败原因 | 常见含失败原因、业务状态 |
+| `session.recognized` | 本轮识别结束并已完成任务入队 | 更新当前激活任务与排队任务 | `active_task_id`、`queued_task_ids`、`candidate_intents`、`expires_at` |
+| `session.waiting_user_input` | 当前活跃任务阻塞在补充信息阶段 | 会话层汇总状态更新 | `active_task_id`、`queued_task_ids`、`candidate_intents`、`expires_at` |
+| `session.idle` | 当前没有可运行任务 | 会话空闲，可接受下一轮新请求 | `active_task_id`、`queued_task_ids`、`candidate_intents`、`expires_at` |
+
+实现建议：
+
+- 调用方/前端应把 `task.*` 视为任务级事件，把 `session.*` 视为会话级汇总事件
+- `recognition.delta` 主要面向调试与观测；正式 UI 不建议逐字展示
+- `task.waiting_user_input`、`task.completed`、`task.failed` 是最关键的三个业务事件
+- `session.waiting_user_input` 与 `task.waiting_user_input` 会先后出现；前者用于更新会话总状态，后者用于展示具体补问内容
+- 当前 SSE 终点不会再额外补发 `snapshot` 事件；如需完整状态，调用方应主动请求会话快照接口
+
 ### 7.5 任务状态机
 建议的最小状态机如下：
 
