@@ -114,6 +114,7 @@ async def post_message_stream(
                 processing_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await processing_task
+            await orchestrator.cancel_waiting_tasks(session_id, reason="SSE stream disconnected")
 
     return StreamingResponse(
         event_generator(),
@@ -130,10 +131,13 @@ async def post_message_stream(
 async def stream_events(
     session_id: str,
     broker: EventBroker = Depends(get_event_broker),
+    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
 ) -> StreamingResponse:
     async def event_generator():
-        async for event in broker.subscribe(session_id):
-            payload = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
-            yield f"event: {event.event}\ndata: {payload}\n\n"
+        try:
+            async for event in broker.subscribe(session_id):
+                yield _encode_sse(event.event, event.model_dump(mode="json"))
+        finally:
+            await orchestrator.cancel_waiting_tasks(session_id, reason="SSE stream disconnected")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -68,3 +68,15 @@ def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_d
     assert catalog.get_fallback_intent() is not None
     assert catalog.get_fallback_intent().intent_code == "fallback_general"
     assert catalog.priorities()["fallback_general"] == 1
+
+
+def test_catalog_precomputes_simple_recognizer_patterns() -> None:
+    repository = InMemoryIntentRepository()
+    repository.create_intent(_payload(intent_code="transfer_money", status=IntentStatus.ACTIVE))
+    catalog = RepositoryIntentCatalog(repository, refresh_interval_seconds=5.0)
+
+    patterns = catalog.patterns()
+
+    assert "transfer_money" in patterns
+    assert "transfer_money" in patterns["transfer_money"]
+    assert "description" in patterns["transfer_money"]

@@ -4,7 +4,13 @@ from functools import lru_cache
 
 from fastapi import Depends, FastAPI
 
-from intent_agents.common import AgentExecutionResponse, AgentLLMSettings, LangChainJsonObjectRunner
+from intent_agents.common import (
+    AgentCancelRequest,
+    AgentCancelResponse,
+    AgentExecutionResponse,
+    AgentLLMSettings,
+    LangChainJsonObjectRunner,
+)
 from intent_agents.transfer_money_service import TransferMoneyAgentRequest, TransferMoneyAgentService
 
 
@@ -38,6 +44,10 @@ def create_app() -> FastAPI:
         service: TransferMoneyAgentService = Depends(get_cancel_appointment_service),
     ) -> AgentExecutionResponse:
         return await service.handle(request)
+
+    @app.post("/api/agent/cancel", response_model=AgentCancelResponse)
+    async def cancel_agent(request: AgentCancelRequest) -> AgentCancelResponse:
+        return AgentCancelResponse(status="cancelled")
 
     return app
 

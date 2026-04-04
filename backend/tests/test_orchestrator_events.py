@@ -11,7 +11,8 @@ if str(BACKEND_SRC) not in sys.path:
 
 from router_core.orchestrator import RouterOrchestrator  # noqa: E402
 from router_core.agent_client import MockStreamingAgentClient  # noqa: E402
-from router_core.domain import IntentDefinition  # noqa: E402
+from router_core.domain import IntentDefinition, TaskStatus  # noqa: E402
+from router_core.orchestrator import RouterOrchestratorConfig  # noqa: E402
 
 
 class StaticCatalog:
@@ -110,5 +111,40 @@ def test_transfer_waiting_task_emits_resuming_before_completion() -> None:
 
         assert events.count("task.created") == 1
         assert "task.resuming" in events
+
+    asyncio.run(run())
+
+
+def test_agent_timeout_marks_task_failed() -> None:
+    class HangingAgentClient:
+        async def stream(self, task, user_input):
+            await asyncio.sleep(0.05)
+            if False:
+                yield None
+
+        async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    async def run() -> None:
+        events = []
+
+        def publish(event) -> None:
+            events.append(event)
+
+        orchestrator = RouterOrchestrator(
+            publish_event=publish,
+            intent_catalog=StaticCatalog(),
+            agent_client=HangingAgentClient(),
+            config=RouterOrchestratorConfig(agent_timeout_seconds=0.01),
+        )
+        session = orchestrator.create_session(cust_id="cust_demo")
+
+        snapshot = await orchestrator.handle_user_message(session.session_id, "cust_demo", "帮我查一下余额")
+
+        assert snapshot.tasks[0].status == TaskStatus.FAILED
+        assert any(event.event == "task.failed" and "超时" in (event.message or "") for event in events)
 
     asyncio.run(run())

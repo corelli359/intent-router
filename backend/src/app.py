@@ -8,18 +8,26 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from admin_api.dependencies import get_settings
 from admin_api.routes.intents import router as admin_router
-from router_api.dependencies import get_intent_catalog, run_intent_catalog_refresh
+from router_api.dependencies import build_router_runtime, close_router_runtime, run_intent_catalog_refresh
 from router_api.routes.sessions import router as router_api_router
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    runtime = build_router_runtime()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        get_intent_catalog().refresh_now()
+        await asyncio.to_thread(runtime.intent_catalog.refresh_now)
         stop_event = asyncio.Event()
-        refresh_task = asyncio.create_task(run_intent_catalog_refresh(stop_event))
+        refresh_task = asyncio.create_task(
+            run_intent_catalog_refresh(
+                stop_event,
+                catalog=runtime.intent_catalog,
+                refresh_interval_seconds=settings.router_intent_refresh_interval_seconds,
+            )
+        )
+        app.state.router_runtime = runtime
         app.state.intent_catalog_refresh_stop = stop_event
         app.state.intent_catalog_refresh_task = refresh_task
         try:
@@ -27,8 +35,10 @@ def create_app() -> FastAPI:
         finally:
             stop_event.set()
             await refresh_task
+            await close_router_runtime(runtime)
 
     app = FastAPI(title="Intent Router Platform", version="0.1.0", lifespan=lifespan)
+    app.state.router_runtime = runtime
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

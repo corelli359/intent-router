@@ -58,9 +58,13 @@ class Settings(BaseModel):
     env: str = Field(default="dev")
     repository_backend: Literal["memory", "database", "postgres"] = Field(default="memory")
     database_url: str | None = Field(default=None)
-    recognizer_backend: Literal["rules", "llm"] = Field(default="rules")
+    recognizer_backend: Literal["rules", "llm"] = Field(default="llm")
     router_use_demo_intents: bool = Field(default=False)
     router_intent_refresh_interval_seconds: float = Field(default=5.0, gt=0)
+    router_intent_switch_threshold: float = Field(default=0.80, ge=0, le=1)
+    router_agent_timeout_seconds: float = Field(default=60.0, gt=0)
+    router_sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
+    router_sse_max_idle_seconds: float = Field(default=300.0, gt=0)
     llm_api_base_url: str | None = Field(default=None)
     llm_api_key: str | None = Field(default=None)
     llm_model: str | None = Field(default=None)
@@ -90,11 +94,15 @@ class Settings(BaseModel):
             env=os.getenv("ADMIN_API_ENV", "dev"),
             repository_backend=os.getenv("ADMIN_REPOSITORY_BACKEND", "memory"),
             database_url=os.getenv("ADMIN_DATABASE_URL") or os.getenv("ADMIN_POSTGRES_DSN"),
-            recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "rules"),
+            recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "llm"),
             router_use_demo_intents=_env_bool("ROUTER_USE_DEMO_INTENTS"),
             router_intent_refresh_interval_seconds=float(
                 os.getenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "5")
             ),
+            router_intent_switch_threshold=float(os.getenv("ROUTER_INTENT_SWITCH_THRESHOLD", "0.8")),
+            router_agent_timeout_seconds=float(os.getenv("ROUTER_AGENT_TIMEOUT_SECONDS", "60")),
+            router_sse_heartbeat_seconds=float(os.getenv("ROUTER_SSE_HEARTBEAT_SECONDS", "15")),
+            router_sse_max_idle_seconds=float(os.getenv("ROUTER_SSE_MAX_IDLE_SECONDS", "300")),
             llm_api_base_url=os.getenv("ROUTER_LLM_API_BASE_URL"),
             llm_api_key=os.getenv("ROUTER_LLM_API_KEY"),
             llm_model=os.getenv("ROUTER_LLM_MODEL"),

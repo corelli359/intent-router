@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from fastapi import Depends, FastAPI
 
-from intent_agents.common import AgentExecutionResponse
+from intent_agents.common import AgentCancelRequest, AgentCancelResponse, AgentExecutionResponse
 from intent_agents.fallback_service import FallbackAgentRequest, FallbackAgentService
 
 
@@ -29,6 +29,10 @@ def create_app() -> FastAPI:
         service: FallbackAgentService = Depends(get_fallback_service),
     ) -> AgentExecutionResponse:
         return await service.handle(request)
+
+    @app.post("/api/agent/cancel", response_model=AgentCancelResponse)
+    async def cancel_agent(request: AgentCancelRequest) -> AgentCancelResponse:
+        return AgentCancelResponse(status="cancelled")
 
     return app
 

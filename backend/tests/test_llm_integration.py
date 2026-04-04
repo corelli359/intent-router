@@ -154,3 +154,44 @@ def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
         assert chunks[0].payload["order_id"] == "123"
 
     asyncio.run(run())
+
+
+def test_streaming_agent_client_posts_cancel_requests_to_agent_endpoint() -> None:
+    import httpx
+
+    async def run() -> None:
+        captured_requests: list[tuple[str, dict[str, object]]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_requests.append(
+                (str(request.url), json.loads(request.content.decode("utf-8")))
+            )
+            return httpx.Response(200, json={"status": "cancelled", "accepted": True})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            await client.cancel(
+                session_id="session_123",
+                task_id="task_123",
+                agent_url="https://agent.example.com/api/agent/run",
+            )
+
+        assert captured_requests == [
+            (
+                "https://agent.example.com/api/agent/cancel",
+                {"sessionId": "session_123", "taskId": "task_123"},
+            )
+        ]
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_closes_owned_http_pool() -> None:
+    async def run() -> None:
+        client = StreamingAgentClient()
+
+        assert client.http_client.is_closed is False
+        await client.close()
+        assert client.http_client.is_closed is True
+
+    asyncio.run(run())

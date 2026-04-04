@@ -10,7 +10,7 @@ from router_api.dependencies import get_orchestrator
 from router_api.app import create_router_app
 from router_api.sse.broker import EventBroker
 from router_core.agent_client import MockStreamingAgentClient, StreamingAgentClient
-from router_core.domain import IntentDefinition, utc_now
+from router_core.domain import IntentDefinition, TaskEvent, TaskStatus, utc_now
 from router_core.orchestrator import RouterOrchestrator
 
 
@@ -246,6 +246,165 @@ def test_transfer_resume_does_not_duplicate_tasks() -> None:
             assert len(snapshot["tasks"]) == 1
             task = snapshot["tasks"][0]
             assert task["intent_code"] == "transfer_money"
+
+    asyncio.run(run())
+
+
+def test_intent_switch_cancels_waiting_and_queued_tasks_before_dispatching_new_intent() -> None:
+    class MultiIntentCatalog:
+        def __init__(self) -> None:
+            self._intents = [
+                IntentDefinition(
+                    intent_code="query_account_balance",
+                    name="查询账户余额",
+                    description="查询账户余额",
+                    examples=["帮我查一下账户余额"],
+                    keywords=["余额", "账户"],
+                    agent_url="mock://query_account_balance",
+                    dispatch_priority=100,
+                    primary_threshold=0.68,
+                    candidate_threshold=0.45,
+                ),
+                IntentDefinition(
+                    intent_code="transfer_money",
+                    name="转账",
+                    description="执行转账",
+                    examples=["给张三转 200 元"],
+                    keywords=["转账", "张三", "元"],
+                    agent_url="mock://transfer_money",
+                    dispatch_priority=95,
+                    primary_threshold=0.62,
+                    candidate_threshold=0.42,
+                ),
+                IntentDefinition(
+                    intent_code="pay_bill",
+                    name="缴费",
+                    description="处理生活缴费",
+                    examples=["帮我缴费"],
+                    keywords=["缴费", "电费"],
+                    agent_url="mock://pay_bill",
+                    dispatch_priority=90,
+                    primary_threshold=0.68,
+                    candidate_threshold=0.45,
+                ),
+            ]
+
+        def list_active(self) -> list[IntentDefinition]:
+            return list(self._intents)
+
+        def priorities(self) -> dict[str, int]:
+            return {intent.intent_code: intent.dispatch_priority for intent in self._intents}
+
+    async def run() -> None:
+        events: list[TaskEvent] = []
+
+        orchestrator = RouterOrchestrator(
+            publish_event=events.append,
+            intent_catalog=MultiIntentCatalog(),
+            agent_client=MockStreamingAgentClient(),
+        )
+        app = create_router_app()
+        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我查账户余额，再给张三转账 200 元"},
+            )
+            assert first_turn.status_code == 200
+            first_tasks = {task["intent_code"]: task for task in first_turn.json()["snapshot"]["tasks"]}
+            assert first_tasks["query_account_balance"]["status"] == "waiting_user_input"
+            assert first_tasks["transfer_money"]["status"] == "queued"
+
+            second_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "算了，帮我缴费"},
+            )
+            assert second_turn.status_code == 200
+
+            tasks = {task["intent_code"]: task for task in second_turn.json()["snapshot"]["tasks"]}
+            assert tasks["query_account_balance"]["status"] == "cancelled"
+            assert tasks["transfer_money"]["status"] == "cancelled"
+            assert tasks["pay_bill"]["status"] == "completed"
+
+        cancelled_events = [event for event in events if event.event == "task.cancelled"]
+        assert len(cancelled_events) == 2
+
+    asyncio.run(run())
+
+
+def test_transfer_resume_replaces_conflicting_recipient_slots() -> None:
+    async def run() -> None:
+        app, _ = _test_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我给张三转账 200 元"},
+            )
+            assert first_turn.status_code == 200
+            first_task = first_turn.json()["snapshot"]["tasks"][0]
+            assert first_task["status"] == "waiting_user_input"
+            assert first_task["slot_memory"]["recipient_name"] == "张三"
+            assert first_task["slot_memory"]["amount"] == "200"
+
+            second_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "我要给李四转，卡号 6222021111111111，手机号后四位 1234"},
+            )
+            assert second_turn.status_code == 200
+            task = second_turn.json()["snapshot"]["tasks"][0]
+            assert task["status"] == "completed"
+            assert task["slot_memory"]["recipient_name"] == "李四"
+            assert task["slot_memory"]["recipient_card_number"] == "6222021111111111"
+            assert task["slot_memory"]["recipient_phone_last_four"] == "1234"
+            assert task["slot_memory"]["amount"] == "200"
+
+    asyncio.run(run())
+
+
+def test_stream_disconnect_cancels_waiting_task() -> None:
+    async def run() -> None:
+        broker = EventBroker(heartbeat_interval_seconds=0.01, max_idle_seconds=1.0)
+        orchestrator = RouterOrchestrator(
+            publish_event=broker.publish,
+            intent_catalog=_StaticCatalog(_mock_intents()),
+            agent_client=MockStreamingAgentClient(),
+        )
+        app = create_router_app()
+        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+        from router_api.dependencies import get_event_broker
+        app.dependency_overrides[get_event_broker] = lambda: broker
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            async with client.stream(
+                "POST",
+                f"/api/router/sessions/{session_id}/messages/stream",
+                json={"content": "帮我查一下账户余额"},
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                assert response.status_code == 200
+                async for chunk in response.aiter_text():
+                    if "task.waiting_user_input" in chunk:
+                        break
+
+            snapshot = await client.get(f"/api/router/sessions/{session_id}")
+            assert snapshot.status_code == 200
+            assert snapshot.json()["tasks"][0]["status"] == "cancelled"
 
     asyncio.run(run())
 

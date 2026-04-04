@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import time
-from threading import RLock
+from dataclasses import dataclass, field
 from typing import Callable
 
 from models.intent import IntentRecord, IntentStatus
 from persistence.intent_repository import IntentRepository
 from router_core.demo_intents import DEMO_INTENTS
 from router_core.domain import IntentDefinition
+from router_core.recognizer import extract_patterns
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSnapshot:
+    active: tuple[IntentDefinition, ...] = ()
+    fallback: IntentDefinition | None = None
+    priorities: dict[str, int] = field(default_factory=dict)
+    patterns: dict[str, set[str]] = field(default_factory=dict)
 
 
 class RepositoryIntentCatalog:
@@ -23,28 +32,29 @@ class RepositoryIntentCatalog:
         self.refresh_interval_seconds = refresh_interval_seconds
         self.use_demo_intents = use_demo_intents
         self.clock = clock or time.monotonic
-        self._lock = RLock()
-        self._active_cache: list[IntentDefinition] = []
-        self._fallback_cache: IntentDefinition | None = None
-        self._priorities_cache: dict[str, int] = {}
+        self._snapshot = CatalogSnapshot()
         self._last_refresh_at: float | None = None
 
     def list_active(self) -> list[IntentDefinition]:
         self._refresh_if_needed()
-        with self._lock:
-            return list(self._active_cache)
+        return list(self._snapshot.active)
 
     def priorities(self) -> dict[str, int]:
         self._refresh_if_needed()
-        with self._lock:
-            return dict(self._priorities_cache)
+        return dict(self._snapshot.priorities)
+
+    def patterns(self) -> dict[str, set[str]]:
+        self._refresh_if_needed()
+        return {
+            intent_code: set(patterns)
+            for intent_code, patterns in self._snapshot.patterns.items()
+        }
 
     def get_fallback_intent(self) -> IntentDefinition | None:
         self._refresh_if_needed()
-        with self._lock:
-            if self._fallback_cache is None:
-                return None
-            return self._fallback_cache.model_copy(deep=True)
+        if self._snapshot.fallback is None:
+            return None
+        return self._snapshot.fallback.model_copy(deep=True)
 
     def refresh_now(self) -> list[IntentDefinition]:
         active_records = self.repository.list_intents(IntentStatus.ACTIVE)
@@ -62,22 +72,27 @@ class RepositoryIntentCatalog:
 
         fallback_intents.sort(key=lambda intent: intent.dispatch_priority, reverse=True)
         fallback_intent = fallback_intents[0] if fallback_intents else None
-
-        with self._lock:
-            self._active_cache = routable_intents
-            self._fallback_cache = fallback_intent
-            self._priorities_cache = {
-                intent.intent_code: intent.dispatch_priority
-                for intent in [*routable_intents, *fallback_intents]
-            }
-            self._last_refresh_at = self.clock()
-            return list(self._active_cache)
+        priorities = {
+            intent.intent_code: intent.dispatch_priority
+            for intent in [*routable_intents, *fallback_intents]
+        }
+        patterns = {
+            intent.intent_code: extract_patterns(intent)
+            for intent in routable_intents
+        }
+        self._snapshot = CatalogSnapshot(
+            active=tuple(routable_intents),
+            fallback=fallback_intent,
+            priorities=priorities,
+            patterns=patterns,
+        )
+        self._last_refresh_at = self.clock()
+        return list(self._snapshot.active)
 
     def _refresh_if_needed(self) -> None:
-        with self._lock:
-            should_refresh = self._last_refresh_at is None or (
-                self.clock() - self._last_refresh_at >= self.refresh_interval_seconds
-            )
+        should_refresh = self._last_refresh_at is None or (
+            self.clock() - self._last_refresh_at >= self.refresh_interval_seconds
+        )
         if should_refresh:
             self.refresh_now()
 

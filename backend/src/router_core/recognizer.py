@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 import json
@@ -14,6 +15,8 @@ from router_core.prompt_templates import (
     build_recognizer_prompt,
 )
 
+
+logger = logging.getLogger(__name__)
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]{2,}")
 GENERIC_TERMS = {
@@ -76,7 +79,20 @@ class IntentRecognizer(Protocol):
 
 
 class SimpleIntentRecognizer:
-    """Direct phrase matcher for the MVP to keep routing deterministic."""
+    """Keyword/phrase-based intent recognizer — **last-resort fallback only**.
+
+    This recognizer uses regex tokenization and keyword matching.
+    It cannot handle synonyms, paraphrasing, context-dependent expressions,
+    or any form of semantic understanding.
+
+    It should **never** be the primary production recognizer.  Use
+    ``LLMIntentRecognizer`` for all production traffic; this class exists
+    solely as a degraded fallback when the LLM service is entirely
+    unavailable, or for offline/test scenarios.
+    """
+
+    def __init__(self, intent_catalog: object | None = None) -> None:
+        self.intent_catalog = intent_catalog
 
     async def recognize(
         self,
@@ -88,11 +104,12 @@ class SimpleIntentRecognizer:
     ) -> RecognitionResult:
         search_space = " ".join([message, *recent_messages[-2:], *long_term_memory]).lower()
         scored: list[tuple[IntentDefinition, float, str]] = []
+        precomputed_patterns = self._patterns_by_intent_code()
 
         for intent in intents:
             if intent.status != "active":
                 continue
-            patterns = extract_patterns(intent)
+            patterns = precomputed_patterns.get(intent.intent_code) or extract_patterns(intent)
             matches = sorted(pattern for pattern in patterns if pattern in search_space)
             if not matches:
                 continue
@@ -120,6 +137,24 @@ class SimpleIntentRecognizer:
                 candidates.append(match)
 
         return RecognitionResult(primary=primary, candidates=candidates)
+
+    def _patterns_by_intent_code(self) -> dict[str, set[str]]:
+        if self.intent_catalog is None:
+            return {}
+        getter = getattr(self.intent_catalog, "patterns", None)
+        if getter is None:
+            return {}
+        patterns = getter()
+        if not isinstance(patterns, dict):
+            return {}
+        normalized: dict[str, set[str]] = {}
+        for intent_code, values in patterns.items():
+            if not isinstance(intent_code, str):
+                continue
+            if not isinstance(values, set):
+                values = set(values)
+            normalized[intent_code] = {str(value).lower() for value in values}
+        return normalized
 
 
 class LLMIntentRecognizer:
@@ -170,6 +205,11 @@ class LLMIntentRecognizer:
             )
             response = IntentRecognitionPayload.model_validate(raw_response)
         except Exception:
+            logger.warning(
+                "LLM intent recognition failed, degrading to fallback recognizer (%s)",
+                type(self.fallback).__name__,
+                exc_info=True,
+            )
             return await self.fallback.recognize(message, active_intents, recent_messages, long_term_memory)
 
         raw_matches = response.matches

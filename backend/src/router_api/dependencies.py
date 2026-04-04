@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from functools import lru_cache
+from dataclasses import dataclass
+import logging
+
+from fastapi import Request
 
 from admin_api.dependencies import get_intent_repository
 from admin_api.dependencies import get_settings
@@ -9,18 +12,88 @@ from router_api.sse.broker import EventBroker
 from router_core.agent_client import StreamingAgentClient
 from router_core.intent_catalog import RepositoryIntentCatalog
 from router_core.llm_client import LangChainLLMClient
+from router_core.orchestrator import RouterOrchestrator, RouterOrchestratorConfig
 from router_core.prompt_templates import DEFAULT_RECOGNIZER_HUMAN_PROMPT, DEFAULT_RECOGNIZER_SYSTEM_PROMPT
-from router_core.orchestrator import RouterOrchestrator
 from router_core.recognizer import LLMIntentRecognizer, SimpleIntentRecognizer
 
 
-@lru_cache
-def get_event_broker() -> EventBroker:
-    return EventBroker()
+logger = logging.getLogger(__name__)
 
 
-@lru_cache
-def get_llm_client() -> LangChainLLMClient | None:
+@dataclass(slots=True)
+class RouterRuntime:
+    event_broker: EventBroker
+    llm_client: LangChainLLMClient | None
+    intent_catalog: RepositoryIntentCatalog
+    agent_client: StreamingAgentClient
+    orchestrator: RouterOrchestrator
+
+
+def _warn_simple_recognizer(
+    fallback: SimpleIntentRecognizer,
+    *,
+    recognizer_backend: str,
+    llm_available: bool,
+) -> SimpleIntentRecognizer:
+    logger.warning(
+        "Router recognizer is using SimpleIntentRecognizer fallback "
+        "(backend=%s, llm_available=%s). This path is keyword-only and should "
+        "not be used as the primary production recognizer.",
+        recognizer_backend,
+        llm_available,
+    )
+    return fallback
+
+
+def build_router_runtime() -> RouterRuntime:
+    settings = get_settings()
+    event_broker = EventBroker(
+        heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
+        max_idle_seconds=settings.router_sse_max_idle_seconds,
+    )
+    llm_client = _build_llm_client()
+    intent_catalog = RepositoryIntentCatalog(
+        get_intent_repository(),
+        refresh_interval_seconds=settings.router_intent_refresh_interval_seconds,
+        use_demo_intents=settings.router_use_demo_intents,
+    )
+    simple_recognizer = SimpleIntentRecognizer(intent_catalog=intent_catalog)
+    recognizer = (
+        LLMIntentRecognizer(
+            llm_client,
+            model=settings.llm_recognizer_model or settings.llm_model,
+            fallback=simple_recognizer,
+            system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
+            human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
+        )
+        if settings.recognizer_backend == "llm" and llm_client is not None
+        else _warn_simple_recognizer(
+            simple_recognizer,
+            recognizer_backend=settings.recognizer_backend,
+            llm_available=llm_client is not None,
+        )
+    )
+    agent_client = StreamingAgentClient(http_timeout_seconds=settings.agent_http_timeout_seconds)
+    orchestrator = RouterOrchestrator(
+        publish_event=event_broker.publish,
+        intent_catalog=intent_catalog,
+        recognizer=recognizer,
+        agent_client=agent_client,
+        config=RouterOrchestratorConfig(
+            intent_switch_threshold=settings.router_intent_switch_threshold,
+            agent_timeout_seconds=settings.router_agent_timeout_seconds,
+        ),
+    )
+    return RouterRuntime(
+        event_broker=event_broker,
+        llm_client=llm_client,
+        intent_catalog=intent_catalog,
+        agent_client=agent_client,
+        orchestrator=orchestrator,
+    )
+
+
+def _build_llm_client() -> LangChainLLMClient | None:
     settings = get_settings()
     if not settings.llm_connection_ready or settings.default_llm_model is None:
         return None
@@ -34,48 +107,54 @@ def get_llm_client() -> LangChainLLMClient | None:
     )
 
 
-@lru_cache
-def get_intent_catalog() -> RepositoryIntentCatalog:
-    settings = get_settings()
-    return RepositoryIntentCatalog(
-        get_intent_repository(),
-        refresh_interval_seconds=settings.router_intent_refresh_interval_seconds,
-        use_demo_intents=settings.router_use_demo_intents,
-    )
+def get_router_runtime(request: Request) -> RouterRuntime:
+    runtime = getattr(request.app.state, "router_runtime", None)
+    if runtime is None:
+        runtime = build_router_runtime()
+        request.app.state.router_runtime = runtime
+    return runtime
 
 
-@lru_cache
-def get_orchestrator() -> RouterOrchestrator:
-    settings = get_settings()
-    llm_client = get_llm_client()
-    recognizer = (
-        LLMIntentRecognizer(
-            llm_client,
-            model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=SimpleIntentRecognizer(),
-            system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
-            human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
-        )
-        if settings.recognizer_backend == "llm" and llm_client is not None
-        else SimpleIntentRecognizer()
-    )
-    return RouterOrchestrator(
-        publish_event=get_event_broker().publish,
-        intent_catalog=get_intent_catalog(),
-        recognizer=recognizer,
-        agent_client=StreamingAgentClient(http_timeout_seconds=settings.agent_http_timeout_seconds),
-    )
+def get_event_broker(request: Request) -> EventBroker:
+    return get_router_runtime(request).event_broker
 
 
-async def run_intent_catalog_refresh(stop_event: asyncio.Event) -> None:
-    settings = get_settings()
-    catalog = get_intent_catalog()
+def get_llm_client(request: Request) -> LangChainLLMClient | None:
+    return get_router_runtime(request).llm_client
+
+
+def get_intent_catalog(request: Request) -> RepositoryIntentCatalog:
+    return get_router_runtime(request).intent_catalog
+
+
+def get_orchestrator(request: Request) -> RouterOrchestrator:
+    return get_router_runtime(request).orchestrator
+
+
+async def close_router_runtime(runtime: RouterRuntime) -> None:
+    await runtime.agent_client.close()
+
+
+async def run_intent_catalog_refresh(
+    stop_event: asyncio.Event,
+    *,
+    catalog: RepositoryIntentCatalog,
+    refresh_interval_seconds: float,
+) -> None:
+    consecutive_failures = 0
     while not stop_event.is_set():
         try:
-            catalog.refresh_now()
-        except Exception:
-            pass
+            await asyncio.to_thread(catalog.refresh_now)
+            consecutive_failures = 0
+        except Exception as exc:
+            consecutive_failures += 1
+            logger.warning("intent catalog refresh failed: %s", exc)
+            if consecutive_failures >= 3:
+                logger.error(
+                    "intent catalog refresh has failed %s consecutive times",
+                    consecutive_failures,
+                )
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=settings.router_intent_refresh_interval_seconds)
+            await asyncio.wait_for(stop_event.wait(), timeout=refresh_interval_seconds)
         except asyncio.TimeoutError:
             continue

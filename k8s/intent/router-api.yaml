@@ -13,6 +13,7 @@ spec:
       labels:
         app: intent-router-api
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: router-api
           image: python:3.12-slim

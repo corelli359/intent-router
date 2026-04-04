@@ -14,12 +14,16 @@ CARD_RE = re.compile(r"\b(\d{12,19})\b")
 PHONE_LAST4_RE = re.compile(r"(?:后4位|后四位|尾号)\D*(\d{4})")
 FOUR_DIGITS_ONLY_RE = re.compile(r"^\D*(\d{4})\D*$")
 AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*元")
-NAME_RE = re.compile(r"(?:给|向|转给|转账给)([\u4e00-\u9fffA-Za-z]{2,16})")
+NAME_RE = re.compile(
+    r"(?:给|向|转给|转账给)([\u4e00-\u9fffA-Za-z]{2,16}?)(?=(?:转账|转|汇款|付款|支付|卡号|银行卡|手机号|尾号|后4位|后四位|金额|[，,。\s]|$))"
+)
 MISSING = object()
 
 
 class AgentClient(Protocol):
     async def stream(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]: ...
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None: ...
+    async def close(self) -> None: ...
 
 
 class MockStreamingAgentClient:
@@ -53,6 +57,12 @@ class MockStreamingAgentClient:
             ishandover=True,
             status=TaskStatus.FAILED,
         )
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
     def _handle_account_balance(self, task: Task, user_input: str) -> AgentStreamChunk:
         card = self._extract_card_number(user_input)
@@ -108,7 +118,7 @@ class MockStreamingAgentClient:
     async def _handle_transfer(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
         name_match = NAME_RE.search(user_input)
         if name_match:
-            task.slot_memory.setdefault("recipient_name", name_match.group(1))
+            task.slot_memory["recipient_name"] = name_match.group(1)
         card = self._extract_card_number(user_input)
         if card:
             task.slot_memory["recipient_card_number"] = card
@@ -287,8 +297,16 @@ class StreamingAgentClient:
     ) -> None:
         self.mock_client = MockStreamingAgentClient()
         self.payload_builder = RequestPayloadBuilder()
-        self.http_client = http_client
         self.http_timeout_seconds = http_timeout_seconds
+        self._owns_http_client = http_client is None
+        self.http_client = http_client or httpx.AsyncClient(
+            timeout=httpx.Timeout(http_timeout_seconds),
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=20,
+                keepalive_expiry=30.0,
+            ),
+        )
 
     async def stream(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
         if task.agent_url.startswith("mock://"):
@@ -310,15 +328,9 @@ class StreamingAgentClient:
             yield self._failure_chunk(task, str(exc))
             return
 
-        client = self.http_client
-        should_close_client = False
-        if client is None:
-            client = httpx.AsyncClient(timeout=self.http_timeout_seconds)
-            should_close_client = True
-
         emitted_chunk = False
         try:
-            async with client.stream(
+            async with self.http_client.stream(
                 "POST",
                 task.agent_url,
                 json=payload,
@@ -368,12 +380,27 @@ class StreamingAgentClient:
         except Exception as exc:
             yield self._failure_chunk(task, f"Agent HTTP request failed: {exc}")
             return
-        finally:
-            if should_close_client:
-                await client.aclose()
 
         if not emitted_chunk:
             yield self._failure_chunk(task, "Agent returned no stream events")
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        if agent_url is None or agent_url.startswith("mock://"):
+            await self.mock_client.cancel(session_id, task_id, agent_url)
+            return
+        if not agent_url.startswith(("http://", "https://")):
+            raise RuntimeError(f"Unsupported agent_url scheme: {agent_url}")
+
+        cancel_url = self._cancel_url(agent_url)
+        response = await self.http_client.post(
+            cancel_url,
+            json={"sessionId": session_id, "taskId": task_id},
+        )
+        response.raise_for_status()
+
+    async def close(self) -> None:
+        if self._owns_http_client:
+            await self.http_client.aclose()
 
     def _data_text_to_chunks(self, task: Task, text: str) -> list[AgentStreamChunk]:
         if not text or text == "[DONE]":
@@ -439,3 +466,10 @@ class StreamingAgentClient:
             ishandover=True,
             status=TaskStatus.FAILED,
         )
+
+    def _cancel_url(self, agent_url: str) -> str:
+        if agent_url.endswith("/run"):
+            return agent_url[:-4] + "/cancel"
+        if agent_url.endswith("/run/"):
+            return agent_url[:-5] + "/cancel"
+        return agent_url.rstrip("/") + "/cancel"

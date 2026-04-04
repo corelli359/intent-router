@@ -6,7 +6,8 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/affinity: "cookie"
     nginx.ingress.kubernetes.io/affinity-mode: "persistent"
-    nginx.ingress.kubernetes.io/session-cookie-name: "intent-router-affinity"
+    nginx.ingress.kubernetes.io/session-cookie-name: "ROUTER_SESSION"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "1800"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/app-root: /chat

@@ -16,7 +16,7 @@ from app import create_app  # noqa: E402
 from intent_agents.fallback_app import create_app as create_fallback_app  # noqa: E402
 from intent_agents.order_status_app import create_app as create_order_status_app  # noqa: E402
 from persistence.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
-from router_api.dependencies import get_event_broker, get_intent_catalog, get_llm_client, get_orchestrator  # noqa: E402
+from router_api.dependencies import get_orchestrator  # noqa: E402
 from router_core.agent_client import StreamingAgentClient  # noqa: E402
 from router_core.domain import IntentMatch  # noqa: E402
 from router_core.intent_catalog import RepositoryIntentCatalog  # noqa: E402
@@ -48,13 +48,13 @@ class RegistryAwareRecognizer:
         long_term_memory,
         on_delta=None,
     ) -> RecognitionResult:
-        if "订单" in message and any(intent.intent_code == "query_order_status" for intent in intents):
+        if "余额" in message and any(intent.intent_code == "query_account_balance" for intent in intents):
             return RecognitionResult(
                 primary=[
                     IntentMatch(
-                        intent_code="query_order_status",
+                        intent_code="query_account_balance",
                         confidence=0.92,
-                        reason="integration recognizer matched order query",
+                        reason="integration recognizer matched balance query",
                     )
                 ],
                 candidates=[],
@@ -73,11 +73,6 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
 
         get_settings.cache_clear()
         get_intent_repository.cache_clear()
-        get_llm_client.cache_clear()
-        get_intent_catalog.cache_clear()
-        get_orchestrator.cache_clear()
-        get_event_broker.cache_clear()
-
         repository = get_intent_repository()
         assert isinstance(repository, DatabaseIntentRepository)
 
@@ -107,10 +102,10 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
                 register_order = await client.post(
                     "/api/admin/intents",
                     json={
-                        "intent_code": "query_order_status",
-                        "name": "查询订单状态",
-                        "description": "查询订单状态、物流状态和订单进度",
-                        "examples": ["帮我查下订单状态", "订单 123 到哪了"],
+                        "intent_code": "query_account_balance",
+                        "name": "查询账户余额",
+                        "description": "查询账户余额和账户可用额度",
+                        "examples": ["帮我查下账户余额", "查一下余额"],
                         "agent_url": "http://intent-order-agent/api/agent/run",
                         "status": "inactive",
                         "is_fallback": False,
@@ -125,7 +120,8 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
                             "input": "$message.current",
                             "conversation.recentMessages": "$context.recent_messages",
                             "conversation.longTermMemory": "$context.long_term_memory",
-                            "order.orderId": "$slot_memory.order_id",
+                            "account.cardNumber": "$slot_memory.card_number",
+                            "account.phoneLast4": "$slot_memory.phone_last_four",
                         },
                         "resume_policy": "resume_same_task",
                     },
@@ -159,14 +155,14 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
                 )
                 assert register_fallback.status_code == 201
 
-                activate_order = await client.post("/api/admin/intents/query_order_status/activate")
+                activate_order = await client.post("/api/admin/intents/query_account_balance/activate")
                 activate_fallback = await client.post("/api/admin/intents/fallback_general/activate")
                 assert activate_order.status_code == 200
                 assert activate_fallback.status_code == 200
 
                 persisted = DatabaseIntentRepository(database_url)
                 assert [item.intent_code for item in persisted.list_intents()] == [
-                    "query_order_status",
+                    "query_account_balance",
                     "fallback_general",
                 ]
 
@@ -174,20 +170,20 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
 
                 first_turn = await client.post(
                     f"/api/router/sessions/{session_id}/messages",
-                    json={"content": "帮我查下订单状态"},
+                    json={"content": "帮我查下账户余额"},
                 )
                 assert first_turn.status_code == 200
                 first_snapshot = first_turn.json()["snapshot"]
-                assert first_snapshot["tasks"][0]["intent_code"] == "query_order_status"
+                assert first_snapshot["tasks"][0]["intent_code"] == "query_account_balance"
                 assert first_snapshot["tasks"][0]["status"] == "waiting_user_input"
 
                 second_turn = await client.post(
                     f"/api/router/sessions/{session_id}/messages",
-                    json={"content": "订单号 12345"},
+                    json={"content": "卡号 6222021234567890，手机号后四位 1234"},
                 )
                 assert second_turn.status_code == 200
                 second_snapshot = second_turn.json()["snapshot"]
-                assert second_snapshot["tasks"][0]["intent_code"] == "query_order_status"
+                assert second_snapshot["tasks"][0]["intent_code"] == "query_account_balance"
                 assert second_snapshot["tasks"][0]["status"] == "completed"
 
                 fallback_session_id = (await client.post("/api/router/sessions")).json()["session_id"]
@@ -203,9 +199,5 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
             await agent_http_client.aclose()
             get_settings.cache_clear()
             get_intent_repository.cache_clear()
-            get_llm_client.cache_clear()
-            get_intent_catalog.cache_clear()
-            get_orchestrator.cache_clear()
-            get_event_broker.cache_clear()
 
     asyncio.run(run())

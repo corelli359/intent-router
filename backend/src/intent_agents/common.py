@@ -85,6 +85,18 @@ class AgentExecutionResponse(BaseModel):
         )
 
 
+class AgentCancelRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(alias="sessionId")
+    task_id: str = Field(alias="taskId")
+
+
+class AgentCancelResponse(BaseModel):
+    status: Literal["cancelled"]
+    accepted: bool = True
+
+
 def _env_first(*names: str) -> str | None:
     for name in names:
         value = os.getenv(name)
