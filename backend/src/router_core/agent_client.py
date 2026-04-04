@@ -10,8 +10,11 @@ import httpx
 from router_core.domain import AgentStreamChunk, Task, TaskStatus
 
 
-ORDER_RE = re.compile(r"\b(\d{3,})\b")
+CARD_RE = re.compile(r"\b(\d{12,19})\b")
+PHONE_LAST4_RE = re.compile(r"(?:后4位|后四位|尾号)\D*(\d{4})")
+FOUR_DIGITS_ONLY_RE = re.compile(r"^\D*(\d{4})\D*$")
 AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*元")
+NAME_RE = re.compile(r"(?:给|向|转给|转账给)([\u4e00-\u9fffA-Za-z]{2,16})")
 MISSING = object()
 
 
@@ -24,17 +27,8 @@ class MockStreamingAgentClient:
 
     async def stream(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
         intent = task.intent_code
-        if intent == "query_order_status":
-            yield self._handle_order(task, user_input)
-            return
-        if intent == "cancel_appointment":
-            yield AgentStreamChunk(
-                task_id=task.task_id,
-                event="final",
-                content="明天的预约已取消",
-                ishandover=True,
-                status=TaskStatus.COMPLETED,
-            )
+        if intent == "query_account_balance":
+            yield self._handle_account_balance(task, user_input)
             return
         if intent == "update_shipping_address":
             yield self._handle_address(task, user_input)
@@ -60,25 +54,36 @@ class MockStreamingAgentClient:
             status=TaskStatus.FAILED,
         )
 
-    def _handle_order(self, task: Task, user_input: str) -> AgentStreamChunk:
-        match = ORDER_RE.search(user_input)
-        if match is None:
+    def _handle_account_balance(self, task: Task, user_input: str) -> AgentStreamChunk:
+        card = self._extract_card_number(user_input)
+        phone_last4 = self._extract_phone_last4(user_input)
+        if card:
+            task.slot_memory["card_number"] = card
+        if phone_last4:
+            task.slot_memory["phone_last_four"] = phone_last4
+
+        if "card_number" not in task.slot_memory and "phone_last_four" not in task.slot_memory:
+            message = "请提供卡号和手机号后4位"
+        elif "card_number" not in task.slot_memory:
+            message = "请提供卡号"
+        elif "phone_last_four" not in task.slot_memory:
+            message = "请提供手机号后4位"
+        else:
             return AgentStreamChunk(
                 task_id=task.task_id,
-                event="message",
-                content="请提供订单号",
-                ishandover=False,
-                status=TaskStatus.WAITING_USER_INPUT,
+                event="final",
+                content="查询成功，账户余额为 8000 元",
+                ishandover=True,
+                status=TaskStatus.COMPLETED,
+                payload={"balance": 8000, **dict(task.slot_memory)},
             )
-        order_id = match.group(1)
-        task.slot_memory["order_id"] = order_id
+
         return AgentStreamChunk(
             task_id=task.task_id,
-            event="final",
-            content=f"订单 {order_id} 当前状态为已发货",
-            ishandover=True,
-            status=TaskStatus.COMPLETED,
-            payload={"order_id": order_id},
+            event="message",
+            content=message,
+            ishandover=False,
+            status=TaskStatus.WAITING_USER_INPUT,
         )
 
     def _handle_address(self, task: Task, user_input: str) -> AgentStreamChunk:
@@ -101,42 +106,74 @@ class MockStreamingAgentClient:
         )
 
     async def _handle_transfer(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
-        if "张三" in user_input or "李四" in user_input:
-            task.slot_memory.setdefault("payee", "张三" if "张三" in user_input else "李四")
+        name_match = NAME_RE.search(user_input)
+        if name_match:
+            task.slot_memory.setdefault("recipient_name", name_match.group(1))
+        card = self._extract_card_number(user_input)
+        if card:
+            task.slot_memory["recipient_card_number"] = card
+        phone_last4 = self._extract_phone_last4(user_input)
+        if phone_last4:
+            task.slot_memory["recipient_phone_last_four"] = phone_last4
         amount_match = AMOUNT_RE.search(user_input)
         if amount_match:
             task.slot_memory["amount"] = amount_match.group(1)
-        if "工资卡" in user_input or "储蓄卡" in user_input:
-            task.slot_memory["funding_account"] = user_input
 
+        missing_fields: list[str] = []
+        if "recipient_name" not in task.slot_memory:
+            missing_fields.append("收款人姓名")
+        if "recipient_card_number" not in task.slot_memory:
+            missing_fields.append("收款卡号")
+        if "recipient_phone_last_four" not in task.slot_memory:
+            missing_fields.append("收款人手机号后4位")
         if "amount" not in task.slot_memory:
+            missing_fields.append("转账金额")
+
+        if missing_fields:
             yield AgentStreamChunk(
                 task_id=task.task_id,
                 event="message",
-                content="请提供转账金额",
+                content=f"请提供{'、'.join(missing_fields)}",
                 ishandover=False,
                 status=TaskStatus.WAITING_USER_INPUT,
             )
             return
-        if "funding_account" not in task.slot_memory:
+
+        amount = float(task.slot_memory["amount"])
+        if amount > 8000:
             yield AgentStreamChunk(
                 task_id=task.task_id,
-                event="message",
-                content="请确认付款账户",
-                ishandover=False,
-                status=TaskStatus.WAITING_USER_INPUT,
+                event="final",
+                content="账户余额不足",
+                ishandover=True,
+                status=TaskStatus.FAILED,
+                payload=dict(task.slot_memory),
             )
             return
-        amount = task.slot_memory["amount"]
-        payee = task.slot_memory.get("payee", "收款人")
+
+        amount_text = task.slot_memory["amount"]
+        recipient_name = task.slot_memory.get("recipient_name", "收款人")
         yield AgentStreamChunk(
             task_id=task.task_id,
             event="final",
-            content=f"已完成向 {payee} 转账 {amount} 元",
+            content=f"已向{recipient_name}转账 {amount_text} 元，转账成功",
             ishandover=True,
             status=TaskStatus.COMPLETED,
             payload=dict(task.slot_memory),
         )
+
+    def _extract_card_number(self, text: str) -> str | None:
+        match = CARD_RE.search(text)
+        return match.group(1) if match else None
+
+    def _extract_phone_last4(self, text: str) -> str | None:
+        match = PHONE_LAST4_RE.search(text)
+        if match:
+            return match.group(1)
+        exact_match = FOUR_DIGITS_ONLY_RE.match(text.strip())
+        if exact_match:
+            return exact_match.group(1)
+        return None
 
 
 class RequestPayloadBuilder:

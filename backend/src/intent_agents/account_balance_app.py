@@ -9,14 +9,14 @@ from intent_agents.common import AgentExecutionResponse, AgentLLMSettings, LangC
 
 
 @lru_cache
-def get_order_status_settings() -> AgentLLMSettings:
+def get_account_balance_settings() -> AgentLLMSettings:
     return AgentLLMSettings.from_env(prefix="ACCOUNT_BALANCE_AGENT", service_name="account-balance-agent")
 
 
 @lru_cache
-def get_order_status_service() -> AccountBalanceAgentService:
-    settings = get_order_status_settings()
-    resolver = LangChainJsonObjectRunner(settings) if settings.connection_ready else None
+def get_account_balance_service() -> AccountBalanceAgentService:
+    settings = get_account_balance_settings()
+    resolver = LangChainJsonObjectRunner(settings) if settings.connection_ready else None  # noqa: F821
     return AccountBalanceAgentService(resolver=resolver)
 
 
@@ -25,7 +25,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, object]:
-        settings = get_order_status_settings()
+        settings = get_account_balance_settings()
         return {
             "status": "ok",
             "service": settings.service_name,
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     @app.post("/api/agent/run", response_model=AgentExecutionResponse)
     async def run_agent(
         request: AccountBalanceAgentRequest,
-        service: AccountBalanceAgentService = Depends(get_order_status_service),
+        service: AccountBalanceAgentService = Depends(get_account_balance_service),
     ) -> AgentExecutionResponse:
         return await service.handle(request)
 

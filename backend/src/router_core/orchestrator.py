@@ -19,7 +19,7 @@ from router_core.domain import (
     utc_now,
 )
 from router_core.recognizer import IntentRecognizer, SimpleIntentRecognizer
-from router_core.task_queue import next_runnable_task, queue_pending_tasks, waiting_task
+from router_core.task_queue import next_runnable_task, queue_pending_tasks
 
 
 class LongTermMemoryStore:
@@ -139,7 +139,7 @@ class RouterOrchestrator:
         session.messages.append(ChatMessage(role="user", content=content))
         session.touch()
 
-        current_waiting_task = waiting_task(session)
+        current_waiting_task = self._get_waiting_task(session)
         if current_waiting_task is not None:
             current_waiting_task.touch(TaskStatus.RESUMING)
             session.active_task_id = current_waiting_task.task_id
@@ -246,6 +246,13 @@ class RouterOrchestrator:
         await self._publish_session_state(session, "session.recognized")
         await self._drain_queue(session, content)
         return self.snapshot(session.session_id)
+
+    def _get_waiting_task(self, session: SessionState) -> Task | None:
+        waiting = [task for task in session.tasks if task.status == TaskStatus.WAITING_USER_INPUT]
+        if not waiting:
+            return None
+        waiting.sort(key=lambda task: task.updated_at, reverse=True)
+        return waiting[0]
 
     async def _drain_queue(self, session: SessionState, user_input: str) -> None:
         while True:

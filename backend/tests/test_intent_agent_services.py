@@ -23,24 +23,27 @@ from intent_agents.cancel_appointment_service import (  # noqa: E402
 from intent_agents.order_status_app import create_app as create_order_status_app  # noqa: E402
 from intent_agents.order_status_app import get_order_status_service  # noqa: E402
 from intent_agents.order_status_service import OrderStatusAgentRequest, OrderStatusAgentService  # noqa: E402
+from intent_agents.transfer_money_service import (
+    TransferMoneyAgentRequest,
+    TransferMoneyAgentService,
+)
 
 
 class FakeJsonRunner:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
-        self.calls: list[dict[str, Any]] = []
 
     async def run_json(self, *, prompt, variables: dict[str, Any]) -> Any:
-        self.calls.append(variables)
         return self.payload
 
 
-def test_order_status_service_completes_when_order_id_is_resolved() -> None:
+def test_order_status_service_completes_when_balance_info_is_resolved() -> None:
     async def run() -> None:
         service = OrderStatusAgentService(
             resolver=FakeJsonRunner(
                 {
-                    "order_id": "12345",
+                    "card_number": "6222021234567890",
+                    "phone_last4": "1234",
                     "has_enough_information": True,
                     "ask_message": "",
                 }
@@ -50,41 +53,75 @@ def test_order_status_service_completes_when_order_id_is_resolved() -> None:
             OrderStatusAgentRequest(
                 sessionId="session_001",
                 taskId="task_001",
-                input="帮我查一下订单 12345",
-                conversation={"recentMessages": ["user: 帮我查一下订单 12345"]},
+                input="帮我查一下余额",
+                account={"cardNumber": "6222021234567890", "phoneLast4": "1234"},
+                conversation={"recentMessages": ["user: 帮我查一下余额"], "longTermMemory": []},
             )
         )
 
         assert response.status == "completed"
-        assert response.slot_memory["order_id"] == "12345"
-        assert response.payload["business_status"] == "shipped"
+        assert response.payload["balance"] == 8000
+        assert response.slot_memory["card_number"] == "6222021234567890"
 
     asyncio.run(run())
 
 
-def test_cancel_appointment_service_waits_without_date_or_reference() -> None:
+def test_order_status_service_ignores_transfer_memory_entries() -> None:
     async def run() -> None:
-        service = CancelAppointmentAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "appointment_date": None,
-                    "booking_reference": None,
-                    "has_enough_information": False,
-                    "ask_message": "请告诉我要取消哪一天的预约",
-                }
-            )
-        )
+        service = OrderStatusAgentService(resolver=None)
         response = await service.handle(
-            CancelAppointmentAgentRequest(
-                sessionId="session_002",
-                taskId="task_002",
-                input="帮我取消预约",
-                conversation={"recentMessages": ["user: 帮我取消预约"]},
+            OrderStatusAgentRequest(
+                sessionId="session_order_status_002",
+                taskId="task_order_status_002",
+                input="帮我查一下余额",
+                conversation={
+                    "recentMessages": ["user: 帮我查一下余额"],
+                    "longTermMemory": [
+                        "transfer_money: recipient_card_number=6222020100049999999, recipient_phone_last4=1234"
+                    ],
+                },
             )
         )
 
         assert response.status == "waiting_user_input"
-        assert response.content == "请告诉我要取消哪一天的预约"
+        assert response.payload["missing_fields"] == ["card_number", "phone_last_four"]
+
+    asyncio.run(run())
+
+
+def test_cancel_appointment_service_waits_without_transfer_fields() -> None:
+    async def run() -> None:
+        service = CancelAppointmentAgentService()
+        response = await service.handle(
+            CancelAppointmentAgentRequest(
+                sessionId="session_002",
+                taskId="task_002",
+                input="帮我转账",
+                conversation={"recentMessages": ["user: 帮我转账"], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "waiting_user_input"
+        assert "收款人姓名" in response.content
+
+    asyncio.run(run())
+
+
+def test_transfer_money_service_requires_card_and_phone() -> None:
+    async def run() -> None:
+        service = TransferMoneyAgentService()
+        response = await service.handle(
+            TransferMoneyAgentRequest(
+                sessionId="session_003",
+                taskId="task_003",
+                input="帮我给李四转 5000 元",
+                conversation={"recentMessages": ["user: 帮我给李四转 5000 元"], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "waiting_user_input"
+        assert "卡号" in response.content
+        assert "手机号" in response.content
 
     asyncio.run(run())
 
@@ -92,15 +129,7 @@ def test_cancel_appointment_service_waits_without_date_or_reference() -> None:
 def test_order_status_agent_http_app_returns_router_compatible_payload() -> None:
     async def run() -> None:
         app = create_order_status_app()
-        app.dependency_overrides[get_order_status_service] = lambda: OrderStatusAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "order_id": "9988",
-                    "has_enough_information": True,
-                    "ask_message": "",
-                }
-            )
-        )
+        app.dependency_overrides[get_order_status_service] = lambda: OrderStatusAgentService(resolver=None)
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -111,32 +140,24 @@ def test_order_status_agent_http_app_returns_router_compatible_payload() -> None
                 json={
                     "sessionId": "session_003",
                     "taskId": "task_003",
-                    "input": "查订单 9988",
-                    "conversation": {"recentMessages": ["user: 查订单 9988"], "longTermMemory": []},
+                    "input": "卡号 6222021234567890，手机号后四位 1234",
+                    "account": {"cardNumber": "6222021234567890", "phoneLast4": "1234"},
+                    "conversation": {"recentMessages": ["user: 查余额"], "longTermMemory": []},
                 },
             )
 
         assert response.status_code == 200
         payload = response.json()
         assert payload["status"] == "completed"
-        assert payload["slot_memory"]["order_id"] == "9988"
+        assert payload["payload"]["balance"] == 8000
 
     asyncio.run(run())
 
 
-def test_cancel_appointment_agent_http_app_uses_history_for_completion() -> None:
+def test_cancel_appointment_agent_http_app_returns_transfer_payload() -> None:
     async def run() -> None:
         app = create_cancel_appointment_app()
-        app.dependency_overrides[get_cancel_appointment_service] = lambda: CancelAppointmentAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "appointment_date": "明天",
-                    "booking_reference": None,
-                    "has_enough_information": True,
-                    "ask_message": "",
-                }
-            )
-        )
+        app.dependency_overrides[get_cancel_appointment_service] = lambda: CancelAppointmentAgentService()
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -147,17 +168,20 @@ def test_cancel_appointment_agent_http_app_uses_history_for_completion() -> None
                 json={
                     "sessionId": "session_004",
                     "taskId": "task_004",
-                    "input": "订单号 123",
-                    "conversation": {
-                        "recentMessages": ["user: 帮我查下订单，再帮我取消明天的预约", "user: 订单号 123"],
-                        "longTermMemory": [],
+                    "input": "给李四转 5000 元",
+                    "recipient": {
+                        "name": "李四",
+                        "cardNumber": "6222020100049999999",
+                        "phoneLast4": "1234",
                     },
+                    "transfer": {"amount": "5000"},
+                    "conversation": {"recentMessages": [], "longTermMemory": []},
                 },
             )
 
         assert response.status_code == 200
         payload = response.json()
         assert payload["status"] == "completed"
-        assert payload["payload"]["appointment_date"] == "明天"
+        assert payload["slot_memory"]["recipient_name"] == "李四"
 
     asyncio.run(run())

@@ -9,13 +9,13 @@ from intent_agents.transfer_money_service import TransferMoneyAgentRequest, Tran
 
 
 @lru_cache
-def get_cancel_appointment_settings() -> AgentLLMSettings:
+def get_transfer_money_settings() -> AgentLLMSettings:
     return AgentLLMSettings.from_env(prefix="TRANSFER_MONEY_AGENT", service_name="transfer-money-agent")
 
 
 @lru_cache
-def get_cancel_appointment_service() -> TransferMoneyAgentService:
-    settings = get_cancel_appointment_settings()
+def get_transfer_money_service() -> TransferMoneyAgentService:
+    settings = get_transfer_money_settings()
     resolver = LangChainJsonObjectRunner(settings) if settings.connection_ready else None
     return TransferMoneyAgentService(resolver=resolver)
 
@@ -25,7 +25,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, object]:
-        settings = get_cancel_appointment_settings()
+        settings = get_transfer_money_settings()
         return {
             "status": "ok",
             "service": settings.service_name,
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     @app.post("/api/agent/run", response_model=AgentExecutionResponse)
     async def run_agent(
         request: TransferMoneyAgentRequest,
-        service: TransferMoneyAgentService = Depends(get_cancel_appointment_service),
+        service: TransferMoneyAgentService = Depends(get_transfer_money_service),
     ) -> AgentExecutionResponse:
         return await service.handle(request)
 
