@@ -409,6 +409,50 @@ def test_stream_disconnect_cancels_waiting_task() -> None:
     asyncio.run(run())
 
 
+def test_events_disconnect_cancels_waiting_task() -> None:
+    async def run() -> None:
+        broker = EventBroker(heartbeat_interval_seconds=0.01, max_idle_seconds=1.0)
+        orchestrator = RouterOrchestrator(
+            publish_event=broker.publish,
+            intent_catalog=_StaticCatalog(_mock_intents()),
+            agent_client=MockStreamingAgentClient(),
+        )
+        app = create_router_app()
+        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+        from router_api.dependencies import get_event_broker
+
+        app.dependency_overrides[get_event_broker] = lambda: broker
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我查一下账户余额"},
+            )
+            assert response.status_code == 200
+            assert response.json()["snapshot"]["tasks"][0]["status"] == "waiting_user_input"
+
+            async with client.stream(
+                "GET",
+                f"/api/router/sessions/{session_id}/events",
+                headers={"Accept": "text/event-stream"},
+            ) as stream_response:
+                assert stream_response.status_code == 200
+                async for chunk in stream_response.aiter_text():
+                    if "event: heartbeat" in chunk:
+                        break
+
+            snapshot = await client.get(f"/api/router/sessions/{session_id}")
+            assert snapshot.status_code == 200
+            assert snapshot.json()["tasks"][0]["status"] == "cancelled"
+
+    asyncio.run(run())
+
+
 def test_expired_session_promotes_short_term_memory_to_customer_memory() -> None:
     async def run() -> None:
         app, orchestrator = _test_app_with_mock_orchestrator()

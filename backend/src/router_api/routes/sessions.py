@@ -4,7 +4,7 @@ import asyncio
 import json
 from contextlib import suppress
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, model_validator
 from starlette.responses import StreamingResponse
 
@@ -84,6 +84,7 @@ async def post_message(
 async def post_message_stream(
     session_id: str,
     request: MessageRequest,
+    http_request: Request,
     orchestrator: RouterOrchestrator = Depends(get_orchestrator),
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
@@ -98,6 +99,8 @@ async def post_message_stream(
         )
         try:
             while True:
+                if await http_request.is_disconnected():
+                    break
                 if processing_task.done() and queue.empty():
                     await processing_task
                     break
@@ -130,14 +133,25 @@ async def post_message_stream(
 @router.get("/sessions/{session_id}/events")
 async def stream_events(
     session_id: str,
+    request: Request,
     broker: EventBroker = Depends(get_event_broker),
     orchestrator: RouterOrchestrator = Depends(get_orchestrator),
 ) -> StreamingResponse:
     async def event_generator():
+        subscription = broker.subscribe(session_id)
         try:
-            async for event in broker.subscribe(session_id):
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(subscription.__anext__(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+                except StopAsyncIteration:
+                    break
                 yield _encode_sse(event.event, event.model_dump(mode="json"))
         finally:
+            await subscription.aclose()
             await orchestrator.cancel_waiting_tasks(session_id, reason="SSE stream disconnected")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
