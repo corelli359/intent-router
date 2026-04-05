@@ -10,6 +10,7 @@ from starlette.responses import StreamingResponse
 
 from router_api.dependencies import get_event_broker, get_orchestrator
 from router_api.sse.broker import EventBroker
+from router_core.domain import TaskEvent, TaskStatus
 from router_core.orchestrator import RouterOrchestrator
 
 
@@ -139,7 +140,16 @@ async def stream_events(
 ) -> StreamingResponse:
     async def event_generator():
         subscription = broker.subscribe(session_id)
+        initial_heartbeat = TaskEvent(
+            event="heartbeat",
+            task_id="session",
+            session_id=session_id,
+            intent_code="session",
+            status=TaskStatus.RUNNING,
+            message="heartbeat",
+        )
         try:
+            yield _encode_sse(initial_heartbeat.event, initial_heartbeat.model_dump(mode="json"))
             while True:
                 if await request.is_disconnected():
                     break
