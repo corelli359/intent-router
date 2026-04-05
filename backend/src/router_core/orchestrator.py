@@ -253,13 +253,6 @@ class RouterOrchestrator:
             previous_source_input = task.input_context.get("source_input")
             if isinstance(previous_source_input, str) and previous_source_input:
                 initial_source_input = previous_source_input
-        if (
-            task.status == TaskStatus.QUEUED
-            and not task.slot_memory
-            and isinstance(initial_source_input, str)
-            and initial_source_input
-        ):
-            effective_user_input = initial_source_input
         task.input_context = self.context_builder.build_task_context(
             session=session,
             task=task,

@@ -1108,6 +1108,7 @@ def test_multi_intent_serial_flow_over_http_agents_uses_history_on_resumed_turn(
         assert len(balance_agent_inputs) == 2
         assert len(transfer_agent_inputs) == 1
         transfer_payload = transfer_agent_inputs[0]
+        assert transfer_payload["input"] == "卡号 6222021234567890，手机号后四位 1234"
         source_text = " ".join(
             [
                 str(transfer_payload["input"]),

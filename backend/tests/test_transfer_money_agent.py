@@ -105,6 +105,48 @@ def test_transfer_money_service_completes_after_follow_up_details() -> None:
     asyncio.run(run())
 
 
+def test_transfer_money_service_merges_current_sensitive_slots_with_recent_user_context() -> None:
+    async def run() -> None:
+        service = TransferMoneyAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "recipient_name": "李四",
+                    "recipient_card_number": None,
+                    "recipient_phone_last4": None,
+                    "amount": "200",
+                    "has_enough_information": False,
+                    "ask_message": "",
+                }
+            )
+        )
+        response = await service.handle(
+            TransferMoneyAgentRequest(
+                sessionId="session_transfer_002a",
+                taskId="task_transfer_002a",
+                input="卡号 6222021234567890，手机号后四位 1234",
+                conversation={
+                    "recentMessages": [
+                        "user: 先查余额，再给李四转账 200 元",
+                        "assistant: 请提供卡号和手机号后4位",
+                        "user: 卡号 6222021234567890，手机号后四位 1234",
+                    ],
+                    "longTermMemory": [],
+                },
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.content == "已向李四转账 200 元，转账成功"
+        assert response.slot_memory == {
+            "recipient_name": "李四",
+            "recipient_card_number": "6222021234567890",
+            "recipient_phone_last_four": "1234",
+            "amount": "200",
+        }
+
+    asyncio.run(run())
+
+
 def test_transfer_money_service_fallback_does_not_pull_sensitive_history() -> None:
     async def run() -> None:
         service = TransferMoneyAgentService(resolver=None)

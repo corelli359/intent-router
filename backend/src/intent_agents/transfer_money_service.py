@@ -103,12 +103,7 @@ class TransferMoneyAgentService:
         )
 
     async def _resolve(self, request: TransferMoneyAgentRequest) -> TransferMoneyResolution:
-        seeded = TransferMoneyResolution(
-            recipient_name=self._normalize_name(request.recipient.name),
-            recipient_card_number=self._normalize_card_number(request.recipient.card_number),
-            recipient_phone_last4=self._normalize_phone_last4(request.recipient.phone_last4),
-            amount=self._normalize_amount(request.transfer.amount),
-        )
+        seeded = self._seed_context(request)
 
         if self.resolver is None:
             return self._heuristic_resolution(request, seeded)
@@ -209,6 +204,70 @@ class TransferMoneyAgentService:
         resolution.ask_message = self._ask_message(self._missing_fields(resolution))
         return resolution
 
+    def _seed_context(self, request: TransferMoneyAgentRequest) -> TransferMoneyResolution:
+        user_messages = self._filter_user_messages(request.conversation.recent_messages)
+
+        recipient_name = next(
+            (
+                value
+                for value in (
+                    self._normalize_name(request.recipient.name),
+                    self._extract_recipient_name(request.input),
+                    *[self._extract_recipient_name(item) for item in reversed(user_messages)],
+                )
+                if value
+            ),
+            None,
+        )
+        recipient_card_number = next(
+            (
+                value
+                for value in (
+                    self._normalize_card_number(request.recipient.card_number),
+                    self._extract_card_number(request.input),
+                )
+                if value
+            ),
+            None,
+        )
+        amount = next(
+            (
+                value
+                for value in (
+                    self._normalize_amount(request.transfer.amount),
+                    self._extract_amount(
+                        request.input,
+                        allow_standalone=bool(
+                            recipient_name
+                            or recipient_card_number
+                            or self._normalize_phone_last4(request.recipient.phone_last4)
+                        ),
+                    ),
+                    *[self._extract_amount(item, allow_standalone=False) for item in reversed(user_messages)],
+                )
+                if value
+            ),
+            None,
+        )
+        recipient_phone_last4 = next(
+            (
+                value
+                for value in (
+                    self._normalize_phone_last4(request.recipient.phone_last4),
+                    self._extract_phone_last4(request.input, allow_standalone=bool(amount)),
+                )
+                if value
+            ),
+            None,
+        )
+
+        return TransferMoneyResolution(
+            recipient_name=recipient_name,
+            recipient_card_number=recipient_card_number,
+            recipient_phone_last4=recipient_phone_last4,
+            amount=amount,
+        )
+
     def _extract_recipient_name(self, text: str) -> str | None:
         match = NAME_RE.search(text)
         if match:
@@ -243,6 +302,9 @@ class TransferMoneyAgentService:
         if allow_standalone and text.strip().isdigit():
             return self._normalize_amount(text.strip())
         return None
+
+    def _filter_user_messages(self, entries: list[str]) -> list[str]:
+        return [entry for entry in entries if entry.strip().lower().startswith("user:")]
 
     def _normalize_name(self, value: str | None) -> str | None:
         if value is None:
