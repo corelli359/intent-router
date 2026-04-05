@@ -543,6 +543,7 @@ export class IntentRouterApiClient {
       },
       body: JSON.stringify({
         task_id: input.taskId,
+        cust_id: input.custId,
         source: input.source,
         action_code: input.actionCode,
         confirm_token: input.confirmToken,

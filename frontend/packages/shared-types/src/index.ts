@@ -144,6 +144,7 @@ export interface SessionCreateInput {
 
 export interface SessionActionInput {
   sessionId: string;
+  custId?: string;
   taskId: string;
   source: InteractionSource;
   actionCode: string;

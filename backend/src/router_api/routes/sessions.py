@@ -60,8 +60,20 @@ class ActionRequest(BaseModel):
         self.action_code = resolved_code
         self.task_id = self.task_id or self.taskId
         self.confirm_token = self.confirm_token or self.confirmToken
-        self.cust_id = self.cust_id or "cust_demo"
         return self
+
+
+def _resolve_action_cust_id(
+    orchestrator: RouterOrchestrator,
+    session_id: str,
+    request: ActionRequest,
+) -> str:
+    if request.cust_id:
+        return request.cust_id
+    try:
+        return orchestrator.snapshot(session_id).cust_id
+    except KeyError:
+        return "cust_demo"
 
 
 def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
@@ -110,10 +122,11 @@ async def post_action(
     request: ActionRequest,
     orchestrator: RouterOrchestrator = Depends(get_orchestrator),
 ):
+    resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
     try:
         snapshot = await orchestrator.handle_action(
             session_id=session_id,
-            cust_id=request.cust_id or "cust_demo",
+            cust_id=resolved_cust_id,
             action_code=request.action_code or "",
             source=request.source,
             task_id=request.task_id,
@@ -133,12 +146,14 @@ async def post_action_stream(
     orchestrator: RouterOrchestrator = Depends(get_orchestrator),
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
+    resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
+
     async def event_generator():
         queue = broker.register(session_id)
         processing_task = asyncio.create_task(
             orchestrator.handle_action(
                 session_id=session_id,
-                cust_id=request.cust_id or "cust_demo",
+                cust_id=resolved_cust_id,
                 action_code=request.action_code or "",
                 source=request.source,
                 task_id=request.task_id,

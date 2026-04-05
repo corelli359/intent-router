@@ -522,6 +522,39 @@ def test_cancel_plan_closes_plan_and_tasks() -> None:
     asyncio.run(run())
 
 
+def test_confirm_plan_without_cust_id_reuses_existing_session_customer() -> None:
+    async def run() -> None:
+        app, _, _ = _test_stream_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions", json={"cust_id": "cust_demo_001"})).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "先查余额，再转账 100 元", "cust_id": "cust_demo_001"},
+            )
+            assert first_turn.status_code == 200
+            confirm_token = first_turn.json()["snapshot"]["pending_plan"]["confirm_token"]
+
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/actions",
+                json={
+                    "task_id": "session",
+                    "source": "router",
+                    "action_code": "confirm_plan",
+                    "confirm_token": confirm_token,
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["cust_id"] == "cust_demo_001"
+            assert len(snapshot["tasks"]) == 2
+
+    asyncio.run(run())
+
+
 def test_waiting_transfer_slots_continue_without_switching_to_balance() -> None:
     async def run() -> None:
         app, _ = _test_app_with_mock_orchestrator()

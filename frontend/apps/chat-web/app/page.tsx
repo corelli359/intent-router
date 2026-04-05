@@ -472,6 +472,7 @@ export default function ChatPage() {
     try {
       const snapshot = await api.sendSessionAction({
         sessionId,
+        custId,
         taskId: "session",
         source: "router",
         actionCode,
