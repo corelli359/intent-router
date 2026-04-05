@@ -205,13 +205,24 @@ class RouterOrchestrator:
 
     async def _drain_queue(self, session: SessionState, user_input: str) -> None:
         while True:
+            blocking_task = self._get_waiting_task(session)
+            if blocking_task is not None:
+                session.active_task_id = blocking_task.task_id
+                await self._publish_session_state(
+                    session,
+                    "session.waiting_confirmation"
+                    if blocking_task.status == TaskStatus.WAITING_CONFIRMATION
+                    else "session.waiting_user_input",
+                )
+                return
+
             next_task = next_runnable_task(session, self.intent_catalog.priorities())
             if next_task is None:
                 session.active_task_id = None
                 await self._publish_session_state(session, "session.idle")
                 return
             session.active_task_id = next_task.task_id
-            await self._run_task(session, next_task, user_input)
+            await self._run_task(session, next_task, self._task_dispatch_input(next_task, user_input))
             if next_task.status == TaskStatus.COMPLETED:
                 continue
             if next_task.status == TaskStatus.FAILED:
@@ -245,6 +256,20 @@ class RouterOrchestrator:
                 next_task.status,
             )
             return
+
+    def _task_dispatch_input(self, task: Task, fallback_user_input: str) -> str:
+        if task.status != TaskStatus.QUEUED:
+            return fallback_user_input
+
+        initial_source_input = task.input_context.get("initial_source_input")
+        if isinstance(initial_source_input, str) and initial_source_input:
+            return initial_source_input
+
+        source_input = task.input_context.get("source_input")
+        if isinstance(source_input, str) and source_input:
+            return source_input
+
+        return fallback_user_input
 
     async def _run_task(self, session: SessionState, task: Task, user_input: str) -> None:
         effective_user_input = user_input
@@ -772,17 +797,14 @@ class RouterOrchestrator:
         if not task.slot_memory:
             return set()
 
+        standalone_digits_role = self._standalone_digits_role_for_conflict(task, user_input)
         has_name = NAME_CUE_RE.search(user_input) is not None
-        has_card = CARD_NUMBER_RE.search(user_input) is not None
-        has_phone = PHONE_LAST4_RE.search(user_input) is not None or FOUR_DIGITS_ONLY_RE.match(user_input.strip()) is not None
+        has_card = CARD_NUMBER_RE.search(user_input) is not None or standalone_digits_role == "card"
+        has_phone = PHONE_LAST4_RE.search(user_input) is not None or standalone_digits_role == "phone"
         has_amount = (
             AMOUNT_RE.search(user_input) is not None
             or AMOUNT_LABEL_RE.search(user_input) is not None
-            or (
-                any("amount" in key.lower() for key in task.slot_memory)
-                and user_input.strip().isdigit()
-                and len(user_input.strip()) != 4
-            )
+            or standalone_digits_role == "amount"
         )
 
         keys_to_clear: set[str] = set()
@@ -800,6 +822,27 @@ class RouterOrchestrator:
             if has_amount and ("amount" in lowered or "money" in lowered):
                 keys_to_clear.add(key)
         return keys_to_clear
+
+    def _standalone_digits_role_for_conflict(self, task: Task, user_input: str) -> str | None:
+        stripped = user_input.strip()
+        if not stripped.isdigit():
+            return None
+
+        has_phone_slot = any("phone" in key.lower() or "mobile" in key.lower() for key in task.slot_memory)
+        has_amount_slot = any("amount" in key.lower() or "money" in key.lower() for key in task.slot_memory)
+        length = len(stripped)
+
+        if 12 <= length <= 19:
+            return "card"
+        if length == 11:
+            return "phone"
+        if length == 4:
+            if has_phone_slot and not has_amount_slot:
+                return "amount"
+            if has_amount_slot and not has_phone_slot:
+                return "phone"
+            return None
+        return "amount"
 
     def _contains_fast_cancel(self, content: str) -> bool:
         normalized = re.sub(r"\s+", "", content)

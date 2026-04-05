@@ -37,7 +37,6 @@ class MessageRequest(BaseModel):
         if self.content is None and self.message is None:
             raise ValueError("content or message is required")
         self.content = self.content or self.message
-        self.cust_id = self.cust_id or "cust_demo"
         return self
 
 
@@ -67,6 +66,19 @@ def _resolve_action_cust_id(
     orchestrator: RouterOrchestrator,
     session_id: str,
     request: ActionRequest,
+) -> str:
+    if request.cust_id:
+        return request.cust_id
+    try:
+        return orchestrator.snapshot(session_id).cust_id
+    except KeyError:
+        return "cust_demo"
+
+
+def _resolve_message_cust_id(
+    orchestrator: RouterOrchestrator,
+    session_id: str,
+    request: MessageRequest,
 ) -> str:
     if request.cust_id:
         return request.cust_id
@@ -108,9 +120,10 @@ async def post_message(
     request: MessageRequest,
     orchestrator: RouterOrchestrator = Depends(get_orchestrator),
 ):
+    resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     snapshot = await orchestrator.handle_user_message(
         session_id=session_id,
-        cust_id=request.cust_id or "cust_demo",
+        cust_id=resolved_cust_id,
         content=request.content or "",
     )
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
@@ -201,12 +214,14 @@ async def post_message_stream(
     orchestrator: RouterOrchestrator = Depends(get_orchestrator),
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
+    resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
+
     async def event_generator():
         queue = broker.register(session_id)
         processing_task = asyncio.create_task(
             orchestrator.handle_user_message(
                 session_id=session_id,
-                cust_id=request.cust_id or "cust_demo",
+                cust_id=resolved_cust_id,
                 content=request.content or "",
             )
         )
@@ -230,7 +245,6 @@ async def post_message_stream(
                 processing_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await processing_task
-            await orchestrator.cancel_waiting_tasks(session_id, reason="SSE stream disconnected")
 
     return StreamingResponse(
         event_generator(),
@@ -274,6 +288,5 @@ async def stream_events(
                 yield _encode_sse(event.event, event.model_dump(mode="json"))
         finally:
             await subscription.aclose()
-            await orchestrator.cancel_waiting_tasks(session_id, reason="SSE stream disconnected")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

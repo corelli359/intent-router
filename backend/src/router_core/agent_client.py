@@ -236,6 +236,16 @@ class RequestPayloadBuilder:
                     continue
                 self._set_nested_value(payload, target_path, value)
 
+        payload.setdefault(
+            "intent",
+            {
+                "code": task.intent_code,
+                "name": task.intent_name,
+                "description": task.intent_description,
+                "examples": list(task.intent_examples),
+            },
+        )
+
         self._validate_required_fields(payload, task.request_schema)
         return payload
 
@@ -245,6 +255,12 @@ class RequestPayloadBuilder:
             "taskId": task.task_id,
             "intentCode": task.intent_code,
             "input": user_input,
+            "intent": {
+                "code": task.intent_code,
+                "name": task.intent_name,
+                "description": task.intent_description,
+                "examples": list(task.intent_examples),
+            },
             "context": {
                 "recentMessages": task.input_context.get("recent_messages", []),
                 "longTermMemory": task.input_context.get("long_term_memory", []),

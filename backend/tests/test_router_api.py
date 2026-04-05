@@ -376,6 +376,44 @@ def test_stream_message_endpoint_emits_sse_events_then_snapshot() -> None:
     asyncio.run(run())
 
 
+def test_sequential_message_streams_resume_waiting_task_instead_of_creating_new_task() -> None:
+    async def run() -> None:
+        app, _ = _test_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            async with client.stream(
+                "POST",
+                f"/api/router/sessions/{session_id}/messages/stream",
+                json={"content": "帮我查一下账户余额"},
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                assert response.status_code == 200
+                async for chunk in response.aiter_text():
+                    if "task.waiting_user_input" in chunk:
+                        break
+
+            async with client.stream(
+                "POST",
+                f"/api/router/sessions/{session_id}/messages/stream",
+                json={"content": "卡号 6222021234567890，手机号后四位 1234"},
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                assert response.status_code == 200
+                body = ""
+                async for chunk in response.aiter_text():
+                    body += chunk
+
+            assert "event: task.resuming" in body
+            assert "event: task.created" not in body
+            assert "event: task.completed" in body
+
+    asyncio.run(run())
+
+
 def test_plan_card_emitted_before_execution_and_tracks_router_source() -> None:
     async def run() -> None:
         app, _, _ = _test_stream_app_with_mock_orchestrator()
@@ -555,6 +593,53 @@ def test_confirm_plan_without_cust_id_reuses_existing_session_customer() -> None
     asyncio.run(run())
 
 
+def test_post_message_without_cust_id_reuses_existing_session_customer() -> None:
+    async def run() -> None:
+        app, _ = _test_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions", json={"cust_id": "cust_demo_001"})).json()["session_id"]
+
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我查一下账户余额"},
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["cust_id"] == "cust_demo_001"
+            assert snapshot["tasks"][0]["status"] == "waiting_user_input"
+
+    asyncio.run(run())
+
+
+def test_stream_message_without_cust_id_reuses_existing_session_customer() -> None:
+    async def run() -> None:
+        app, _, _ = _test_stream_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions", json={"cust_id": "cust_demo_001"})).json()["session_id"]
+
+            async with client.stream(
+                "POST",
+                f"/api/router/sessions/{session_id}/messages/stream",
+                json={"content": "先查余额，再转账 100 元"},
+                headers={"Accept": "text/event-stream"},
+            ) as response:
+                assert response.status_code == 200
+                body = await response.aread()
+                assert b"event: session.plan.proposed" in body
+
+            snapshot = (await client.get(f"/api/router/sessions/{session_id}")).json()
+            assert snapshot["cust_id"] == "cust_demo_001"
+            assert snapshot["pending_plan"]["status"] == "waiting_confirmation"
+
+    asyncio.run(run())
+
+
 def test_waiting_transfer_slots_continue_without_switching_to_balance() -> None:
     async def run() -> None:
         app, _ = _test_app_with_mock_orchestrator()
@@ -612,6 +697,92 @@ def test_transfer_task_supports_multiple_rounds() -> None:
             assert final_turn.status_code == 200
             task = final_turn.json()["snapshot"]["tasks"][0]
             assert task["status"] == "completed"
+
+    asyncio.run(run())
+
+
+def test_waiting_balance_task_blocks_queued_transfer_from_consuming_same_input() -> None:
+    async def run() -> None:
+        app, _ = _test_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我查账户余额，再给张三转账 200 元"},
+            )
+            assert first_turn.status_code == 200
+            confirm_token = first_turn.json()["snapshot"]["pending_plan"]["confirm_token"]
+
+            confirm_turn = await client.post(
+                f"/api/router/sessions/{session_id}/actions",
+                json={
+                    "task_id": "session",
+                    "source": "router",
+                    "action_code": "confirm_plan",
+                    "confirm_token": confirm_token,
+                },
+            )
+            assert confirm_turn.status_code == 200
+            confirmed_snapshot = confirm_turn.json()["snapshot"]
+            task_by_intent = {task["intent_code"]: task for task in confirmed_snapshot["tasks"]}
+            assert task_by_intent["query_account_balance"]["status"] == "waiting_user_input"
+            assert task_by_intent["transfer_money"]["status"] == "queued"
+
+            second_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "6000000000,6666"},
+            )
+            assert second_turn.status_code == 200
+
+            snapshot = second_turn.json()["snapshot"]
+            task_by_intent = {task["intent_code"]: task for task in snapshot["tasks"]}
+            assert task_by_intent["query_account_balance"]["status"] == "waiting_user_input"
+            assert task_by_intent["transfer_money"]["status"] == "queued"
+            assert task_by_intent["transfer_money"]["slot_memory"] == {}
+            assert snapshot["messages"][-1]["content"] == "请提供卡号和手机号后4位"
+
+    asyncio.run(run())
+
+
+def test_transfer_resume_keeps_phone_slot_when_standalone_amount_arrives() -> None:
+    async def run() -> None:
+        app, _ = _test_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            start = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我给张三转账"},
+            )
+            assert start.status_code == 200
+            task = start.json()["snapshot"]["tasks"][0]
+            assert task["status"] == "waiting_user_input"
+
+            fill_card_and_phone = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "卡号 6222021111111111，手机号后四位 1234"},
+            )
+            assert fill_card_and_phone.status_code == 200
+            task = fill_card_and_phone.json()["snapshot"]["tasks"][0]
+            assert task["status"] == "waiting_user_input"
+            assert task["slot_memory"]["recipient_phone_last_four"] == "1234"
+
+            finish = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "5000"},
+            )
+            assert finish.status_code == 200
+            task = finish.json()["snapshot"]["tasks"][0]
+            assert task["status"] == "completed"
+            assert task["slot_memory"]["recipient_phone_last_four"] == "1234"
+            assert task["slot_memory"]["amount"] == "5000"
 
     asyncio.run(run())
 
@@ -799,7 +970,7 @@ def test_transfer_resume_replaces_conflicting_recipient_slots() -> None:
     asyncio.run(run())
 
 
-def test_stream_disconnect_cancels_waiting_task() -> None:
+def test_stream_disconnect_keeps_waiting_task() -> None:
     async def run() -> None:
         broker = EventBroker(heartbeat_interval_seconds=0.01, max_idle_seconds=1.0)
         orchestrator = RouterOrchestrator(
@@ -831,12 +1002,12 @@ def test_stream_disconnect_cancels_waiting_task() -> None:
 
             snapshot = await client.get(f"/api/router/sessions/{session_id}")
             assert snapshot.status_code == 200
-            assert snapshot.json()["tasks"][0]["status"] == "cancelled"
+            assert snapshot.json()["tasks"][0]["status"] == "waiting_user_input"
 
     asyncio.run(run())
 
 
-def test_events_disconnect_cancels_waiting_task() -> None:
+def test_events_disconnect_keeps_waiting_task() -> None:
     async def run() -> None:
         broker = EventBroker(heartbeat_interval_seconds=0.01, max_idle_seconds=1.0)
         orchestrator = RouterOrchestrator(
@@ -875,7 +1046,7 @@ def test_events_disconnect_cancels_waiting_task() -> None:
 
             snapshot = await client.get(f"/api/router/sessions/{session_id}")
             assert snapshot.status_code == 200
-            assert snapshot.json()["tasks"][0]["status"] == "cancelled"
+            assert snapshot.json()["tasks"][0]["status"] == "waiting_user_input"
 
     asyncio.run(run())
 
@@ -1141,7 +1312,7 @@ def test_multi_intent_serial_flow_over_http_agents_uses_history_on_resumed_turn(
         assert len(balance_agent_inputs) == 2
         assert len(transfer_agent_inputs) == 1
         transfer_payload = transfer_agent_inputs[0]
-        assert transfer_payload["input"] == "卡号 6222021234567890，手机号后四位 1234"
+        assert transfer_payload["input"] == "帮我查账户余额，再给张三转 200 元"
         source_text = " ".join(
             [
                 str(transfer_payload["input"]),

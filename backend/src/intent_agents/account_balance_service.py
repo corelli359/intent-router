@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -10,21 +9,10 @@ from intent_agents.common import (
     AgentConversationContext,
     AgentCustomer,
     AgentExecutionResponse,
+    AgentIntentContext,
     JsonObjectRunner,
     dump_json,
 )
-
-
-CARD_NUMBER_RE = re.compile(r"\b(\d{12,19})\b")
-EXPLICIT_BALANCE_CARD_RE = re.compile(
-    r"(?:(?:我的|本人|本人的)\s*)?(?<!收款)(?<!对方)(?<!目标)(?:银行卡号|银行卡|卡号)\D*([0-9][0-9\s-]{10,30}[0-9])"
-)
-EXPLICIT_BALANCE_PHONE_RE = re.compile(
-    r"(?:(?:我的|本人|本人的)\s*)?(?<!收款)(?<!对方)(?<!目标)(?:手机号?(?:后4位|后四位|末4位|末四位|尾号)|后4位|后四位|尾号)\D*(\d{4})"
-)
-PHONE_NUMBER_RE = re.compile(r"\b1\d{10}\b")
-FOUR_DIGITS_ONLY_RE = re.compile(r"^\D*(\d{4})\D*$")
-BALANCE_INTENT_MEMORY_PREFIXES = ("query_account_balance", "order_status")
 
 
 class BalanceAccount(BaseModel):
@@ -42,6 +30,7 @@ class AccountBalanceAgentRequest(BaseModel):
     input: str
     customer: AgentCustomer = Field(default_factory=AgentCustomer)
     conversation: AgentConversationContext = Field(default_factory=AgentConversationContext)
+    intent: AgentIntentContext = Field(default_factory=AgentIntentContext)
     account: BalanceAccount = Field(default_factory=BalanceAccount)
 
 
@@ -52,17 +41,61 @@ class AccountBalanceResolution(BaseModel):
     ask_message: str = "请提供卡号和手机号后4位"
 
 
+ACCOUNT_BALANCE_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            (
+                "你是银行账户余额查询场景里的要素填充器。"
+                "上游已经把请求路由到了 query_account_balance。"
+                "你不做意图识别，不回答业务结果，不执行查询，只做槽位提取。"
+                "你必须只输出 JSON，不能输出解释。"
+                "当前任务只关心两个槽位：card_number 和 phone_last4。"
+                "规则："
+                "1. 优先保留 current_slots 里已经确认的值；当前输入只补充缺失槽位时，不能清空已有槽位。"
+                "2. 用户可能一次性提供两个值，例如“6000000000,6666”，也可能分多轮补充。"
+                "3. 不要猜测，不要从无关意图历史里补全敏感信息。"
+                "4. 如果信息不足，has_enough_information 必须为 false，并给出简洁的 ask_message。"
+                "5. 输出的 card_number 只保留卡号本身，输出的 phone_last4 只保留 4 位尾号。"
+                "示例："
+                "A. current_slots 为空，current_input='6000000000,6666' 时，"
+                "应返回 card_number='6000000000'、phone_last4='6666'、has_enough_information=true。"
+                "B. current_slots.card_number 已有值，current_input='1234' 时，"
+                "应保留已有 card_number，并把 phone_last4 识别为 '1234'。"
+            ),
+        ),
+        (
+            "human",
+            (
+                "intent(JSON):\n{intent_json}\n\n"
+                "current_input:\n{input_text}\n\n"
+                "current_slots(JSON):\n{account_json}\n\n"
+                "recent_messages(JSON):\n{recent_messages_json}\n\n"
+                "long_term_memory(JSON):\n{long_term_memory_json}\n\n"
+                "请返回 JSON:\n"
+                "{{\n"
+                '  "card_number": "string | null",\n'
+                '  "phone_last4": "string | null",\n'
+                '  "has_enough_information": true,\n'
+                '  "ask_message": "string"\n'
+                "}}"
+            ),
+        ),
+    ]
+)
+
+
 class AccountBalanceAgentService:
     def __init__(self, *, resolver: JsonObjectRunner | None = None) -> None:
         self.resolver = resolver
 
     async def handle(self, request: AccountBalanceAgentRequest) -> AgentExecutionResponse:
-        resolution = await self._resolve(request)
-        slot_memory: dict[str, Any] = {}
-        if resolution.card_number:
-            slot_memory["card_number"] = resolution.card_number
-        if resolution.phone_last4:
-            slot_memory["phone_last_four"] = resolution.phone_last4
+        seeded = AccountBalanceResolution(
+            card_number=self._normalize_card_number(request.account.card_number),
+            phone_last4=self._normalize_phone_last4(request.account.phone_last4),
+        )
+        resolution = await self._resolve(request, seeded)
+        slot_memory = self._slot_memory(resolution)
 
         if resolution.has_enough_information:
             return AgentExecutionResponse.completed(
@@ -78,7 +111,7 @@ class AccountBalanceAgentService:
             )
 
         return AgentExecutionResponse.waiting(
-            self._ask_message(resolution.card_number, resolution.phone_last4),
+            resolution.ask_message,
             slot_memory=slot_memory,
             payload={
                 "agent": "query_account_balance",
@@ -86,167 +119,60 @@ class AccountBalanceAgentService:
             },
         )
 
-    async def _resolve(self, request: AccountBalanceAgentRequest) -> AccountBalanceResolution:
-        seeded_card_number, seeded_phone_last4 = self._seed_context(request)
+    async def _resolve(
+        self,
+        request: AccountBalanceAgentRequest,
+        seeded: AccountBalanceResolution,
+    ) -> AccountBalanceResolution:
         if self.resolver is None:
-            return self._heuristic_resolution(seeded_card_number, seeded_phone_last4)
-
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    (
-                        "你是账户余额查询服务里的参数解析器。"
-                        "不要直接回答用户问题，只输出 JSON。"
-                        "目标是判断是否已经拿到查询余额所需的 card_number 和 phone_last4。"
-                        "如果信息不够，不要猜测。"
-                    ),
-                ),
-                (
-                    "human",
-                    (
-                        "当前输入:\n{input_text}\n\n"
-                        "当前已知账户信息(JSON):\n{account_json}\n\n"
-                        "最近对话(JSON):\n{recent_messages_json}\n\n"
-                        "长期记忆(JSON):\n{long_term_memory_json}\n\n"
-                        "请返回 JSON:\n"
-                        "{\n"
-                        '  "card_number": "string | null",\n'
-                        '  "phone_last4": "string | null",\n'
-                        '  "has_enough_information": true,\n'
-                        '  "ask_message": "string"\n'
-                        "}"
-                    ),
-                ),
-            ]
-        )
+            return self._finalize_resolution(seeded, AccountBalanceResolution())
 
         try:
             raw_payload = await self.resolver.run_json(
-                prompt=prompt,
+                prompt=ACCOUNT_BALANCE_PROMPT,
                 variables={
+                    "intent_json": dump_json(request.intent.model_dump()),
                     "input_text": request.input,
                     "account_json": dump_json(request.account.model_dump()),
                     "recent_messages_json": dump_json(request.conversation.recent_messages),
                     "long_term_memory_json": dump_json(request.conversation.long_term_memory),
                 },
+                schema=AccountBalanceResolution,
             )
-            resolution = AccountBalanceResolution.model_validate(raw_payload)
+            resolved = AccountBalanceResolution.model_validate(raw_payload)
         except Exception:
-            return self._heuristic_resolution(seeded_card_number, seeded_phone_last4)
+            resolved = AccountBalanceResolution()
 
-        if not resolution.card_number and seeded_card_number:
-            resolution.card_number = seeded_card_number
-        if not resolution.phone_last4 and seeded_phone_last4:
-            resolution.phone_last4 = seeded_phone_last4
-        resolution.card_number = self._normalize_card_number(resolution.card_number)
-        resolution.phone_last4 = self._normalize_phone_last4(resolution.phone_last4)
-        resolution.has_enough_information = bool(resolution.card_number and resolution.phone_last4)
-        if not resolution.has_enough_information and not resolution.ask_message.strip():
-            resolution.ask_message = self._ask_message(resolution.card_number, resolution.phone_last4)
-        return resolution
+        return self._finalize_resolution(seeded, resolved)
 
-    def _heuristic_resolution(
+    def _finalize_resolution(
         self,
-        card_number: str | None,
-        phone_last4: str | None,
+        seeded: AccountBalanceResolution,
+        resolved: AccountBalanceResolution,
     ) -> AccountBalanceResolution:
+        card_number = self._normalize_card_number(resolved.card_number) or seeded.card_number
+        phone_last4 = self._normalize_phone_last4(resolved.phone_last4) or seeded.phone_last4
+        has_enough_information = bool(card_number and phone_last4)
+        ask_message = "" if has_enough_information else self._ask_message(card_number, phone_last4)
         return AccountBalanceResolution(
             card_number=card_number,
             phone_last4=phone_last4,
-            has_enough_information=bool(card_number and phone_last4),
-            ask_message=self._ask_message(card_number, phone_last4),
+            has_enough_information=has_enough_information,
+            ask_message=ask_message,
         )
-
-    def _seed_context(self, request: AccountBalanceAgentRequest) -> tuple[str | None, str | None]:
-        user_messages = self._filter_user_messages(request.conversation.recent_messages)
-        balance_memory_entries = self._balance_intent_memory_entries(request.conversation.long_term_memory)
-        card_candidates = [
-            request.account.card_number,
-            self._extract_balance_card_number(request.input),
-            *[self._extract_balance_card_number(item) for item in reversed(user_messages)],
-            *[self._extract_balance_card_number(item) for item in reversed(balance_memory_entries)],
-        ]
-        phone_candidates = [
-            request.account.phone_last4,
-            self._extract_balance_phone_last4(request.input),
-            *[self._extract_balance_phone_last4(item) for item in reversed(user_messages)],
-            *[self._extract_balance_phone_last4(item) for item in reversed(balance_memory_entries)],
-        ]
-        card_number = next(
-            (value for value in (self._normalize_card_number(item) for item in card_candidates) if value),
-            None,
-        )
-        phone_last4 = next(
-            (value for value in (self._normalize_phone_last4(item) for item in phone_candidates) if value),
-            None,
-        )
-        return card_number, phone_last4
-
-    def _filter_user_messages(self, entries: list[str]) -> list[str]:
-        return [entry for entry in entries if self._is_user_message(entry)]
-
-    def _is_user_message(self, text: str | None) -> bool:
-        if not text:
-            return False
-        return text.strip().lower().startswith("user:")
-
-    def _balance_intent_memory_entries(self, entries: list[str]) -> list[str]:
-        return [entry for entry in entries if self._is_balance_intent_memory_entry(entry)]
-
-    def _is_balance_intent_memory_entry(self, text: str | None) -> bool:
-        if not text:
-            return False
-        normalized = text.strip().lower()
-        if ":" not in normalized:
-            return False
-        intent_code = normalized.split(":", 1)[0]
-        return intent_code in BALANCE_INTENT_MEMORY_PREFIXES
-
-    def _extract_balance_card_number(self, text: str | None) -> str | None:
-        if not text:
-            return None
-        explicit_match = EXPLICIT_BALANCE_CARD_RE.search(text)
-        if explicit_match:
-            return explicit_match.group(1)
-        stripped = text.strip()
-        if stripped.isdigit():
-            return stripped
-        generic_match = CARD_NUMBER_RE.search(text)
-        if generic_match and not any(marker in text for marker in ("收款", "对方", "目标")):
-            return generic_match.group(1)
-        return None
-
-    def _extract_balance_phone_last4(self, text: str | None) -> str | None:
-        if not text:
-            return None
-        explicit_match = EXPLICIT_BALANCE_PHONE_RE.search(text)
-        if explicit_match:
-            return explicit_match.group(1)
-        mobile_match = PHONE_NUMBER_RE.search(text)
-        if mobile_match and not any(marker in text for marker in ("收款", "对方", "目标")):
-            return mobile_match.group(0)[-4:]
-        exact_match = FOUR_DIGITS_ONLY_RE.match(text.strip())
-        if exact_match:
-            return exact_match.group(1)
-        return None
 
     def _normalize_card_number(self, value: str | None) -> str | None:
         if value is None:
             return None
-        digits = re.sub(r"\D", "", value)
-        if 12 <= len(digits) <= 19:
-            return digits
-        return None
+        digits = "".join(character for character in str(value) if character.isdigit())
+        return digits or None
 
     def _normalize_phone_last4(self, value: str | None) -> str | None:
         if value is None:
             return None
-        digits = re.sub(r"\D", "", value)
-        if len(digits) == 11:
+        digits = "".join(character for character in str(value) if character.isdigit())
+        if len(digits) >= 4:
             return digits[-4:]
-        if len(digits) == 4:
-            return digits
         return None
 
     def _missing_fields(self, card_number: str | None, phone_last4: str | None) -> list[str]:
@@ -266,3 +192,11 @@ class AccountBalanceAgentService:
         if missing == ["phone_last_four"]:
             return "请提供手机号后4位"
         return "请提供卡号和手机号后4位"
+
+    def _slot_memory(self, resolution: AccountBalanceResolution) -> dict[str, Any]:
+        slot_memory: dict[str, Any] = {}
+        if resolution.card_number:
+            slot_memory["card_number"] = resolution.card_number
+        if resolution.phone_last4:
+            slot_memory["phone_last_four"] = resolution.phone_last4
+        return slot_memory

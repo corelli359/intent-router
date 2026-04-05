@@ -33,7 +33,7 @@ class FakeJsonRunner:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
 
-    async def run_json(self, *, prompt, variables: dict[str, Any]) -> Any:
+    async def run_json(self, *, prompt, variables: dict[str, Any], schema=None) -> Any:
         return self.payload
 
 

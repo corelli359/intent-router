@@ -27,6 +27,15 @@ class AgentConversationContext(BaseModel):
     long_term_memory: list[str] = Field(default_factory=list, alias="longTermMemory")
 
 
+class AgentIntentContext(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str | None = None
+    name: str | None = None
+    description: str | None = None
+    examples: list[str] = Field(default_factory=list)
+
+
 class AgentExecutionResponse(BaseModel):
     event: Literal["message", "final"]
     content: str
@@ -157,6 +166,7 @@ class JsonObjectRunner(Protocol):
         *,
         prompt: ChatPromptTemplate,
         variables: dict[str, Any],
+        schema: type[BaseModel] | None = None,
     ) -> Any: ...
 
 
@@ -170,11 +180,12 @@ class LangChainJsonObjectRunner:
         *,
         prompt: ChatPromptTemplate,
         variables: dict[str, Any],
+        schema: type[BaseModel] | None = None,
     ) -> Any:
         if not self.settings.connection_ready:
             raise RuntimeError(f"{self.settings.service_name} LLM settings are incomplete")
 
-        chain = prompt | ChatOpenAI(
+        model = ChatOpenAI(
             model_name=self.settings.llm_model,
             temperature=0,
             openai_api_key=self.settings.llm_api_key,
@@ -183,6 +194,17 @@ class LangChainJsonObjectRunner:
             default_headers=self.settings.llm_headers or None,
             http_async_client=self.http_async_client,
         )
+        if schema is not None:
+            structured_chain = prompt | model.with_structured_output(
+                schema,
+                method="json_mode",
+            )
+            response = await structured_chain.ainvoke(variables)
+            if isinstance(response, BaseModel):
+                return response.model_dump()
+            return response
+
+        chain = prompt | model
         chunks: list[str] = []
         async for chunk in chain.astream(variables):
             text = _chunk_text(chunk.content)

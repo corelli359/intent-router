@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -11,19 +10,10 @@ from intent_agents.common import (
     AgentConversationContext,
     AgentCustomer,
     AgentExecutionResponse,
+    AgentIntentContext,
     JsonObjectRunner,
     dump_json,
 )
-
-
-CARD_NUMBER_RE = re.compile(r"\b(\d{12,19})\b")
-PHONE_LAST4_RE = re.compile(r"(?:后4位|后四位|尾号)\D*(\d{4})")
-AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*元")
-AMOUNT_LABEL_RE = re.compile(r"(?:转账金额|金额)\D*(\d+(?:\.\d+)?)")
-NAME_RE = re.compile(
-    r"(?:给|向|转给|转账给)([\u4e00-\u9fffA-Za-z]{2,16}?)(?=(?:转账|转|汇款|付款|支付|卡号|银行卡|手机号|尾号|后4位|后四位|金额|[，,。\s]|$))"
-)
-INVALID_NAME_TOKENS = ("帮我", "转账", "收款人", "卡号", "手机号", "金额", "尾号")
 
 
 class TransferRecipient(BaseModel):
@@ -48,6 +38,7 @@ class TransferMoneyAgentRequest(BaseModel):
     input: str
     customer: AgentCustomer = Field(default_factory=AgentCustomer)
     conversation: AgentConversationContext = Field(default_factory=AgentConversationContext)
+    intent: AgentIntentContext = Field(default_factory=AgentIntentContext)
     recipient: TransferRecipient = Field(default_factory=TransferRecipient)
     transfer: TransferDetails = Field(default_factory=TransferDetails)
 
@@ -61,12 +52,71 @@ class TransferMoneyResolution(BaseModel):
     ask_message: str = "请提供收款人姓名、收款卡号、收款人手机号后4位、转账金额"
 
 
+TRANSFER_MONEY_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            (
+                "你是银行转账场景里的要素填充器。"
+                "上游已经把请求路由到了 transfer_money。"
+                "你不做意图识别，不执行转账，只做槽位提取和下一步追问。"
+                "你必须只输出 JSON，不能输出解释。"
+                "当前任务只关心四个槽位：recipient_name、recipient_card_number、recipient_phone_last4、amount。"
+                "规则："
+                "1. 优先保留 current_slots 里已经确认的值；当前输入只补充缺失槽位时，不能重置已有槽位。"
+                "2. 只有用户明确修正某个槽位时，才覆盖那个槽位。"
+                "3. 不要从余额查询或其他无关意图历史中推断收款卡号、收款人手机号后4位或金额。"
+                "4. 可以利用同一笔转账任务的最近对话来补齐语义，例如首轮里提到的收款人姓名。"
+                "5. 如果当前输入是独立的 4 位数字，且 recipient_phone_last4 和 amount 都缺失，不要擅自判定它属于哪一个槽位，而是保持这两个槽位为空并追问澄清。"
+                "6. 如果当前只缺 amount，那么独立数字可以识别为 amount；如果当前只缺 recipient_phone_last4，那么独立 4 位数字可以识别为 recipient_phone_last4。"
+                "7. 输出的 recipient_card_number 只保留卡号本身，recipient_phone_last4 只保留 4 位尾号，amount 只保留数值字符串。"
+                "8. 如果信息不足，has_enough_information 必须为 false，并给出简洁明确的 ask_message。"
+                "示例："
+                "A. 首轮输入“帮我查一下余额，然后给我弟弟转账”，即使 current_input 同时包含别的诉求，"
+                "也应从同一笔转账语义里识别 recipient_name='弟弟'。"
+                "B. current_slots 已有 recipient_name='弟弟'，current_input='收款卡号 6222020100049999999' 时，"
+                "应保留 recipient_name，并补 recipient_card_number。"
+                "C. current_slots 已有 recipient_name='弟弟' 和 recipient_card_number='6222020100049999999'，"
+                "current_input='手机号后四位 1234' 时，应保留前两项，并补 recipient_phone_last4='1234'。"
+                "D. current_slots 已有 recipient_name、recipient_card_number、recipient_phone_last4，"
+                "current_input='5000' 时，应只补 amount='5000'，不能清空已有槽位。"
+            ),
+        ),
+        (
+            "human",
+            (
+                "intent(JSON):\n{intent_json}\n\n"
+                "current_input:\n{input_text}\n\n"
+                "current_slots(JSON):\n{current_slots_json}\n\n"
+                "recent_messages(JSON):\n{recent_messages_json}\n\n"
+                "long_term_memory(JSON):\n{long_term_memory_json}\n\n"
+                "请返回 JSON:\n"
+                "{{\n"
+                '  "recipient_name": "string | null",\n'
+                '  "recipient_card_number": "string | null",\n'
+                '  "recipient_phone_last4": "string | null",\n'
+                '  "amount": "string | null",\n'
+                '  "has_enough_information": true,\n'
+                '  "ask_message": "string"\n'
+                "}}"
+            ),
+        ),
+    ]
+)
+
+
 class TransferMoneyAgentService:
     def __init__(self, *, resolver: JsonObjectRunner | None = None) -> None:
         self.resolver = resolver
 
     async def handle(self, request: TransferMoneyAgentRequest) -> AgentExecutionResponse:
-        resolution = await self._resolve(request)
+        seeded = TransferMoneyResolution(
+            recipient_name=self._normalize_name(request.recipient.name),
+            recipient_card_number=self._normalize_card_number(request.recipient.card_number),
+            recipient_phone_last4=self._normalize_phone_last4(request.recipient.phone_last4),
+            amount=self._normalize_amount(request.transfer.amount),
+        )
+        resolution = await self._resolve(request, seeded)
         slot_memory = self._slot_memory(resolution)
         missing_fields = self._missing_fields(resolution)
         payload = {
@@ -79,7 +129,7 @@ class TransferMoneyAgentService:
 
         if missing_fields:
             return AgentExecutionResponse.waiting(
-                self._ask_message(missing_fields),
+                resolution.ask_message or self._ask_message(missing_fields),
                 slot_memory=slot_memory,
                 payload={**payload, "missing_fields": missing_fields},
             )
@@ -102,248 +152,126 @@ class TransferMoneyAgentService:
             payload={**payload, "business_status": "success"},
         )
 
-    async def _resolve(self, request: TransferMoneyAgentRequest) -> TransferMoneyResolution:
-        seeded = self._seed_context(request)
-
-        if self.resolver is None:
-            return self._heuristic_resolution(request, seeded)
-
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    (
-                        "你是转账意图 agent 里的参数解析器。"
-                        "上游已经把请求路由到了 transfer_money，所以你不做意图判断，也不执行转账。"
-                        "你只能输出 JSON，不能输出解释。"
-                        "这个 agent 是示意实现，只需要抽取四个字段："
-                        "recipient_name、recipient_card_number、recipient_phone_last4、amount。"
-                        "优先保留当前已知槽位，再从当前输入和最近对话里补齐。"
-                        "用语义理解，不要死抠字面。下面这些模式只是识别提示，不是让你机械匹配："
-                        "收款卡号通常是 12 到 19 位数字串；"
-                        "手机号后四位通常表现为 后4位/后四位/尾号 加 4 位数字；"
-                        "金额通常表现为 数字 加 元。"
-                        "严格约束："
-                        "1. “帮我给李四转 5000 元” 只应提取 recipient_name=李四, amount=5000，其余字段保持 null。"
-                        "2. 不要把 5000 当成手机号后四位。"
-                        "3. 不要从无关历史里猜收款卡号或收款人手机号。"
-                        "4. 如果上一轮已经只缺金额，那么用户回复 “5000”、“5000元”、“5000 元”、“金额5000”、“转账金额 5000” 都应识别为 amount=5000。"
-                        "5. 如果信息不全，has_enough_information 必须为 false。"
-                    ),
-                ),
-                (
-                    "human",
-                    (
-                        "当前输入:\n{input_text}\n\n"
-                        "当前已知收款人信息(JSON):\n{recipient_json}\n\n"
-                        "当前已知转账信息(JSON):\n{transfer_json}\n\n"
-                        "最近对话(JSON):\n{recent_messages_json}\n\n"
-                        "请返回 JSON:\n"
-                        "{\n"
-                        '  "recipient_name": "string | null",\n'
-                        '  "recipient_card_number": "string | null",\n'
-                        '  "recipient_phone_last4": "string | null",\n'
-                        '  "amount": "string | null",\n'
-                        '  "has_enough_information": true,\n'
-                        '  "ask_message": "string"\n'
-                        "}"
-                    ),
-                ),
-            ]
-        )
-
-        try:
-            raw_payload = await self.resolver.run_json(
-                prompt=prompt,
-                variables={
-                    "input_text": request.input,
-                    "recipient_json": dump_json(request.recipient.model_dump()),
-                    "transfer_json": dump_json(request.transfer.model_dump()),
-                    "recent_messages_json": dump_json(request.conversation.recent_messages),
-                },
-            )
-            resolution = TransferMoneyResolution.model_validate(raw_payload)
-        except Exception:
-            return self._heuristic_resolution(request, seeded)
-
-        resolution.recipient_name = seeded.recipient_name or self._normalize_name(resolution.recipient_name)
-        resolution.recipient_card_number = seeded.recipient_card_number or self._normalize_card_number(
-            resolution.recipient_card_number
-        )
-        resolution.recipient_phone_last4 = seeded.recipient_phone_last4 or self._normalize_phone_last4(
-            resolution.recipient_phone_last4
-        )
-        resolution.amount = seeded.amount or self._normalize_amount(resolution.amount)
-        resolution.has_enough_information = not self._missing_fields(resolution)
-        if not resolution.has_enough_information:
-            resolution.ask_message = self._ask_message(self._missing_fields(resolution))
-        return resolution
-
-    def _heuristic_resolution(
+    async def _resolve(
         self,
         request: TransferMoneyAgentRequest,
         seeded: TransferMoneyResolution,
     ) -> TransferMoneyResolution:
-        recipient_name = seeded.recipient_name or self._extract_recipient_name(request.input)
-        recipient_card_number = seeded.recipient_card_number or self._extract_card_number(request.input)
-        recipient_phone_last4 = seeded.recipient_phone_last4 or self._extract_phone_last4(
-            request.input,
-            allow_standalone=bool(seeded.amount),
-        )
-        amount = seeded.amount or self._extract_amount(
-            request.input,
-            allow_standalone=bool(seeded.recipient_name or seeded.recipient_card_number or seeded.recipient_phone_last4),
-        )
-        resolution = TransferMoneyResolution(
-            recipient_name=recipient_name,
-            recipient_card_number=recipient_card_number,
-            recipient_phone_last4=recipient_phone_last4,
-            amount=amount,
-        )
-        resolution.has_enough_information = not self._missing_fields(resolution)
-        resolution.ask_message = self._ask_message(self._missing_fields(resolution))
-        return resolution
+        if self.resolver is None:
+            return self._finalize_resolution(seeded, TransferMoneyResolution())
 
-    def _seed_context(self, request: TransferMoneyAgentRequest) -> TransferMoneyResolution:
-        user_messages = self._filter_user_messages(request.conversation.recent_messages)
-
-        recipient_name = next(
-            (
-                value
-                for value in (
-                    self._normalize_name(request.recipient.name),
-                    self._extract_recipient_name(request.input),
-                    *[self._extract_recipient_name(item) for item in reversed(user_messages)],
-                )
-                if value
-            ),
-            None,
-        )
-        recipient_card_number = next(
-            (
-                value
-                for value in (
-                    self._normalize_card_number(request.recipient.card_number),
-                    self._extract_card_number(request.input),
-                )
-                if value
-            ),
-            None,
-        )
-        amount = next(
-            (
-                value
-                for value in (
-                    self._normalize_amount(request.transfer.amount),
-                    self._extract_amount(
-                        request.input,
-                        allow_standalone=bool(
-                            recipient_name
-                            or recipient_card_number
-                            or self._normalize_phone_last4(request.recipient.phone_last4)
-                        ),
+        try:
+            raw_payload = await self.resolver.run_json(
+                prompt=TRANSFER_MONEY_PROMPT,
+                variables={
+                    "intent_json": dump_json(request.intent.model_dump()),
+                    "input_text": request.input,
+                    "current_slots_json": dump_json(
+                        {
+                            "recipient_name": request.recipient.name,
+                            "recipient_card_number": request.recipient.card_number,
+                            "recipient_phone_last4": request.recipient.phone_last4,
+                            "amount": request.transfer.amount,
+                        }
                     ),
-                    *[self._extract_amount(item, allow_standalone=False) for item in reversed(user_messages)],
-                )
-                if value
-            ),
-            None,
-        )
-        recipient_phone_last4 = next(
-            (
-                value
-                for value in (
-                    self._normalize_phone_last4(request.recipient.phone_last4),
-                    self._extract_phone_last4(request.input, allow_standalone=bool(amount)),
-                )
-                if value
-            ),
-            None,
-        )
+                    "recent_messages_json": dump_json(request.conversation.recent_messages),
+                    "long_term_memory_json": dump_json(request.conversation.long_term_memory),
+                },
+                schema=TransferMoneyResolution,
+            )
+            resolved = TransferMoneyResolution.model_validate(raw_payload)
+        except Exception:
+            resolved = TransferMoneyResolution()
 
+        return self._finalize_resolution(seeded, resolved)
+
+    def _finalize_resolution(
+        self,
+        seeded: TransferMoneyResolution,
+        resolved: TransferMoneyResolution,
+    ) -> TransferMoneyResolution:
+        recipient_name = self._normalize_name(resolved.recipient_name) or seeded.recipient_name
+        recipient_card_number = (
+            self._normalize_card_number(resolved.recipient_card_number) or seeded.recipient_card_number
+        )
+        recipient_phone_last4 = (
+            self._normalize_phone_last4(resolved.recipient_phone_last4) or seeded.recipient_phone_last4
+        )
+        amount = self._normalize_amount(resolved.amount) or seeded.amount
+        has_enough_information = all(
+            [
+                recipient_name,
+                recipient_card_number,
+                recipient_phone_last4,
+                amount,
+            ]
+        )
+        ask_message = (resolved.ask_message or "").strip()
+        missing_fields = self._missing_fields(
+            TransferMoneyResolution(
+                recipient_name=recipient_name,
+                recipient_card_number=recipient_card_number,
+                recipient_phone_last4=recipient_phone_last4,
+                amount=amount,
+            )
+        )
+        if not has_enough_information:
+            ask_message = (
+                ask_message
+                if self._should_preserve_custom_ask_message(ask_message)
+                else self._ask_message(missing_fields)
+            )
         return TransferMoneyResolution(
             recipient_name=recipient_name,
             recipient_card_number=recipient_card_number,
             recipient_phone_last4=recipient_phone_last4,
             amount=amount,
+            has_enough_information=bool(has_enough_information),
+            ask_message=ask_message,
         )
-
-    def _extract_recipient_name(self, text: str) -> str | None:
-        match = NAME_RE.search(text)
-        if match:
-            return self._normalize_name(match.group(1))
-        stripped = text.strip()
-        if any(token in stripped for token in INVALID_NAME_TOKENS):
-            return None
-        return self._normalize_name(stripped)
-
-    def _extract_card_number(self, text: str) -> str | None:
-        match = CARD_NUMBER_RE.search(text)
-        if match:
-            return self._normalize_card_number(match.group(1))
-        stripped = text.strip()
-        return self._normalize_card_number(stripped)
-
-    def _extract_phone_last4(self, text: str, *, allow_standalone: bool) -> str | None:
-        match = PHONE_LAST4_RE.search(text)
-        if match:
-            return self._normalize_phone_last4(match.group(1))
-        if allow_standalone and text.strip().isdigit() and len(text.strip()) == 4:
-            return self._normalize_phone_last4(text.strip())
-        return None
-
-    def _extract_amount(self, text: str, *, allow_standalone: bool) -> str | None:
-        match = AMOUNT_RE.search(text)
-        if match:
-            return self._normalize_amount(match.group(1))
-        label_match = AMOUNT_LABEL_RE.search(text)
-        if label_match:
-            return self._normalize_amount(label_match.group(1))
-        if allow_standalone and text.strip().isdigit():
-            return self._normalize_amount(text.strip())
-        return None
-
-    def _filter_user_messages(self, entries: list[str]) -> list[str]:
-        return [entry for entry in entries if entry.strip().lower().startswith("user:")]
 
     def _normalize_name(self, value: str | None) -> str | None:
         if value is None:
             return None
-        stripped = value.strip()
-        if re.fullmatch(r"[\u4e00-\u9fffA-Za-z]{2,16}", stripped):
-            return stripped
-        return None
+        stripped = str(value).strip()
+        return stripped or None
 
     def _normalize_card_number(self, value: str | None) -> str | None:
         if value is None:
             return None
-        digits = re.sub(r"\D", "", value)
-        if 12 <= len(digits) <= 19:
-            return digits
-        return None
+        digits = "".join(character for character in str(value) if character.isdigit())
+        return digits or None
 
     def _normalize_phone_last4(self, value: str | None) -> str | None:
         if value is None:
             return None
-        digits = re.sub(r"\D", "", value)
-        if len(digits) == 11:
+        digits = "".join(character for character in str(value) if character.isdigit())
+        if len(digits) >= 4:
             return digits[-4:]
-        if len(digits) == 4:
-            return digits
         return None
 
     def _normalize_amount(self, value: str | None) -> str | None:
         if value is None:
             return None
-        digits = re.sub(r"[^\d.]", "", str(value))
-        if not digits:
+        digits: list[str] = []
+        dot_seen = False
+        for character in str(value):
+            if character.isdigit():
+                digits.append(character)
+                continue
+            if character == "." and not dot_seen:
+                digits.append(character)
+                dot_seen = True
+        normalized = "".join(digits).strip(".")
+        if not normalized:
             return None
         try:
-            amount = Decimal(digits)
+            amount = Decimal(normalized)
         except InvalidOperation:
             return None
-        normalized = amount.quantize(Decimal("1")) if amount == amount.to_integral() else amount.normalize()
-        return format(normalized, "f")
+        if amount == amount.to_integral():
+            return format(amount.quantize(Decimal("1")), "f")
+        return format(amount.normalize(), "f")
 
     def _amount_value(self, value: str | None) -> Decimal | None:
         if value is None:
@@ -375,6 +303,12 @@ class TransferMoneyAgentService:
         if not missing_fields:
             return ""
         return "请提供" + "、".join(labels[field] for field in missing_fields)
+
+    def _should_preserve_custom_ask_message(self, ask_message: str) -> bool:
+        normalized = ask_message.strip()
+        if not normalized:
+            return False
+        return "例如" in normalized or "请明确" in normalized or "检测到 4 位数字" in normalized
 
     def _slot_memory(self, resolution: TransferMoneyResolution) -> dict[str, Any]:
         slot_memory: dict[str, Any] = {}

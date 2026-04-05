@@ -20,13 +20,22 @@ class FakeJsonRunner:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
 
-    async def run_json(self, *, prompt, variables: dict[str, Any]) -> Any:
+    async def run_json(self, *, prompt, variables: dict[str, Any], schema=None) -> Any:
         return self.payload
 
 
 def test_account_balance_service_waits_for_both_fields() -> None:
     async def run() -> None:
-        service = AccountBalanceAgentService(resolver=None)
+        service = AccountBalanceAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "card_number": None,
+                    "phone_last4": None,
+                    "has_enough_information": False,
+                    "ask_message": "请提供卡号和手机号后4位",
+                }
+            )
+        )
         response = await service.handle(
             AccountBalanceAgentRequest(
                 sessionId="session_balance_001",
@@ -42,26 +51,7 @@ def test_account_balance_service_waits_for_both_fields() -> None:
     asyncio.run(run())
 
 
-def test_account_balance_service_heuristic_extracts_user_card_and_phone() -> None:
-    async def run() -> None:
-        service = AccountBalanceAgentService(resolver=None)
-        response = await service.handle(
-            AccountBalanceAgentRequest(
-                sessionId="session_balance_005",
-                taskId="task_balance_005",
-                input="卡号 6222021234567890，手机号后四位 1234",
-                conversation={"recentMessages": ["user: 卡号 6222021234567890 手机号后四位 1234"], "longTermMemory": []},
-            )
-        )
-
-        assert response.status == "completed"
-        assert response.slot_memory["card_number"] == "6222021234567890"
-        assert response.slot_memory["phone_last_four"] == "1234"
-
-    asyncio.run(run())
-
-
-def test_account_balance_service_completes_with_card_and_phone() -> None:
+def test_account_balance_service_completes_with_prompt_filled_slots() -> None:
     async def run() -> None:
         service = AccountBalanceAgentService(
             resolver=FakeJsonRunner(
@@ -78,8 +68,7 @@ def test_account_balance_service_completes_with_card_and_phone() -> None:
                 sessionId="session_balance_002",
                 taskId="task_balance_002",
                 input="卡号 6222021234567890，手机号后四位 1234",
-                account={"cardNumber": "6222021234567890", "phoneLast4": "1234"},
-                conversation={"recentMessages": [], "longTermMemory": []},
+                conversation={"recentMessages": ["user: 卡号 6222021234567890，手机号后四位 1234"], "longTermMemory": []},
             )
         )
 
@@ -92,25 +81,96 @@ def test_account_balance_service_completes_with_card_and_phone() -> None:
     asyncio.run(run())
 
 
-def test_account_balance_service_ignores_transfer_memory_entries() -> None:
+def test_account_balance_service_accepts_compact_card_and_phone_reply_from_prompt() -> None:
     async def run() -> None:
-        service = AccountBalanceAgentService(resolver=None)
+        service = AccountBalanceAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "card_number": "6000000000",
+                    "phone_last4": "6666",
+                    "has_enough_information": True,
+                    "ask_message": "",
+                }
+            )
+        )
+        response = await service.handle(
+            AccountBalanceAgentRequest(
+                sessionId="session_balance_003",
+                taskId="task_balance_003",
+                input="6000000000,6666",
+                conversation={"recentMessages": ["user: 6000000000,6666"], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.slot_memory["card_number"] == "6000000000"
+        assert response.slot_memory["phone_last_four"] == "6666"
+
+    asyncio.run(run())
+
+
+def test_account_balance_service_preserves_existing_card_slot_when_prompt_only_returns_phone() -> None:
+    async def run() -> None:
+        service = AccountBalanceAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "card_number": None,
+                    "phone_last4": "1234",
+                    "has_enough_information": True,
+                    "ask_message": "",
+                }
+            )
+        )
         response = await service.handle(
             AccountBalanceAgentRequest(
                 sessionId="session_balance_004",
                 taskId="task_balance_004",
-                input="帮我查一下余额",
+                input="1234",
+                account={"cardNumber": "6222021234567890"},
                 conversation={
-                    "recentMessages": ["user: 帮我查一下余额"],
-                    "longTermMemory": [
-                        "transfer_money: recipient_card_number=6222020100049999999, recipient_phone_last4=1234"
+                    "recentMessages": [
+                        "user: 帮我查一下余额",
+                        "assistant: 请提供卡号和手机号后4位",
+                        "user: 1234",
                     ],
+                    "longTermMemory": [],
                 },
             )
         )
 
+        assert response.status == "completed"
+        assert response.slot_memory == {
+            "card_number": "6222021234567890",
+            "phone_last_four": "1234",
+        }
+
+    asyncio.run(run())
+
+
+def test_account_balance_service_uses_default_ask_message_when_prompt_omits_it() -> None:
+    async def run() -> None:
+        service = AccountBalanceAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "card_number": "6222021234567890",
+                    "phone_last4": None,
+                    "has_enough_information": False,
+                    "ask_message": "",
+                }
+            )
+        )
+        response = await service.handle(
+            AccountBalanceAgentRequest(
+                sessionId="session_balance_005",
+                taskId="task_balance_005",
+                input="卡号 6222021234567890",
+                conversation={"recentMessages": ["user: 卡号 6222021234567890"], "longTermMemory": []},
+            )
+        )
+
         assert response.status == "waiting_user_input"
-        assert response.payload["missing_fields"] == ["card_number", "phone_last_four"]
+        assert response.content == "请提供手机号后4位"
+        assert response.payload["missing_fields"] == ["phone_last_four"]
 
     asyncio.run(run())
 
@@ -118,7 +178,16 @@ def test_account_balance_service_ignores_transfer_memory_entries() -> None:
 def test_account_balance_http_app_returns_router_payload() -> None:
     async def run() -> None:
         app = create_app()
-        app.dependency_overrides[get_account_balance_service] = lambda: AccountBalanceAgentService(resolver=None)
+        app.dependency_overrides[get_account_balance_service] = lambda: AccountBalanceAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "card_number": "6222021234567890",
+                    "phone_last4": "1234",
+                    "has_enough_information": True,
+                    "ask_message": "",
+                }
+            )
+        )
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -127,8 +196,8 @@ def test_account_balance_http_app_returns_router_payload() -> None:
             response = await client.post(
                 "/api/agent/run",
                 json={
-                    "sessionId": "session_balance_003",
-                    "taskId": "task_balance_003",
+                    "sessionId": "session_balance_006",
+                    "taskId": "task_balance_006",
                     "input": "卡号 6222021234567890，手机号后四位 1234",
                     "account": {"cardNumber": "6222021234567890", "phoneLast4": "1234"},
                     "conversation": {"recentMessages": [], "longTermMemory": []},
