@@ -14,8 +14,13 @@ from router_core.domain import (
     ChatMessage,
     CustomerMemory,
     IntentDefinition,
+    IntentMatch,
     LongTermMemoryEntry,
     RouterSnapshot,
+    SessionPlan,
+    SessionPlanItem,
+    SessionPlanItemStatus,
+    SessionPlanStatus,
     SessionState,
     Task,
     TaskEvent,
@@ -29,6 +34,7 @@ from router_core.task_queue import next_runnable_task, queue_pending_tasks
 logger = logging.getLogger(__name__)
 
 FAST_CANCEL_TERMS = ("取消", "算了", "不需要了", "不用了", "别了", "停止")
+SWITCH_INTENT_TERMS = ("改成", "改为", "换成", "换为", "不要", "不查了", "不转了", "先别", "别")
 CARD_NUMBER_RE = re.compile(r"\b\d{12,19}\b")
 PHONE_LAST4_RE = re.compile(r"(?:后4位|后四位|尾号)\D*\d{4}")
 FOUR_DIGITS_ONLY_RE = re.compile(r"^\D*(\d{4})\D*$")
@@ -153,6 +159,7 @@ class RouterOrchestrator:
             messages=list(session.messages),
             tasks=list(session.tasks),
             candidate_intents=list(session.candidate_intents),
+            pending_plan=session.pending_plan.model_copy(deep=True) if session.pending_plan is not None else None,
             active_task_id=session.active_task_id,
             expires_at=session.expires_at,
         )
@@ -161,6 +168,19 @@ class RouterOrchestrator:
         session = self.session_store.get_or_create(session_id, cust_id)
         session.messages.append(ChatMessage(role="user", content=content))
         session.touch()
+
+        if (
+            session.pending_plan is not None
+            and session.pending_plan.status == SessionPlanStatus.WAITING_CONFIRMATION
+        ):
+            if self._is_plan_confirm_message(content):
+                await self._confirm_pending_plan(session, task_id="session", confirm_token=None)
+                return self.snapshot(session.session_id)
+            if self._contains_fast_cancel(content):
+                await self._cancel_pending_plan(session, task_id="session", confirm_token=None)
+                return self.snapshot(session.session_id)
+            await self._publish_plan_waiting_hint(session)
+            return self.snapshot(session.session_id)
 
         current_waiting_task = self._get_waiting_task(session)
         if current_waiting_task is not None:
@@ -173,7 +193,11 @@ class RouterOrchestrator:
         return self.snapshot(session.session_id)
 
     def _get_waiting_task(self, session: SessionState) -> Task | None:
-        waiting = [task for task in session.tasks if task.status == TaskStatus.WAITING_USER_INPUT]
+        waiting = [
+            task
+            for task in session.tasks
+            if task.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.WAITING_CONFIRMATION}
+        ]
         if not waiting:
             return None
         waiting.sort(key=lambda task: task.updated_at, reverse=True)
@@ -206,8 +230,13 @@ class RouterOrchestrator:
                     session.session_id,
                 )
                 continue
-            if next_task.status == TaskStatus.WAITING_USER_INPUT:
-                await self._publish_session_state(session, "session.waiting_user_input")
+            if next_task.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.WAITING_CONFIRMATION}:
+                await self._publish_session_state(
+                    session,
+                    "session.waiting_confirmation"
+                    if next_task.status == TaskStatus.WAITING_CONFIRMATION
+                    else "session.waiting_user_input",
+                )
                 return
             logger.warning(
                 "Task %s (%s) ended _run_task with unexpected status %s; stopping queue drain",
@@ -218,11 +247,27 @@ class RouterOrchestrator:
             return
 
     async def _run_task(self, session: SessionState, task: Task, user_input: str) -> None:
+        effective_user_input = user_input
+        initial_source_input = task.input_context.get("initial_source_input")
+        if not (isinstance(initial_source_input, str) and initial_source_input):
+            previous_source_input = task.input_context.get("source_input")
+            if isinstance(previous_source_input, str) and previous_source_input:
+                initial_source_input = previous_source_input
+        if (
+            task.status == TaskStatus.QUEUED
+            and not task.slot_memory
+            and isinstance(initial_source_input, str)
+            and initial_source_input
+        ):
+            effective_user_input = initial_source_input
         task.input_context = self.context_builder.build_task_context(
             session=session,
             task=task,
             long_term_memory=self.session_store.long_term_memory.recall(session.cust_id),
         )
+        if isinstance(initial_source_input, str) and initial_source_input:
+            task.input_context["initial_source_input"] = initial_source_input
+        task.input_context["source_input"] = effective_user_input
         task.touch(TaskStatus.DISPATCHING)
         await self._publish_task_state(task, session, "task.dispatching", "任务开始分发")
 
@@ -231,10 +276,11 @@ class RouterOrchestrator:
 
         try:
             async with asyncio.timeout(self.config.agent_timeout_seconds):
-                async for chunk in self.agent_client.stream(task, user_input):
+                async for chunk in self.agent_client.stream(task, effective_user_input):
                     await self._handle_agent_chunk(session, task, chunk)
                     if chunk.status in {
                         TaskStatus.WAITING_USER_INPUT,
+                        TaskStatus.WAITING_CONFIRMATION,
                         TaskStatus.COMPLETED,
                         TaskStatus.FAILED,
                     }:
@@ -259,7 +305,15 @@ class RouterOrchestrator:
         intent: IntentDefinition,
         confidence: float,
         is_fallback: bool,
-    ) -> None:
+    ) -> Task:
+        task_context = dict(context)
+        source_input = task_context.get("source_input")
+        if (
+            "initial_source_input" not in task_context
+            and isinstance(source_input, str)
+            and source_input
+        ):
+            task_context["initial_source_input"] = source_input
         task = Task(
             session_id=session.session_id,
             intent_code=intent.intent_code,
@@ -270,7 +324,7 @@ class RouterOrchestrator:
             request_schema=intent.request_schema,
             field_mapping=intent.field_mapping,
             confidence=confidence,
-            input_context=context,
+            input_context=task_context,
         )
         task.touch(TaskStatus.CREATED)
         session.tasks.append(task)
@@ -289,6 +343,7 @@ class RouterOrchestrator:
                 },
             )
         )
+        return task
 
     async def _publish_task_state(self, task: Task, session: SessionState, event: str, message: str) -> None:
         await self._publish(
@@ -302,6 +357,7 @@ class RouterOrchestrator:
                 payload={"cust_id": session.cust_id},
             )
         )
+        await self._emit_plan_progress_if_needed(session)
 
     async def _publish_session_state(self, session: SessionState, event: str) -> None:
         payload = {
@@ -340,7 +396,11 @@ class RouterOrchestrator:
         except KeyError:
             return
 
-        waiting_tasks = [task for task in session.tasks if task.status == TaskStatus.WAITING_USER_INPUT]
+        waiting_tasks = [
+            task
+            for task in session.tasks
+            if task.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.WAITING_CONFIRMATION}
+        ]
         for task in waiting_tasks:
             await self._cancel_task(session, task, reason=reason, notify_agent=True)
 
@@ -350,6 +410,7 @@ class RouterOrchestrator:
 
     async def _route_new_message(self, session: SessionState, content: str) -> None:
         context = self._build_session_context(session)
+        context["source_input"] = content
         recognition = await self._recognize_message(
             session,
             content,
@@ -357,14 +418,15 @@ class RouterOrchestrator:
             long_term_memory=context["long_term_memory"],
             emit_events=True,
         )
-        await self._dispatch_recognition(
+        should_run_queue = await self._dispatch_recognition(
             session,
             content,
             context=context,
             recognition=recognition,
             emit_recognition_completed=True,
         )
-        await self._drain_queue(session, content)
+        if should_run_queue:
+            await self._drain_queue(session, content)
 
     async def _resume_waiting_task(self, session: SessionState, task: Task, content: str) -> None:
         self._prepare_resuming_task(task, content)
@@ -402,6 +464,9 @@ class RouterOrchestrator:
         recognition = await recognition_task
         fast_cancel = self._contains_fast_cancel(content)
         switch_match = self._intent_switch_match(waiting_task, recognition)
+        if switch_match is not None and self._looks_like_slot_supplement(content) and not self._contains_explicit_switch_intent(content):
+            return False
+
         if not fast_cancel and switch_match is None:
             return False
         if switch_match is not None:
@@ -418,14 +483,16 @@ class RouterOrchestrator:
             return True
 
         context = self._build_session_context(session)
-        await self._dispatch_recognition(
+        context["source_input"] = content
+        should_run_queue = await self._dispatch_recognition(
             session,
             content,
             context=context,
             recognition=recognition,
             emit_recognition_completed=False,
         )
-        await self._drain_queue(session, content)
+        if should_run_queue:
+            await self._drain_queue(session, content)
         return True
 
     async def _recognize_message(
@@ -481,7 +548,7 @@ class RouterOrchestrator:
         context: dict[str, Any],
         recognition: Any,
         emit_recognition_completed: bool,
-    ) -> None:
+    ) -> bool:
         session.candidate_intents = recognition.candidates
         existing_intents = {
             task.intent_code
@@ -526,6 +593,20 @@ class RouterOrchestrator:
             )
 
         active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
+        planned_matches = [
+            match
+            for match in recognition.primary
+            if match.intent_code not in existing_intents and match.intent_code in active_intents
+        ]
+        if len(planned_matches) > 1:
+            await self._propose_plan(
+                session=session,
+                content=content,
+                matches=planned_matches,
+                intents_by_code=active_intents,
+            )
+            return False
+
         for match in recognition.primary:
             if match.intent_code in existing_intents:
                 continue
@@ -539,11 +620,13 @@ class RouterOrchestrator:
 
         queue_pending_tasks(session, self.intent_catalog.priorities())
         await self._publish_session_state(session, "session.recognized")
+        return True
 
     async def _handle_agent_chunk(self, session: SessionState, task: Task, chunk: Any) -> None:
         task.touch(chunk.status)
         event_name = {
             TaskStatus.WAITING_USER_INPUT: "task.waiting_user_input",
+            TaskStatus.WAITING_CONFIRMATION: "task.waiting_confirmation",
             TaskStatus.COMPLETED: "task.completed",
             TaskStatus.FAILED: "task.failed",
         }.get(chunk.status, "task.message")
@@ -556,13 +639,19 @@ class RouterOrchestrator:
             status=task.status,
             message=chunk.content,
             ishandover=chunk.ishandover,
-            payload={**chunk.payload, "cust_id": session.cust_id},
+            payload=self._normalize_interaction_payload({**chunk.payload, "cust_id": session.cust_id}, source="agent"),
             created_at=event_time,
         )
-        if chunk.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.COMPLETED, TaskStatus.FAILED} and chunk.content:
+        if chunk.status in {
+            TaskStatus.WAITING_USER_INPUT,
+            TaskStatus.WAITING_CONFIRMATION,
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+        } and chunk.content:
             session.messages.append(ChatMessage(role="assistant", content=chunk.content, created_at=event_time))
             session.touch()
         await self._publish(task_event)
+        await self._emit_plan_progress_if_needed(session)
         if chunk.status == TaskStatus.COMPLETED and task.slot_memory:
             slot_pairs = ", ".join(f"{key}={value}" for key, value in sorted(task.slot_memory.items()))
             self.session_store.long_term_memory.get_or_create(session.cust_id).remember(
@@ -599,9 +688,14 @@ class RouterOrchestrator:
                 created_at=event_time,
             )
         )
+        await self._emit_plan_progress_if_needed(session)
 
     async def _cancel_waiting_and_queued_tasks(self, session: SessionState, reason: str) -> None:
-        waiting_tasks = [task for task in session.tasks if task.status == TaskStatus.WAITING_USER_INPUT]
+        waiting_tasks = [
+            task
+            for task in session.tasks
+            if task.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.WAITING_CONFIRMATION}
+        ]
         queued_tasks = [task for task in session.tasks if task.status == TaskStatus.QUEUED]
 
         for task in waiting_tasks:
@@ -646,6 +740,7 @@ class RouterOrchestrator:
                 payload={"cust_id": session.cust_id, "reason": reason},
             )
         )
+        await self._emit_plan_progress_if_needed(session)
 
     def _build_session_context(self, session: SessionState, task: Task | None = None) -> dict[str, Any]:
         long_term_memory = self.session_store.long_term_memory.recall(session.cust_id)
@@ -700,7 +795,7 @@ class RouterOrchestrator:
         keys_to_clear: set[str] = set()
         for key in task.slot_memory:
             lowered = key.lower()
-            if has_name and ("name" in lowered or "recipient" in lowered):
+            if has_name and "name" in lowered:
                 keys_to_clear.add(key)
                 continue
             if has_card and ("card" in lowered or "account" in lowered):
@@ -722,3 +817,367 @@ class RouterOrchestrator:
         for term in FAST_CANCEL_TERMS:
             normalized = normalized.replace(term, "")
         return normalized == ""
+
+    def _contains_explicit_switch_intent(self, content: str) -> bool:
+        normalized = re.sub(r"\s+", "", content)
+        return any(term in normalized for term in SWITCH_INTENT_TERMS)
+
+    def _looks_like_slot_supplement(self, content: str) -> bool:
+        normalized = content.strip()
+        if not normalized:
+            return False
+        if CARD_NUMBER_RE.search(normalized):
+            return True
+        if PHONE_LAST4_RE.search(normalized) or FOUR_DIGITS_ONLY_RE.match(normalized):
+            return True
+        if AMOUNT_RE.search(normalized) or AMOUNT_LABEL_RE.search(normalized):
+            return True
+        if NAME_CUE_RE.search(normalized):
+            return True
+        return False
+
+    async def _propose_plan(
+        self,
+        *,
+        session: SessionState,
+        content: str,
+        matches: list[IntentMatch],
+        intents_by_code: dict[str, IntentDefinition],
+    ) -> None:
+        items: list[SessionPlanItem] = []
+        for match in matches:
+            intent = intents_by_code[match.intent_code]
+            items.append(
+                SessionPlanItem(
+                    intent_code=intent.intent_code,
+                    title=intent.name,
+                    confidence=match.confidence,
+                )
+            )
+        plan = SessionPlan(
+            source_message=content,
+            items=items,
+            summary=f"识别到 {len(items)} 个事项，请确认后开始执行",
+        )
+        session.pending_plan = plan
+        session.active_task_id = None
+        plan.touch(SessionPlanStatus.WAITING_CONFIRMATION)
+        await self._publish(
+            TaskEvent(
+                event="session.plan.proposed",
+                task_id="session",
+                session_id=session.session_id,
+                intent_code="session",
+                status=TaskStatus.WAITING_CONFIRMATION,
+                message="请确认执行计划",
+                ishandover=False,
+                payload=self._normalize_interaction_payload(
+                    {
+                        "cust_id": session.cust_id,
+                        "plan_id": plan.plan_id,
+                        "plan_status": plan.status.value,
+                        "items": [item.model_dump(mode="json") for item in plan.items],
+                        "interaction": {
+                            "type": "plan_card",
+                            "card_type": "plan_confirm",
+                            "title": plan.title,
+                            "summary": plan.summary or f"识别到 {len(plan.items)} 个意图，请确认后开始执行",
+                            "version": plan.version,
+                            "plan_id": plan.plan_id,
+                            "confirm_token": plan.confirm_token,
+                            "items": [item.model_dump(mode="json") for item in plan.items],
+                            "actions": [
+                                {"code": "confirm_plan", "label": "开始执行"},
+                                {"code": "cancel_plan", "label": "取消"},
+                            ],
+                        },
+                    },
+                    source="router",
+                ),
+            )
+        )
+
+    async def _publish_plan_waiting_hint(self, session: SessionState) -> None:
+        plan = session.pending_plan
+        if plan is None:
+            return
+        await self._publish(
+            TaskEvent(
+                event="session.plan.waiting_confirmation",
+                task_id="session",
+                session_id=session.session_id,
+                intent_code="session",
+                status=TaskStatus.WAITING_CONFIRMATION,
+                message="当前有待确认的执行计划，请先确认或取消",
+                ishandover=False,
+                payload=self._normalize_interaction_payload(
+                    {
+                        "cust_id": session.cust_id,
+                        "plan_id": plan.plan_id,
+                        "plan_status": plan.status.value,
+                        "interaction": {
+                            "type": "plan_card",
+                            "card_type": "plan_confirm",
+                            "title": plan.title,
+                            "summary": plan.summary or "请先确认当前执行计划",
+                            "version": plan.version,
+                            "plan_id": plan.plan_id,
+                            "confirm_token": plan.confirm_token,
+                            "items": [item.model_dump(mode="json") for item in plan.items],
+                            "actions": [
+                                {"code": "confirm_plan", "label": "开始执行"},
+                                {"code": "cancel_plan", "label": "取消"},
+                            ],
+                        },
+                    },
+                    source="router",
+                ),
+            )
+        )
+
+    async def handle_action(
+        self,
+        *,
+        session_id: str,
+        cust_id: str,
+        action_code: str,
+        source: str | None = None,
+        task_id: str | None = None,
+        confirm_token: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> RouterSnapshot:
+        session = self.session_store.get_or_create(session_id, cust_id)
+        if source not in {None, "router"}:
+            raise ValueError(f"Unsupported action source: {source}")
+
+        if action_code == "confirm_plan":
+            await self._confirm_pending_plan(session, task_id=task_id, confirm_token=confirm_token)
+            return self.snapshot(session.session_id)
+
+        if action_code == "cancel_plan":
+            await self._cancel_pending_plan(session, task_id=task_id, confirm_token=confirm_token)
+            return self.snapshot(session.session_id)
+
+        raise ValueError(f"Unsupported action_code: {action_code}")
+
+    async def _confirm_pending_plan(
+        self,
+        session: SessionState,
+        *,
+        task_id: str | None,
+        confirm_token: str | None,
+    ) -> None:
+        plan = session.pending_plan
+        if plan is None or plan.status != SessionPlanStatus.WAITING_CONFIRMATION:
+            raise ValueError("No pending plan to confirm")
+        if task_id not in {None, "session"}:
+            raise ValueError("Plan action task_id must be 'session'")
+        if confirm_token is not None and confirm_token != plan.confirm_token:
+            raise ValueError("Invalid plan confirm token")
+
+        active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
+        context = self._build_session_context(session)
+        context["source_input"] = plan.source_message
+        for item in plan.items:
+            intent = active_intents.get(item.intent_code)
+            if intent is None:
+                item.status = SessionPlanItemStatus.SKIPPED
+                continue
+            task = await self._create_task(
+                session,
+                context,
+                intent=intent,
+                confidence=item.confidence,
+                is_fallback=False,
+            )
+            item.task_id = task.task_id
+            item.status = SessionPlanItemStatus.PENDING
+
+        plan.touch(SessionPlanStatus.RUNNING)
+        await self._publish(
+            TaskEvent(
+                event="session.plan.confirmed",
+                task_id="session",
+                session_id=session.session_id,
+                intent_code="session",
+                status=TaskStatus.RUNNING,
+                message="计划已确认，开始执行",
+                ishandover=False,
+                payload=self._normalize_interaction_payload(
+                    {
+                        "cust_id": session.cust_id,
+                        "plan_id": plan.plan_id,
+                        "plan_status": plan.status.value,
+                        "items": [item.model_dump(mode="json") for item in plan.items],
+                        "interaction": {
+                            "type": "plan_card",
+                            "card_type": "plan_confirm",
+                            "title": plan.title,
+                            "summary": plan.summary or f"识别到 {len(plan.items)} 个意图，开始按顺序执行",
+                            "version": plan.version,
+                            "plan_id": plan.plan_id,
+                            "confirm_token": plan.confirm_token,
+                            "items": [item.model_dump(mode="json") for item in plan.items],
+                            "actions": [],
+                        },
+                    },
+                    source="router",
+                ),
+            )
+        )
+        queue_pending_tasks(session, self.intent_catalog.priorities())
+        await self._publish_session_state(session, "session.recognized")
+        await self._drain_queue(session, plan.source_message)
+        await self._emit_plan_progress_if_needed(session)
+
+    async def _cancel_pending_plan(
+        self,
+        session: SessionState,
+        *,
+        task_id: str | None,
+        confirm_token: str | None,
+    ) -> None:
+        plan = session.pending_plan
+        if plan is None or plan.status != SessionPlanStatus.WAITING_CONFIRMATION:
+            raise ValueError("No pending plan to cancel")
+        if task_id not in {None, "session"}:
+            raise ValueError("Plan action task_id must be 'session'")
+        if confirm_token is not None and confirm_token != plan.confirm_token:
+            raise ValueError("Invalid plan confirm token")
+
+        plan.touch(SessionPlanStatus.CANCELLED)
+        await self._publish(
+            TaskEvent(
+                event="session.plan.cancelled",
+                task_id="session",
+                session_id=session.session_id,
+                intent_code="session",
+                status=TaskStatus.CANCELLED,
+                message="已取消执行计划",
+                ishandover=True,
+                payload=self._normalize_interaction_payload(
+                    {
+                        "cust_id": session.cust_id,
+                        "plan_id": plan.plan_id,
+                        "plan_status": plan.status.value,
+                        "items": [item.model_dump(mode="json") for item in plan.items],
+                        "interaction": {
+                            "type": "plan_card",
+                            "card_type": "plan_confirm",
+                            "title": plan.title,
+                            "summary": "执行计划已取消",
+                            "version": plan.version,
+                            "plan_id": plan.plan_id,
+                            "confirm_token": plan.confirm_token,
+                            "items": [item.model_dump(mode="json") for item in plan.items],
+                            "actions": [],
+                        },
+                    },
+                    source="router",
+                ),
+            )
+        )
+        session.pending_plan = None
+
+    async def _emit_plan_progress_if_needed(self, session: SessionState) -> None:
+        plan = session.pending_plan
+        if plan is None or plan.status not in {
+            SessionPlanStatus.RUNNING,
+            SessionPlanStatus.PARTIALLY_COMPLETED,
+        }:
+            return
+
+        task_by_id = {task.task_id: task for task in session.tasks}
+        terminal_statuses = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}
+        for item in plan.items:
+            if item.task_id is None:
+                continue
+            task = task_by_id.get(item.task_id)
+            if task is None:
+                continue
+            item.status = self._item_status_for_task(task.status)
+
+        all_terminal = all(
+            item.status.value in terminal_statuses or item.status == SessionPlanItemStatus.SKIPPED
+            for item in plan.items
+        )
+        if all_terminal:
+            plan.touch(SessionPlanStatus.COMPLETED)
+            event_name = "session.plan.completed"
+            event_status = TaskStatus.COMPLETED
+            event_handover = True
+            message = "执行计划已完成"
+        else:
+            has_completed = any(item.status == SessionPlanItemStatus.COMPLETED for item in plan.items)
+            plan.touch(SessionPlanStatus.PARTIALLY_COMPLETED if has_completed else SessionPlanStatus.RUNNING)
+            event_name = "session.plan.updated"
+            event_status = TaskStatus.RUNNING
+            event_handover = False
+            message = "执行计划状态更新"
+
+        await self._publish(
+            TaskEvent(
+                event=event_name,
+                task_id="session",
+                session_id=session.session_id,
+                intent_code="session",
+                status=event_status,
+                message=message,
+                ishandover=event_handover,
+                payload=self._normalize_interaction_payload(
+                    {
+                        "cust_id": session.cust_id,
+                        "plan_id": plan.plan_id,
+                        "plan_status": plan.status.value,
+                        "items": [item.model_dump(mode="json") for item in plan.items],
+                        "interaction": {
+                            "type": "plan_card",
+                            "card_type": "plan_confirm",
+                            "title": plan.title,
+                            "summary": (
+                                "执行计划已完成"
+                                if all_terminal
+                                else "Router 正在按顺序推进当前执行计划"
+                            ),
+                            "version": plan.version,
+                            "plan_id": plan.plan_id,
+                            "confirm_token": plan.confirm_token,
+                            "items": [item.model_dump(mode="json") for item in plan.items],
+                            "actions": [],
+                        },
+                    },
+                    source="router",
+                ),
+            )
+        )
+        if all_terminal:
+            session.pending_plan = None
+
+    def _normalize_interaction_payload(self, payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+        interaction = payload.get("interaction")
+        if not isinstance(interaction, dict):
+            return payload
+        normalized = dict(payload)
+        interaction_payload = dict(interaction)
+        interaction_payload.setdefault("source", source)
+        normalized["interaction"] = interaction_payload
+        return normalized
+
+    def _item_status_for_task(self, status: TaskStatus) -> SessionPlanItemStatus:
+        mapping = {
+            TaskStatus.CREATED: SessionPlanItemStatus.PENDING,
+            TaskStatus.QUEUED: SessionPlanItemStatus.PENDING,
+            TaskStatus.DISPATCHING: SessionPlanItemStatus.RUNNING,
+            TaskStatus.RUNNING: SessionPlanItemStatus.RUNNING,
+            TaskStatus.WAITING_USER_INPUT: SessionPlanItemStatus.WAITING_USER_INPUT,
+            TaskStatus.WAITING_CONFIRMATION: SessionPlanItemStatus.WAITING_CONFIRMATION,
+            TaskStatus.RESUMING: SessionPlanItemStatus.RUNNING,
+            TaskStatus.COMPLETED: SessionPlanItemStatus.COMPLETED,
+            TaskStatus.FAILED: SessionPlanItemStatus.FAILED,
+            TaskStatus.CANCELLED: SessionPlanItemStatus.CANCELLED,
+        }
+        return mapping[status]
+
+    def _is_plan_confirm_message(self, content: str) -> bool:
+        normalized = re.sub(r"[\s，,。.!！？、；;]", "", content)
+        return normalized in {"确认", "确认执行", "开始", "开始执行", "执行", "执行吧", "好的", "好"}

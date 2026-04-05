@@ -117,17 +117,25 @@ class MockStreamingAgentClient:
 
     async def _handle_transfer(self, task: Task, user_input: str) -> AsyncIterator[AgentStreamChunk]:
         name_match = NAME_RE.search(user_input)
+        if not name_match:
+            initial_source_input = self._initial_source_input(task)
+            if initial_source_input:
+                name_match = NAME_RE.search(initial_source_input)
         if name_match:
             task.slot_memory["recipient_name"] = name_match.group(1)
         card = self._extract_card_number(user_input)
         if card:
             task.slot_memory["recipient_card_number"] = card
-        phone_last4 = self._extract_phone_last4(user_input)
+        phone_last4 = self._extract_transfer_phone_last4(user_input, task)
         if phone_last4:
             task.slot_memory["recipient_phone_last_four"] = phone_last4
-        amount_match = AMOUNT_RE.search(user_input)
-        if amount_match:
-            task.slot_memory["amount"] = amount_match.group(1)
+        amount = self._extract_transfer_amount(user_input, task)
+        if not amount:
+            initial_source_input = self._initial_source_input(task)
+            if initial_source_input:
+                amount = self._extract_transfer_amount(initial_source_input, task)
+        if amount:
+            task.slot_memory["amount"] = amount
 
         missing_fields: list[str] = []
         if "recipient_name" not in task.slot_memory:
@@ -183,6 +191,36 @@ class MockStreamingAgentClient:
         exact_match = FOUR_DIGITS_ONLY_RE.match(text.strip())
         if exact_match:
             return exact_match.group(1)
+        return None
+
+    def _extract_transfer_phone_last4(self, text: str, task: Task) -> str | None:
+        match = PHONE_LAST4_RE.search(text)
+        if match:
+            return match.group(1)
+        exact_match = FOUR_DIGITS_ONLY_RE.match(text.strip())
+        if exact_match and "amount" in task.slot_memory and "recipient_phone_last_four" not in task.slot_memory:
+            return exact_match.group(1)
+        return None
+
+    def _extract_transfer_amount(self, text: str, task: Task) -> str | None:
+        amount_match = AMOUNT_RE.search(text)
+        if amount_match:
+            return amount_match.group(1)
+        stripped = text.strip()
+        if (
+            stripped.isdigit()
+            and "amount" not in task.slot_memory
+            and "recipient_name" in task.slot_memory
+            and "recipient_card_number" in task.slot_memory
+            and "recipient_phone_last_four" in task.slot_memory
+        ):
+            return stripped
+        return None
+
+    def _initial_source_input(self, task: Task) -> str | None:
+        value = task.input_context.get("initial_source_input")
+        if isinstance(value, str) and value:
+            return value
         return None
 
 

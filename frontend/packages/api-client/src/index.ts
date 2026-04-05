@@ -1,9 +1,11 @@
 import type {
   ChatMessage,
+  InteractionCard,
   IntentDefinition,
   IntentInput,
   RouterSnapshot,
   RouterSseEvent,
+  SessionActionInput,
   RouterTaskEvent,
   SessionCreateInput,
   TaskSummary
@@ -59,12 +61,64 @@ interface BackendTaskEvent {
   createdAt?: string;
 }
 
+interface BackendInteraction {
+  source?: string;
+  type?: string;
+  card_type?: string;
+  cardType?: string;
+  title?: string;
+  summary?: string;
+  card_code?: string;
+  cardCode?: string;
+  version?: number;
+  fields?: Array<{ key?: string; label?: string; value?: string }>;
+  items?: Array<{
+    task_id?: string;
+    taskId?: string;
+    intent_code?: string;
+    intentCode?: string;
+    title?: string;
+    status?: string;
+  }>;
+  actions?: Array<{ code?: string; label?: string }>;
+  confirm_token?: string;
+  confirmToken?: string;
+}
+
+interface BackendPlanItem {
+  task_id?: string;
+  taskId?: string;
+  intent_code?: string;
+  intentCode?: string;
+  title?: string;
+  status?: string;
+  confidence?: number;
+}
+
+interface BackendPendingPlan {
+  source?: string;
+  card_type?: string;
+  cardType?: string;
+  type?: string;
+  status?: string;
+  title?: string;
+  summary?: string;
+  version?: number;
+  plan_id?: string;
+  planId?: string;
+  confirm_token?: string;
+  confirmToken?: string;
+  items?: BackendPlanItem[];
+}
+
 interface BackendSnapshot {
   session_id: string;
   cust_id: string;
   messages: BackendMessage[];
   tasks: BackendTask[];
   candidate_intents: BackendCandidate[];
+  pending_plan?: BackendPendingPlan | null;
+  plan_status?: string;
   active_task_id?: string | null;
   expires_at?: string;
 }
@@ -121,12 +175,18 @@ function mapSnapshot(snapshot: BackendSnapshot): RouterSnapshot {
       confidence: candidate.confidence,
       reason: candidate.reason
     })),
+    pendingPlan: mapPendingPlan(snapshot.pending_plan, snapshot.plan_status),
     activeTaskId: snapshot.active_task_id,
     expiresAt: snapshot.expires_at
   };
 }
 
 function mapTaskEvent(event: BackendTaskEvent): RouterTaskEvent {
+  const payload = event.payload ?? {};
+  const interaction = mapInteraction(
+    payload.interaction as BackendInteraction | undefined,
+    typeof payload.plan_status === "string" ? payload.plan_status : undefined
+  ) ?? mapPlanFromPayload(payload);
   return {
     taskId: event.taskId ?? event.task_id ?? "unknown-task",
     sessionId: event.sessionId ?? event.session_id ?? "unknown-session",
@@ -134,8 +194,143 @@ function mapTaskEvent(event: BackendTaskEvent): RouterTaskEvent {
     status: event.status,
     message: event.message ?? null,
     ishandover: event.ishandover ?? null,
-    payload: event.payload ?? {},
+    payload,
+    interaction,
     createdAt: event.createdAt ?? event.created_at ?? new Date().toISOString()
+  };
+}
+
+function mapPendingPlan(plan: BackendPendingPlan | null | undefined, planStatus?: string): InteractionCard | null {
+  if (!plan || typeof plan !== "object") {
+    return null;
+  }
+  return {
+    source: plan.source === "agent" ? "agent" : "router",
+    type: typeof plan.type === "string" ? plan.type : "plan_card",
+    cardType:
+      (typeof plan.cardType === "string" && plan.cardType) ||
+      (typeof plan.card_type === "string" && plan.card_type) ||
+      "plan_confirm",
+    status: typeof plan.status === "string" ? plan.status : planStatus,
+    title: typeof plan.title === "string" ? plan.title : "请确认执行计划",
+    summary: typeof plan.summary === "string" ? plan.summary : undefined,
+    version: typeof plan.version === "number" ? plan.version : undefined,
+    items: mapPlanItems(plan.items),
+    actions:
+      (typeof plan.status === "string" ? plan.status : planStatus) === "waiting_confirmation"
+        ? [
+            { code: "confirm_plan", label: "开始执行" },
+            { code: "cancel_plan", label: "取消" }
+          ]
+        : undefined,
+    confirmToken:
+      (typeof plan.confirmToken === "string" && plan.confirmToken) ||
+      (typeof plan.confirm_token === "string" && plan.confirm_token) ||
+      undefined
+  };
+}
+
+function mapPlanItems(items: BackendPlanItem[] | undefined): InteractionCard["items"] {
+  if (!Array.isArray(items)) {
+    return undefined;
+  }
+  const mapped = items
+    .filter((item) => item && typeof (item.intentCode ?? item.intent_code) === "string")
+    .map((item) => ({
+      taskId: typeof (item.taskId ?? item.task_id) === "string" ? String(item.taskId ?? item.task_id) : undefined,
+      intentCode: String(item.intentCode ?? item.intent_code ?? ""),
+      title: typeof item.title === "string" ? item.title : String(item.intentCode ?? item.intent_code ?? ""),
+      status: typeof item.status === "string" ? item.status : "pending",
+      confidence: typeof item.confidence === "number" ? item.confidence : undefined
+    }));
+  return mapped.length > 0 ? mapped : undefined;
+}
+
+function mapPlanFromPayload(payload: Record<string, unknown>): InteractionCard | null {
+  if (typeof payload.plan_id !== "string" && typeof payload.plan_status !== "string") {
+    return null;
+  }
+  const status = typeof payload.plan_status === "string" ? payload.plan_status : undefined;
+  return {
+    source: "router",
+    type: "plan_card",
+    cardType: "plan_confirm",
+    status,
+    title: typeof payload.title === "string" ? payload.title : "执行计划",
+    summary: typeof payload.summary === "string" ? payload.summary : undefined,
+    items: mapPlanItems(payload.items as BackendPlanItem[] | undefined),
+    actions:
+      status === "waiting_confirmation"
+        ? [
+            { code: "confirm_plan", label: "开始执行" },
+            { code: "cancel_plan", label: "取消" }
+          ]
+        : undefined,
+    confirmToken:
+      typeof payload.confirm_token === "string"
+        ? payload.confirm_token
+        : typeof payload.confirmToken === "string"
+          ? payload.confirmToken
+          : undefined
+  };
+}
+
+function mapInteraction(interaction: BackendInteraction | undefined, status?: string): InteractionCard | null {
+  if (!interaction || typeof interaction !== "object") {
+    return null;
+  }
+  const source = interaction.source === "agent" ? "agent" : interaction.source === "router" ? "router" : null;
+  const type = typeof interaction.type === "string" ? interaction.type : null;
+  const cardType =
+    (typeof interaction.cardType === "string" && interaction.cardType) ||
+    (typeof interaction.card_type === "string" && interaction.card_type) ||
+    null;
+  if (!source || !type || !cardType) {
+    return null;
+  }
+  return {
+    source,
+    type,
+    cardType,
+    status: typeof status === "string" ? status : undefined,
+    title: typeof interaction.title === "string" ? interaction.title : undefined,
+    summary: typeof interaction.summary === "string" ? interaction.summary : undefined,
+    cardCode:
+      (typeof interaction.cardCode === "string" && interaction.cardCode) ||
+      (typeof interaction.card_code === "string" && interaction.card_code) ||
+      undefined,
+    version: typeof interaction.version === "number" ? interaction.version : undefined,
+    fields: Array.isArray(interaction.fields)
+      ? interaction.fields
+          .filter((item) => item && typeof item.key === "string" && typeof item.label === "string")
+          .map((item) => ({
+            key: item.key as string,
+            label: item.label as string,
+            value: typeof item.value === "string" ? item.value : ""
+          }))
+      : undefined,
+    items: Array.isArray(interaction.items)
+      ? interaction.items
+          .filter((item) => item && typeof (item.intentCode ?? item.intent_code) === "string")
+          .map((item) => ({
+            taskId: typeof (item.taskId ?? item.task_id) === "string" ? String(item.taskId ?? item.task_id) : undefined,
+            intentCode: String(item.intentCode ?? item.intent_code ?? ""),
+            title: typeof item.title === "string" ? item.title : String(item.intentCode ?? item.intent_code ?? ""),
+            status: typeof item.status === "string" ? item.status : "pending",
+            confidence: typeof (item as { confidence?: unknown }).confidence === "number"
+              ? (item as { confidence: number }).confidence
+              : undefined
+          }))
+      : undefined,
+    actions: Array.isArray(interaction.actions)
+      ? interaction.actions
+          .filter((item) => item && typeof item.code === "string")
+          .map((item) => ({ code: item.code as string, label: typeof item.label === "string" ? item.label : item.code as string }))
+      : undefined,
+    confirmToken:
+      (typeof interaction.confirmToken === "string" && interaction.confirmToken) ||
+      (typeof interaction.confirm_token === "string" && interaction.confirm_token) ||
+      undefined
   };
 }
 
@@ -226,13 +421,21 @@ export class IntentRouterApiClient {
   }
 
   async sendMessageStream(payload: MessagePayload, handlers: MessageStreamHandlers = {}): Promise<void> {
-    const response = await fetch(`${this.options.routerBaseUrl}/sessions/${payload.sessionId}/messages/stream`, {
+    await this.streamPost(
+      `${this.options.routerBaseUrl}/sessions/${payload.sessionId}/messages/stream`,
+      { content: payload.content, cust_id: payload.custId ?? "cust_demo_001" },
+      handlers
+    );
+  }
+
+  private async streamPost(url: string, body: Record<string, unknown>, handlers: MessageStreamHandlers): Promise<void> {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream"
       },
-      body: JSON.stringify({ content: payload.content, cust_id: payload.custId ?? "cust_demo_001" })
+      body: JSON.stringify(body)
     });
     if (!response.ok) {
       throw new Error(await readError(response));
@@ -252,13 +455,13 @@ export class IntentRouterApiClient {
         currentEvent = "message";
         return;
       }
-
       const payloadText = dataLines.join("\n");
-      if (currentEvent !== "snapshot") {
+      try {
         const data = mapTaskEvent(JSON.parse(payloadText) as BackendTaskEvent);
         handlers.onEvent?.({ event: currentEvent, data, at: data.createdAt });
+      } catch {
+        // Drop malformed SSE frames instead of breaking the full stream.
       }
-
       currentEvent = "message";
       dataLines = [];
     };
@@ -280,7 +483,6 @@ export class IntentRouterApiClient {
         } else if (line.startsWith("data:")) {
           dataLines.push(line.slice(5).trimStart());
         }
-
         newlineIndex = buffer.indexOf("\n");
       }
 
@@ -311,17 +513,47 @@ export class IntentRouterApiClient {
       "task.message",
       "task.resuming",
       "task.waiting_user_input",
+      "task.waiting_confirmation",
       "task.completed",
       "task.failed",
+      "task.cancelled",
       "session.recognized",
       "session.idle",
-      "session.waiting_user_input"
+      "session.waiting_user_input",
+      "session.waiting_confirmation",
+      "session.plan.proposed",
+      "session.plan.waiting_confirmation",
+      "session.plan.confirmed",
+      "session.plan.updated",
+      "session.plan.completed",
+      "session.plan.cancelled"
     ].forEach((eventName) => {
       source.addEventListener(eventName, (message) => {
         forward(eventName, message as MessageEvent<string>);
       });
     });
     return () => source.close();
+  }
+
+  async sendSessionAction(input: SessionActionInput): Promise<RouterSnapshot> {
+    const response = await fetch(`${this.options.routerBaseUrl}/sessions/${input.sessionId}/actions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        task_id: input.taskId,
+        source: input.source,
+        action_code: input.actionCode,
+        confirm_token: input.confirmToken,
+        payload: input.payload ?? {}
+      })
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const result = await response.json();
+    return mapSnapshot(result.snapshot as BackendSnapshot);
   }
 
   async listIntents(): Promise<IntentDefinition[]> {

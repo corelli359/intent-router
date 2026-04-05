@@ -19,6 +19,7 @@ from router_core.prompt_templates import (
 logger = logging.getLogger(__name__)
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]{2,}")
+PURE_CJK_RE = re.compile(r"^[\u4e00-\u9fff]+$")
 GENERIC_TERMS = {
     "帮我",
     "一下",
@@ -34,17 +35,57 @@ GENERIC_TERMS = {
 }
 
 
+def _normalize_phrase(value: str) -> str:
+    return value.strip().lower()
+
+
+def _expand_cjk_patterns(token: str) -> set[str]:
+    if not PURE_CJK_RE.fullmatch(token):
+        return set()
+    expanded: set[str] = set()
+    max_size = min(6, len(token))
+    for size in range(2, max_size + 1):
+        for start in range(0, len(token) - size + 1):
+            chunk = token[start : start + size]
+            if chunk not in GENERIC_TERMS:
+                expanded.add(chunk)
+    return expanded
+
+
+def _tokenize_source(source: str, *, expand_cjk: bool) -> set[str]:
+    patterns: set[str] = set()
+    normalized = _normalize_phrase(source)
+    if len(normalized) >= 2 and normalized not in GENERIC_TERMS:
+        patterns.add(normalized)
+    for token in WORD_RE.findall(normalized):
+        token = token.strip().lower()
+        if len(token) < 2 or token in GENERIC_TERMS:
+            continue
+        patterns.add(token)
+        if expand_cjk:
+            patterns.update(_expand_cjk_patterns(token))
+    return patterns
+
+
+def _matched_phrases(values: Iterable[str], search_space: str) -> list[str]:
+    hits: list[str] = []
+    for value in values:
+        normalized = _normalize_phrase(value)
+        if len(normalized) < 2 or normalized in GENERIC_TERMS:
+            continue
+        if normalized in search_space:
+            hits.append(normalized)
+    return sorted(set(hits))
+
+
 def extract_patterns(intent: IntentDefinition) -> set[str]:
     patterns: set[str] = set()
-    sources = [intent.name, intent.description, *intent.examples, *intent.keywords]
-    for source in sources:
-        normalized = source.strip().lower()
-        if len(normalized) >= 2 and normalized not in GENERIC_TERMS:
-            patterns.add(normalized)
-        for token in WORD_RE.findall(normalized):
-            token = token.strip().lower()
-            if len(token) >= 2 and token not in GENERIC_TERMS:
-                patterns.add(token)
+    patterns.update(_tokenize_source(intent.name, expand_cjk=True))
+    for example in intent.examples:
+        patterns.update(_tokenize_source(example, expand_cjk=True))
+    for keyword in intent.keywords:
+        patterns.update(_tokenize_source(keyword, expand_cjk=True))
+    patterns.update(_tokenize_source(intent.description, expand_cjk=False))
     return patterns
 
 
@@ -113,17 +154,27 @@ class SimpleIntentRecognizer:
             matches = sorted(pattern for pattern in patterns if pattern in search_space)
             if not matches:
                 continue
-            if intent.keywords:
-                keyword_hits = [
-                    keyword for keyword in intent.keywords if len(keyword.strip()) >= 2 and keyword.lower() in search_space
-                ]
-                if not keyword_hits:
-                    continue
-                score = 0.55 + min(0.4, 0.2 * len(keyword_hits))
-            else:
-                score = 0.3 + (len(matches) / max(1, min(3, len(patterns)))) * 0.6
+            name_hits = _matched_phrases([intent.name], search_space)
+            example_hits = _matched_phrases(intent.examples, search_space)
+            keyword_hits = _matched_phrases(intent.keywords, search_space)
+            strong_hits = set(name_hits) | set(example_hits) | set(keyword_hits)
+            supporting_hits = [pattern for pattern in matches if pattern not in strong_hits]
+
+            score = 0.38
+            if name_hits:
+                score += 0.32
+            if example_hits:
+                score += min(0.4, 0.24 * len(example_hits))
+            if keyword_hits:
+                score += min(0.32, 0.16 * len(keyword_hits))
+            if supporting_hits:
+                score += min(0.22, 0.08 * len(supporting_hits))
+
+            if not strong_hits and len(matches) >= 2:
+                score += 0.08
+            score = min(0.99, round(score, 2))
             reason = f"matched phrases: {', '.join(matches[:5])}"
-            scored.append((intent, min(0.99, round(score, 2)), reason))
+            scored.append((intent, score, reason))
 
         scored.sort(key=lambda item: (item[0].dispatch_priority, item[1]), reverse=True)
         primary: list[IntentMatch] = []

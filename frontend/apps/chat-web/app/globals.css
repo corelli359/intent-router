@@ -171,7 +171,7 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 20px;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .stage-topline h2,
@@ -325,7 +325,7 @@ textarea {
 .context-rail,
 .stack {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .context-rail {
@@ -346,6 +346,97 @@ textarea {
   gap: 10px;
 }
 
+.plan-section {
+  padding: 14px 14px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(244, 180, 120, 0.34);
+  background: linear-gradient(180deg, rgba(227, 150, 83, 0.11), rgba(227, 150, 83, 0.04));
+}
+
+.plan-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.plan-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: rgba(245, 247, 250, 0.94);
+}
+
+.plan-item-status {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.plan-item-status.status-completed {
+  color: #d5f9e5;
+  border-color: rgba(104, 204, 159, 0.46);
+  background: rgba(104, 204, 159, 0.14);
+}
+
+.plan-item-status.status-running,
+.plan-item-status.status-waiting_user_input,
+.plan-item-status.status-waiting_confirmation {
+  color: #ffe2c8;
+  border-color: rgba(227, 150, 83, 0.5);
+  background: rgba(227, 150, 83, 0.16);
+}
+
+.plan-item-status.status-failed,
+.plan-item-status.status-cancelled {
+  color: #ffd8cc;
+  border-color: rgba(235, 141, 105, 0.52);
+  background: rgba(235, 141, 105, 0.12);
+}
+
+.plan-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.plan-actions button {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
+  padding: 8px 14px;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.plan-actions button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.plan-actions .plan-confirm {
+  background: linear-gradient(180deg, rgba(242, 168, 103, 0.95), rgba(210, 124, 56, 0.95));
+  border-color: rgba(255, 227, 197, 0.7);
+  color: #1d1005;
+  font-weight: 700;
+}
+
+.plan-actions .plan-cancel {
+  border-color: rgba(235, 141, 105, 0.5);
+  color: #ffd8cc;
+}
+
+.plan-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .rail-section + .rail-section {
   padding-top: 18px;
   border-top: 1px solid var(--line);
@@ -364,7 +455,7 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 14px;
-  align-items: start;
+  align-items: flex-start;
 }
 
 .rail-section h3 {

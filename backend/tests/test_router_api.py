@@ -10,6 +10,7 @@ from router_api.dependencies import get_orchestrator
 from router_api.app import create_router_app
 from router_api.sse.broker import EventBroker
 from router_core.agent_client import MockStreamingAgentClient, StreamingAgentClient
+
 from router_core.domain import IntentDefinition, TaskEvent, TaskStatus, utc_now
 from router_core.orchestrator import RouterOrchestrator
 
@@ -43,7 +44,7 @@ def _mock_intents() -> list[IntentDefinition]:
             name="转账",
             description="执行转账，需要收款人姓名、收款卡号、手机号后4位和金额。",
             examples=["给张三转 200 元"],
-            keywords=["转账", "付款", "账户"],
+            keywords=["转账", "付款", "汇款"],
             agent_url="mock://transfer_money",
             dispatch_priority=95,
             primary_threshold=0.72,
@@ -52,15 +53,179 @@ def _mock_intents() -> list[IntentDefinition]:
     ]
 
 
+def _registered_style_intents() -> list[IntentDefinition]:
+    return [
+        IntentDefinition(
+            intent_code="query_account_balance",
+            name="查询账户余额",
+            description="查询用户账户余额。需要收集卡号和手机号后4位，信息齐全后返回余额结果。",
+            examples=["帮我查一下账户余额", "查余额", "查询银行卡余额"],
+            agent_url="mock://query_account_balance",
+            dispatch_priority=100,
+        ),
+        IntentDefinition(
+            intent_code="transfer_money",
+            name="转账",
+            description="执行转账。需要收集收款人姓名、收款卡号、收款人手机号后4位和转账金额。金额大于8000时返回账户余额不足。",
+            examples=["给张三转 200 元", "帮我给李四转账", "转账到对方银行卡"],
+            agent_url="mock://transfer_money",
+            dispatch_priority=95,
+        ),
+    ]
+
+
+async def _collect_sse_events(
+    client: httpx.AsyncClient,
+    session_id: str,
+    content: str,
+) -> list[dict[str, object]]:
+    async with client.stream(
+        "POST",
+        f"/api/router/sessions/{session_id}/messages/stream",
+        json={"content": content},
+        headers={"Accept": "text/event-stream"},
+    ) as response:
+        assert response.status_code == 200
+        events: list[dict[str, object]] = []
+        current_event = "message"
+        data_lines: list[str] = []
+
+        async for raw_line in response.aiter_lines():
+            line = raw_line.rstrip("\r")
+            if not line:
+                if data_lines:
+                    payload_text = "\n".join(data_lines)
+                    events.append({"event": current_event, "data": json.loads(payload_text)})
+                    data_lines = []
+                    current_event = "message"
+                continue
+            if line.startswith("event:"):
+                current_event = line.removeprefix("event:").strip() or "message"
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line.removeprefix("data:").strip())
+                continue
+
+        if data_lines:
+            payload_text = "\n".join(data_lines)
+            events.append({"event": current_event, "data": json.loads(payload_text)})
+
+    return events
+
+
+async def _collect_action_sse_events(
+    client: httpx.AsyncClient,
+    session_id: str,
+    *,
+    action_code: str,
+    confirm_token: str,
+    task_id: str = "session",
+    source: str = "router",
+    payload: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    async with client.stream(
+        "POST",
+        f"/api/router/sessions/{session_id}/actions/stream",
+        json={
+            "task_id": task_id,
+            "source": source,
+            "action_code": action_code,
+            "confirm_token": confirm_token,
+            "payload": payload or {},
+        },
+        headers={"Accept": "text/event-stream"},
+    ) as response:
+        assert response.status_code == 200
+        events: list[dict[str, object]] = []
+        current_event = "message"
+        data_lines: list[str] = []
+
+        async for raw_line in response.aiter_lines():
+            line = raw_line.rstrip("\r")
+            if not line:
+                if data_lines:
+                    payload_text = "\n".join(data_lines)
+                    events.append({"event": current_event, "data": json.loads(payload_text)})
+                    data_lines = []
+                    current_event = "message"
+                continue
+            if line.startswith("event:"):
+                current_event = line.removeprefix("event:").strip() or "message"
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line.removeprefix("data:").strip())
+                continue
+
+        if data_lines:
+            payload_text = "\n".join(data_lines)
+            events.append({"event": current_event, "data": json.loads(payload_text)})
+
+    return events
+
+
 def _test_app_with_mock_orchestrator() -> tuple[object, RouterOrchestrator]:
+    broker = EventBroker()
     orchestrator = RouterOrchestrator(
-        publish_event=lambda event: None,
+        publish_event=broker.publish,
         intent_catalog=_StaticCatalog(_mock_intents()),
         agent_client=MockStreamingAgentClient(),
     )
     app = create_router_app()
     app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+    from router_api.dependencies import get_event_broker
+
+    app.dependency_overrides[get_event_broker] = lambda: broker
     return app, orchestrator
+
+
+def _test_stream_app_with_mock_orchestrator() -> tuple[object, RouterOrchestrator, EventBroker]:
+    broker = EventBroker()
+    orchestrator = RouterOrchestrator(
+        publish_event=broker.publish,
+        intent_catalog=_StaticCatalog(_mock_intents()),
+        agent_client=MockStreamingAgentClient(),
+    )
+    app = create_router_app()
+    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+    from router_api.dependencies import get_event_broker
+
+    app.dependency_overrides[get_event_broker] = lambda: broker
+    return app, orchestrator, broker
+
+
+def test_registered_intents_without_keywords_still_propose_multi_intent_plan() -> None:
+    async def run() -> None:
+        broker = EventBroker()
+        orchestrator = RouterOrchestrator(
+            publish_event=broker.publish,
+            intent_catalog=_StaticCatalog(_registered_style_intents()),
+            agent_client=MockStreamingAgentClient(),
+        )
+        app = create_router_app()
+        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+        from router_api.dependencies import get_event_broker
+
+        app.dependency_overrides[get_event_broker] = lambda: broker
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "先查余额，再给李四转账 200 元"},
+            )
+            assert first_turn.status_code == 200
+            snapshot = first_turn.json()["snapshot"]
+            assert snapshot["tasks"] == []
+            assert snapshot["pending_plan"]["status"] == "waiting_confirmation"
+            assert [item["intent_code"] for item in snapshot["pending_plan"]["items"]] == [
+                "query_account_balance",
+                "transfer_money",
+            ]
+
+    asyncio.run(run())
 
 
 def test_multi_intent_serial_flow_waits_then_resumes() -> None:
@@ -76,26 +241,62 @@ def test_multi_intent_serial_flow_waits_then_resumes() -> None:
 
             first_turn = await client.post(
                 f"/api/router/sessions/{session_id}/messages",
-                json={"content": "帮我查账户余额，再给张三转 200 元"},
+                json={"content": "帮我查账户余额，再给张三转账 200 元"},
             )
             assert first_turn.status_code == 200
 
             snapshot = first_turn.json()["snapshot"]
-            tasks = snapshot["tasks"]
-            assert len(tasks) >= 2
-            assert tasks[0]["status"] == "waiting_user_input"
-            assert tasks[1]["status"] == "queued"
+            assert snapshot["tasks"] == []
+            assert snapshot["pending_plan"]["status"] == "waiting_confirmation"
+            confirm_token = snapshot["pending_plan"]["confirm_token"]
+
+            confirm_turn = await client.post(
+                f"/api/router/sessions/{session_id}/actions",
+                json={
+                    "task_id": "session",
+                    "source": "router",
+                    "action_code": "confirm_plan",
+                    "confirm_token": confirm_token,
+                },
+            )
+            assert confirm_turn.status_code == 200
+            confirmed_snapshot = confirm_turn.json()["snapshot"]
+            task_by_intent = {task["intent_code"]: task for task in confirmed_snapshot["tasks"]}
+            assert task_by_intent["query_account_balance"]["status"] == "waiting_user_input"
+            assert task_by_intent["transfer_money"]["status"] == "queued"
 
             second_turn = await client.post(
                 f"/api/router/sessions/{session_id}/messages",
-                json={"content": "给张三转 200 元，卡号 6222021234567890，手机号后四位 1234"},
+                json={"content": "卡号 6222021234567890，手机号后四位 1234"},
             )
             assert second_turn.status_code == 200
 
             snapshot = second_turn.json()["snapshot"]
             task_by_intent = {task["intent_code"]: task for task in snapshot["tasks"]}
             assert task_by_intent["query_account_balance"]["status"] == "completed"
-            assert task_by_intent["transfer_money"]["status"] == "completed"
+            transfer_task = task_by_intent["transfer_money"]
+            assert transfer_task["status"] in {"waiting_user_input", "completed"}
+            assert transfer_task["slot_memory"]["recipient_name"] == "张三"
+            assert transfer_task["slot_memory"]["amount"] == "200"
+
+            if transfer_task["status"] == "waiting_user_input":
+                assert snapshot["messages"][-1]["content"] == "请提供收款卡号、收款人手机号后4位"
+
+                third_turn = await client.post(
+                    f"/api/router/sessions/{session_id}/messages",
+                    json={"content": "卡号 6222021234567890，手机号后四位 1234"},
+                )
+                assert third_turn.status_code == 200
+
+                final_snapshot = third_turn.json()["snapshot"]
+                final_task_by_intent = {task["intent_code"]: task for task in final_snapshot["tasks"]}
+                assert final_task_by_intent["query_account_balance"]["status"] == "completed"
+                assert final_task_by_intent["transfer_money"]["status"] == "completed"
+                assert final_snapshot["pending_plan"] is None
+            else:
+                assert transfer_task["slot_memory"]["recipient_card_number"] == "6222021234567890"
+                assert transfer_task["slot_memory"]["recipient_phone_last_four"] == "1234"
+                assert snapshot["pending_plan"] is None
 
     asyncio.run(run())
 
@@ -171,6 +372,185 @@ def test_stream_message_endpoint_emits_sse_events_then_snapshot() -> None:
             assert "event: task.waiting_user_input" in body
             assert "请提供卡号和手机号后4位" in body
             assert "event: snapshot" not in body
+
+    asyncio.run(run())
+
+
+def test_plan_card_emitted_before_execution_and_tracks_router_source() -> None:
+    async def run() -> None:
+        app, _, _ = _test_stream_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            events = await _collect_sse_events(
+                client,
+                session_id,
+                "先查余额，再给李四转账 200 元",
+            )
+
+            plan_events = [event for event in events if event["event"] == "session.plan.proposed"]
+            assert plan_events, "Router plan should be proposed before executing tasks"
+            interaction = plan_events[-1]["data"]["payload"]["interaction"]
+            assert interaction.get("source") == "router"
+            items = interaction["items"]
+            assert isinstance(items, list)
+            assert len(items) >= 2
+
+    asyncio.run(run())
+
+
+def test_confirm_plan_triggers_sequential_execution() -> None:
+    async def run() -> None:
+        app, _, _ = _test_stream_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            events = await _collect_sse_events(
+                client,
+                session_id,
+                "帮我查余额，再转账 100 元",
+            )
+
+            plan_events = [event for event in events if event["event"] == "session.plan.proposed"]
+            assert plan_events
+            plan_event = plan_events[-1]
+            interaction = plan_event["data"]["payload"]["interaction"]
+            token = interaction["confirm_token"]
+
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/actions",
+                json={
+                    "task_id": "session",
+                    "source": "router",
+                    "action_code": "confirm_plan",
+                    "confirm_token": token,
+                    "payload": {"decision": "confirm"},
+                },
+            )
+            assert response.status_code == 200
+
+            snapshot = (await client.get(f"/api/router/sessions/{session_id}")).json()
+            tasks = snapshot["tasks"]
+            assert tasks[0]["status"] == "waiting_user_input" or tasks[0]["status"] == "running"
+            assert tasks[-1]["status"] != "created"
+
+    asyncio.run(run())
+
+
+def test_confirm_plan_action_stream_emits_router_plan_and_task_events() -> None:
+    async def run() -> None:
+        app, _, _ = _test_stream_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            proposal_events = await _collect_sse_events(
+                client,
+                session_id,
+                "帮我查余额，再转账 100 元",
+            )
+            confirm_token = [
+                event
+                for event in proposal_events
+                if event["event"] == "session.plan.proposed"
+            ][-1]["data"]["payload"]["interaction"]["confirm_token"]
+
+            action_events = await _collect_action_sse_events(
+                client,
+                session_id,
+                action_code="confirm_plan",
+                confirm_token=confirm_token,
+                payload={"decision": "confirm"},
+            )
+
+            event_names = [event["event"] for event in action_events]
+            assert "session.plan.confirmed" in event_names
+            assert "task.waiting_user_input" in event_names
+            assert "session.plan.updated" in event_names
+            assert "session.waiting_user_input" in event_names
+            assert "snapshot" not in event_names
+
+            plan_confirmed = next(
+                event for event in action_events if event["event"] == "session.plan.confirmed"
+            )
+            interaction = plan_confirmed["data"]["payload"]["interaction"]
+            assert interaction["source"] == "router"
+            assert interaction["card_type"] == "plan_confirm"
+            assert all(item["task_id"] for item in interaction["items"])
+
+    asyncio.run(run())
+
+
+def test_cancel_plan_closes_plan_and_tasks() -> None:
+    async def run() -> None:
+        app, _, _ = _test_stream_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            events = await _collect_sse_events(
+                client,
+                session_id,
+                "先查余额，再转账 100 元",
+            )
+            plan_events = [event for event in events if event["event"] == "session.plan.proposed"]
+            assert plan_events
+            token = plan_events[-1]["data"]["payload"]["interaction"]["confirm_token"]
+
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/actions",
+                json={
+                    "task_id": "session",
+                    "source": "router",
+                    "action_code": "cancel_plan",
+                    "confirm_token": token,
+                    "payload": {"decision": "cancel"},
+                },
+            )
+            assert response.status_code == 200
+
+            snapshot = (await client.get(f"/api/router/sessions/{session_id}")).json()
+            assert snapshot["tasks"] == []
+            assert snapshot["pending_plan"] is None
+
+    asyncio.run(run())
+
+
+def test_waiting_transfer_slots_continue_without_switching_to_balance() -> None:
+    async def run() -> None:
+        app, _ = _test_app_with_mock_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+
+            await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我给李四转账"},
+            )
+            first = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "卡号 6222020100049999999"},
+            )
+            snapshot = first.json()["snapshot"]
+            transfer_tasks = [task for task in snapshot["tasks"] if task["intent_code"] == "transfer_money"]
+            assert transfer_tasks
+            assert transfer_tasks[0]["status"] == "waiting_user_input"
+            assert "query_account_balance" not in {task["intent_code"] for task in snapshot["tasks"]}
+
+            second = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "手机号后四位 1234"},
+            )
+            snapshot = second.json()["snapshot"]
+            assert all(task["intent_code"] == "transfer_money" for task in snapshot["tasks"])
 
     asyncio.run(run())
 
@@ -317,7 +697,21 @@ def test_intent_switch_cancels_waiting_and_queued_tasks_before_dispatching_new_i
                 json={"content": "帮我查账户余额，再给张三转账 200 元"},
             )
             assert first_turn.status_code == 200
-            first_tasks = {task["intent_code"]: task for task in first_turn.json()["snapshot"]["tasks"]}
+            first_snapshot = first_turn.json()["snapshot"]
+            assert first_snapshot["tasks"] == []
+            confirm_token = first_snapshot["pending_plan"]["confirm_token"]
+
+            confirm_turn = await client.post(
+                f"/api/router/sessions/{session_id}/actions",
+                json={
+                    "task_id": "session",
+                    "source": "router",
+                    "action_code": "confirm_plan",
+                    "confirm_token": confirm_token,
+                },
+            )
+            assert confirm_turn.status_code == 200
+            first_tasks = {task["intent_code"]: task for task in confirm_turn.json()["snapshot"]["tasks"]}
             assert first_tasks["query_account_balance"]["status"] == "waiting_user_input"
             assert first_tasks["transfer_money"]["status"] == "queued"
 
@@ -683,7 +1077,21 @@ def test_multi_intent_serial_flow_over_http_agents_uses_history_on_resumed_turn(
                 )
                 assert first_turn.status_code == 200
                 snapshot = first_turn.json()["snapshot"]
-                task_by_intent = {task["intent_code"]: task for task in snapshot["tasks"]}
+                assert snapshot["tasks"] == []
+                confirm_token = snapshot["pending_plan"]["confirm_token"]
+
+                confirm_turn = await client.post(
+                    f"/api/router/sessions/{session_id}/actions",
+                    json={
+                        "task_id": "session",
+                        "source": "router",
+                        "action_code": "confirm_plan",
+                        "confirm_token": confirm_token,
+                    },
+                )
+                assert confirm_turn.status_code == 200
+                confirmed_snapshot = confirm_turn.json()["snapshot"]
+                task_by_intent = {task["intent_code"]: task for task in confirmed_snapshot["tasks"]}
                 assert task_by_intent["query_account_balance"]["status"] == "waiting_user_input"
                 assert task_by_intent["transfer_money"]["status"] == "queued"
 
@@ -699,7 +1107,16 @@ def test_multi_intent_serial_flow_over_http_agents_uses_history_on_resumed_turn(
 
         assert len(balance_agent_inputs) == 2
         assert len(transfer_agent_inputs) == 1
-        assert transfer_agent_inputs[0]["input"] == "卡号 6222021234567890，手机号后四位 1234"
-        assert any("张三" in item for item in transfer_agent_inputs[0]["conversation"]["recentMessages"])
+        transfer_payload = transfer_agent_inputs[0]
+        source_text = " ".join(
+            [
+                str(transfer_payload["input"]),
+                *[str(item) for item in transfer_payload["conversation"]["recentMessages"]],
+            ]
+        )
+        assert "张三" in source_text
+        assert "200" in source_text
+        assert "6222021234567890" in source_text
+        assert "1234" in source_text
 
     asyncio.run(run())

@@ -6,10 +6,55 @@ export type TaskStatus =
   | "dispatching"
   | "running"
   | "waiting_user_input"
+  | "waiting_confirmation"
   | "resuming"
   | "completed"
   | "failed"
   | "cancelled";
+
+export type InteractionSource = "router" | "agent";
+
+export interface InteractionAction {
+  code: string;
+  label: string;
+}
+
+export interface InteractionField {
+  key: string;
+  label: string;
+  value: string;
+}
+
+export interface RouterPlanItem {
+  taskId?: string | null;
+  intentCode: string;
+  title: string;
+  status: string;
+  confidence?: number;
+}
+
+export type PlanStatus =
+  | "draft"
+  | "waiting_confirmation"
+  | "running"
+  | "partially_completed"
+  | "completed"
+  | "cancelled";
+
+export interface InteractionCard {
+  source: InteractionSource;
+  type: string;
+  cardType: string;
+  status?: PlanStatus | string;
+  title?: string;
+  summary?: string;
+  cardCode?: string;
+  version?: number;
+  fields?: InteractionField[];
+  items?: RouterPlanItem[];
+  actions?: InteractionAction[];
+  confirmToken?: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -39,6 +84,7 @@ export interface RouterSnapshot {
   messages: ChatMessage[];
   tasks: TaskSummary[];
   candidateIntents: CandidateIntent[];
+  pendingPlan?: InteractionCard | null;
   activeTaskId?: string | null;
   expiresAt?: string;
 }
@@ -51,6 +97,7 @@ export interface RouterTaskEvent {
   message?: string | null;
   ishandover?: boolean | null;
   payload?: Record<string, unknown>;
+  interaction?: InteractionCard | null;
   createdAt: string;
 }
 
@@ -93,4 +140,13 @@ export interface IntentInput {
 export interface SessionCreateInput {
   custId: string;
   sessionId?: string;
+}
+
+export interface SessionActionInput {
+  sessionId: string;
+  taskId: string;
+  source: InteractionSource;
+  actionCode: string;
+  confirmToken?: string;
+  payload?: Record<string, unknown>;
 }

@@ -5,7 +5,7 @@ import json
 from contextlib import suppress
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from starlette.responses import StreamingResponse
 
 from router_api.dependencies import get_event_broker, get_orchestrator
@@ -37,6 +37,29 @@ class MessageRequest(BaseModel):
         if self.content is None and self.message is None:
             raise ValueError("content or message is required")
         self.content = self.content or self.message
+        self.cust_id = self.cust_id or "cust_demo"
+        return self
+
+
+class ActionRequest(BaseModel):
+    action_code: str | None = None
+    actionCode: str | None = None
+    source: str | None = None
+    task_id: str | None = None
+    taskId: str | None = None
+    confirm_token: str | None = None
+    confirmToken: str | None = None
+    payload: dict[str, object] = Field(default_factory=dict)
+    cust_id: str | None = None
+
+    @model_validator(mode="after")
+    def normalize(self) -> "ActionRequest":
+        resolved_code = self.action_code or self.actionCode
+        if not resolved_code:
+            raise ValueError("action_code is required")
+        self.action_code = resolved_code
+        self.task_id = self.task_id or self.taskId
+        self.confirm_token = self.confirm_token or self.confirmToken
         self.cust_id = self.cust_id or "cust_demo"
         return self
 
@@ -79,6 +102,80 @@ async def post_message(
         content=request.content or "",
     )
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
+
+
+@router.post("/sessions/{session_id}/actions")
+async def post_action(
+    session_id: str,
+    request: ActionRequest,
+    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+):
+    try:
+        snapshot = await orchestrator.handle_action(
+            session_id=session_id,
+            cust_id=request.cust_id or "cust_demo",
+            action_code=request.action_code or "",
+            source=request.source,
+            task_id=request.task_id,
+            confirm_token=request.confirm_token,
+            payload=request.payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
+
+
+@router.post("/sessions/{session_id}/actions/stream")
+async def post_action_stream(
+    session_id: str,
+    request: ActionRequest,
+    http_request: Request,
+    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    broker: EventBroker = Depends(get_event_broker),
+) -> StreamingResponse:
+    async def event_generator():
+        queue = broker.register(session_id)
+        processing_task = asyncio.create_task(
+            orchestrator.handle_action(
+                session_id=session_id,
+                cust_id=request.cust_id or "cust_demo",
+                action_code=request.action_code or "",
+                source=request.source,
+                task_id=request.task_id,
+                confirm_token=request.confirm_token,
+                payload=request.payload,
+            )
+        )
+        try:
+            while True:
+                if await http_request.is_disconnected():
+                    break
+                if processing_task.done() and queue.empty():
+                    await processing_task
+                    break
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+
+                yield _encode_sse(event.event, event.model_dump(mode="json"))
+        finally:
+            broker.unregister(session_id, queue)
+            if not processing_task.done():
+                processing_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await processing_task
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/sessions/{session_id}/messages/stream")
