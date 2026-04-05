@@ -1,5 +1,40 @@
 # 执行进度
 
+## 2026-04-05 补充执行情况
+
+### [x] T13 · 管理面与运行面部署解耦
+设计：`admin-api` 负责意图治理与配置发布，`router-api` 负责识别、状态机与分发，二者必须独立 Deployment，不能继续共用一个 `backend` 部署。
+实现：新增 `k8s/intent/admin-api.yaml` 与 `k8s/intent/router-api.yaml`，删除 `k8s/intent/backend.yaml`；统一入口固定为 `/admin`、`/chat`、`/api/admin/*`、`/api/router/*`；相关约束已补充到 `docs/intent-router-prd.md` 与 `docs/deerflow-inspired-architecture.md`。
+
+### [x] T14 · Ingress 路由收敛
+设计：管理端和对话端必须使用明确前缀，避免根路径混用带来的路由歧义。
+实现：`k8s/intent/ingress.yaml` 已固定为 `intent-router.kkrrc-359.top` 下的四类入口：`/admin` -> `intent-admin-web`、`/chat` -> `intent-chat-web`、`/api/admin` -> `intent-admin-api`、`/api/router` -> `intent-router-api`；`app-root` 指向 `/chat`。
+
+### [x] T15 · Deployment requests 补齐
+设计：当前运行环境是 4c8g 的 minikube，必须给各 Deployment 显式声明 `resources.requests`，让调度可控，避免一次性拉起所有 Pod 造成内存争抢。
+实现：`admin-api`、`router-api`、`admin-web`、`chat-web`、两个 intent agent 对应 Deployment 都已补齐 `resources.requests.cpu` 与 `resources.requests.memory`；后续部署策略改为逐个滚动恢复，不再一次性重拉全部 Deployment。
+
+### [x] T16 · Chat Web 中文化与主界面收敛
+设计：对话页主界面只保留会话、当前任务和发送动作，诊断信息下沉，避免“一个页面全装下”的拥挤感。
+实现：`frontend/apps/chat-web` 已完成中文化，主界面以会话输入与任务状态为主，诊断信息折叠到次级区域；管理端与对话端入口已按 `/admin` 和 `/chat` 分开。
+
+### [x] T17 · 示例意图 Agent 重建为余额查询与转账
+设计：Router 只做识别与分发，不直接执行意图；两个示意 intent agent 负责通过语义补齐槽位，不在 Router 里写业务正则。Agent 当前只做演示，不追求完整银行能力。
+实现：原示意场景替换为 `query_account_balance` 与 `transfer_money`：余额查询在拿到卡号与手机号后 4 位后固定返回 `8000` 元；转账要求收款人姓名、卡号、手机号后 4 位和金额，金额大于 `8000` 返回余额不足，否则返回转账成功。当前 K8s Service 名仍沿用历史命名 `intent-order-agent` 与 `intent-appointment-agent` 承载这两个新 agent。
+
+### [x] T18 · Router 主链路 SSE 线上验证
+设计：对话主链路必须走标准 SSE，不使用额外 snapshot 补包；浏览器与脚本调用都以 `/messages/stream` 为准。
+实现：线上已验证 `POST /api/router/sessions` + `POST /api/router/sessions/{session_id}/messages/stream` 主链路可用；等待补充信息、任务切换、余额查询、转账成功/失败路径都已串通；本轮另外补了 `/events` 初始 `heartbeat` 输出，便于前端尽快确认订阅建立。
+
+### [x] T19 · 仓库内 kubectl 包装器移除
+设计：`kubectl` 属于系统级工具，不应放在工程脚本目录内伪装为项目依赖。
+实现：仓库内 `scripts/kubectl` 包装器已删除；当前约定改为直接使用系统级 `kubectl`，用户本机实际已放置到 `/root/kubectl`。
+
+## 当前残留问题
+
+### [ ] T20 · `/events` 断开后的 waiting task 在线上仍未稳定取消
+说明：`/messages/stream` 断开后取消 waiting task 的主链路已在线上验证通过；但 `GET /api/router/sessions/{session_id}/events` 在 ingress 后的断连感知仍不稳定。本轮已补 initial heartbeat 和对应测试，但线上观察流仍不应被当作“交互主链路”，当前以 `/messages/stream` 作为权威交互 SSE 入口。
+
 ## 已完成
 
 ### [x] T01 · 意图切换检测（三子场景中的 Router 核心链路）
