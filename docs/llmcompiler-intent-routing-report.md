@@ -1521,73 +1521,76 @@ class TaskArtifact(BaseModel):
 
 - [langgraph_intent_graph_example.py](/root/intent-router/docs/examples/langgraph_intent_graph_example.py)
 
-这个示例现在展示的不是“固定业务 workflow”，而是更贴近真实需求的写法：
+这个示例现在展示的是更严格的“graph factory”写法：
 
-- LangGraph 外层只保留少数固定 runtime 节点
-- 真正动态的业务图存放在 `state["execution_graph"]`
-- 运行时每一轮都从 `execution_graph` 里挑出 ready 节点
-- 每个 ready 节点通过同一个通用 `run_node()` 执行
+- planner 先产出 `ExecutionGraphSpec`
+- 再由：
+  - `build_langgraph_from_execution_graph(spec, registry)`
+  动态构造 LangGraph
 
-也就是说，这个文件演示的是：
+也就是说，这个文件不再演示“固定 workflow”，而是演示：
 
-- “静态外层控制图 + 动态内层执行图”
+- graph 本身如何由一张动态 spec 工厂化生成
 
 这个示例包含：
 
-- `recognize_or_update_goal`
-- `plan_graph`
-- `pick_ready_nodes`
-- `run_node`
-- `finalize`
+- `ExecutionGraphSpec`
+- `GraphNodeSpec`
+- `make_node_runner(...)`
+- `build_langgraph_from_execution_graph(...)`
+- `mock_registry()`
+- `build_demo_spec(...)`
 
 其中最关键的是四点：
 
-#### 1. 动态规划结果不写死在 LangGraph 边上
+#### 1. graph 是数据驱动生成的
 
-业务 agent、条件节点、join 节点，都不是写死在 LangGraph 的 `add_edge(...)` 里，而是由：
+业务 agent、条件节点、join 节点、依赖边，都不是硬编码在固定 workflow 里，而是来自：
 
-- `mock_dynamic_planner(...)`
+- `ExecutionGraphSpec`
 
-生成一张 `execution_graph`。
-
-这对应的是：
-
-- 很多个 agent、很多条件、很多依赖，都作为运行时状态存在
-- 外层图不需要随着业务 agent 数量增长而无限膨胀
-
-#### 2. 动态 fan-out
-
-`pick_ready_nodes()` 不是返回一个固定节点名，而是根据当前 `execution_graph` 和 `artifacts` 动态找出 ready 节点，然后返回：
-
-- `Send("run_node", {...})`
+然后由 factory 方法动态注册节点和边。
 
 这对应的是：
 
-- 可以动态并行派发多个 ready 节点
-- 不需要提前把所有业务路径写成固定边
+- 很多个 agent、很多条件、很多依赖，都可以通过 spec 注入
+- 每次 planner 输出不同，生成的 graph 也不同
 
-#### 3. 通用节点执行器
+#### 2. 通用 node factory
 
-`run_node()` 是通用执行器，而不是每个 agent 一个 LangGraph 节点。
+`make_node_runner(...)` 不是为某个固定业务写死实现，而是根据：
 
-它会根据 `node_type / intent_code` 决定：
+- `node_type`
+- `intent_code`
+- `run_if`
+- `condition`
 
-- 执行 intent task
-- 执行 condition
-- 执行 notify
-- 执行 join
+生成对应的 LangGraph node callable。
 
 这对应的是：
 
-- 未来真正接入时，只需要把 `run_node()` 里的 mock 逻辑替换成你当前的 `StreamingAgentClient`
+- 同一个 factory 可以承载不同 planner 输出的节点类型组合
 
-#### 4. human-in-the-loop
+#### 3. registry 驱动 agent 执行
 
-示例里 `transfer_money` 这类节点仍然可以在通用 `run_node()` 内部使用：
+`intent_task` 节点并不是直接写死业务逻辑，而是通过：
+
+- `registry[intent_code]`
+
+去拿对应 handler。
+
+这对应的是：
+
+- graph 结构和 agent 实现是解耦的
+- 新增 agent 时，不需要重写 graph factory，只需要扩充 planner 输出和 registry
+
+#### 4. human-in-the-loop 仍然成立
+
+示例里 `transfer_money` 这种动态生成的节点，仍然可以在 node runner 内调用：
 
 - `interrupt(...)`
 
-暂停图执行；恢复时通过：
+图会暂停；恢复时仍通过：
 
 - `Command(resume=True)`
 
