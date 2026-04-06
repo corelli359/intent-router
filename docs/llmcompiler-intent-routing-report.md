@@ -640,7 +640,233 @@ LLM 规划器最常见的问题是：
 - 但它不能单独解决你的“实时多轮对话意图路由”问题。
 - 最优路线是“保留现有 Router，会话态不动；引入 LLMCompiler 思想，升级计划表达和调度器”。
 
-## 16. 推荐下一步
+## 16. 补充：LangGraph 能否实现你的需求
+
+结论先行：
+
+- 可以，`LangGraph` 能实现你的需求，而且从“运行时编排框架”的角度看，它比直接引入 `LLMCompiler` 更贴近你的整体目标。
+- 但 `LangGraph` 解决的是“如何运行一个长生命周期、可中断、可恢复、可分支、可并行的图工作流”，不是“如何自动识别多意图并自动生成高质量规划图”。
+- 因此最合理的理解是：
+  - `LangGraph` 更适合作为 orchestration runtime。
+  - `LLMCompiler` 更适合作为 planner pattern。
+
+换句话说，如果只问“能不能做实时多轮、多意图、条件依赖、动态执行规划”，答案是“能”；但如果问“装上 LangGraph 之后这些能力会不会自动出现”，答案是“不会，仍需要你自己定义识别、规划、节点协议和状态模型”。
+
+### 16.1 为什么说 LangGraph 更贴近你的目标
+
+根据官方文档，`LangGraph` 的定位是一个 “low-level orchestration framework and runtime for building, managing, and deploying long-running, stateful agents”，并且把以下能力作为核心收益：
+
+- durable execution
+- streaming
+- human-in-the-loop
+- memory
+- long-running / stateful workflow
+
+这几个关键词和你的目标高度一致，因为你的问题本质上不是“单次工具调用优化”，而是“长生命周期会话中的图执行控制”。
+
+### 16.2 LangGraph 与你的需求逐项映射
+
+#### 1. 实时多轮对话
+
+这点 `LangGraph` 是支持的。
+
+它的 `interrupt()` 机制允许在图执行中某个节点精确暂停，等待外部输入后再继续；恢复时通过 `Command(resume=...)` 把用户回答送回图中。官方文档还明确要求：
+
+- 使用 checkpointer 持久化图状态
+- 用 `thread_id` 标识要恢复的那条执行线程
+
+这和本项目当前的 `waiting_user_input` / `waiting_confirmation` 很接近，但 `LangGraph` 的建模更原生，因为“暂停并等待人类输入”本来就是运行时一等公民，而不只是一个任务状态枚举。
+
+#### 2. 条件依赖与动态分支
+
+这点 `LangGraph` 也是强项。
+
+官方 Graph API 直接提供：
+
+- 顺序边
+- 并行 fan-out / fan-in
+- `add_conditional_edges`
+- `Command(goto=...)`
+- loops
+- map-reduce / `Send`
+
+这意味着下面这些场景都可以自然表达：
+
+- “如果余额足够就转账，否则提醒余额不足”
+- “先并行查两个系统，再合并结果”
+- “根据中间结果走不同分支”
+- “循环追问直到补齐必要槽位或达到上限”
+
+这部分其实比当前本项目能力强很多，也比原始 `LLMCompiler` 更适合做复杂 runtime control flow。
+
+#### 3. 动态执行规划
+
+这里需要区分“运行时支持动态路径”与“自动生成规划”。
+
+`LangGraph` 原生支持：
+
+- 运行时根据 state 动态跳转
+- 中断后恢复
+- 循环
+- 重放 / time travel
+- 故障后从 checkpoint 恢复
+
+但它不原生提供：
+
+- 多意图识别器
+- LLM 风格 DAG 自动规划器
+- 类 `LLMCompiler` 的 plan decomposition prompt
+
+所以如果你需要“从自然语言自动产出一张执行图”，仍然要自己实现：
+
+- planner node
+- replanner node
+- graph schema validator
+
+也就是说，`LangGraph` 可以承载动态规划执行，但不会替你生成规划。
+
+#### 4. 多意图与状态化执行
+
+这点 `LangGraph` 能做，但需要你自己定义状态模型。
+
+适合本项目的 LangGraph state 建议至少包含：
+
+- `messages`
+- `candidate_intents`
+- `recognized_intents`
+- `execution_graph`
+- `active_node_id`
+- `task_artifacts`
+- `waiting_for`
+- `pending_user_response`
+- `closed_task_summaries`
+- `long_term_memory_refs`
+
+只要状态模型设计合理，LangGraph 可以把当前 Router 的：
+
+- session state
+- task state
+- pending plan
+- waiting / resuming
+
+统一收敛到一张图的 state 里。
+
+#### 5. 持久化、可恢复、长运行
+
+这点 `LangGraph` 明显优于直接拿 `LLMCompiler` 官方仓库改造。
+
+官方 persistence 文档明确引入：
+
+- `thread`
+- checkpoint
+- fault tolerance
+- pending writes
+- time travel
+
+官方 durable execution 文档还特别强调：
+
+- 恢复执行时不是从同一行代码继续，而是从一个合适的起点重放
+- 带副作用或不确定性的操作要包进 task/node 以保证一致重放
+
+这对你的场景非常关键，因为你的 intent agent 调用、SSE、中途恢复、取消、确认都属于长生命周期有副作用流程。
+
+### 16.3 LangGraph 不能替你解决的部分
+
+即使采用 LangGraph，也还有四件核心工作必须自己做：
+
+#### 1. 多意图识别
+
+LangGraph 不负责从注册 intent 里筛选主意图和候选意图。
+
+你仍然需要：
+
+- 当前项目的 `IntentRecognizer`
+- 或新的结构化 recognizer node
+
+#### 2. 自动规划器
+
+LangGraph 本身不是 LLMCompiler。
+
+你仍然需要自己做：
+
+- 从自然语言生成 DAG 的 planner prompt
+- 从中间状态重算 DAG 的 replanner prompt
+- 节点合法性校验
+
+#### 3. 外部 intent agent 协议
+
+LangGraph 负责图运行，不负责定义你的业务 agent 协议。
+
+你仍然需要保留或重写：
+
+- `agent_url` 调用层
+- 流式事件协议
+- cancel 协议
+- slot memory 合并逻辑
+
+#### 4. 前端展示协议
+
+例如：
+
+- Router 计划卡片
+- 业务确认卡片
+- 任务进度流
+- 节点级等待提示
+
+这些仍然要由你自己设计。
+
+### 16.4 LangGraph 的一个重要限制
+
+虽然 `LangGraph` 支持图、子图和并发，但在官方 subgraph 文档里也明确提示：
+
+- 对带 checkpointer 的 per-thread subagent，如果并行调用，可能产生 checkpoint conflicts
+- 官方示例甚至用 `ToolCallLimitMiddleware(..., run_limit=1)` 来限制某些子图的并行调用
+
+这说明两件事：
+
+- `LangGraph` 支持并发，不代表所有架构层次都应该无约束并发。
+- 对你的项目仍然应坚持“interactive 节点互斥、后台节点受控并行”的原则。
+
+这和本报告前面给出的“受控并行 DAG 调度器”方向是一致的。
+
+### 16.5 对本项目的实际建议
+
+如果把 `LLMCompiler` 和 `LangGraph` 放在一起比较，我的建议是：
+
+- 如果你要小步快跑、尽量复用当前代码：
+  - 保留现有 `router_core`
+  - 借鉴 `LLMCompiler` 的 planner / DAG / replan 思想
+  - 先自己在当前工程里实现 `ExecutionGraph`
+- 如果你准备做一次更明显的 runtime 升级：
+  - 优先考虑 `LangGraph` 作为新的编排底座
+  - 再把 `LLMCompiler` 风格 planner 作为 LangGraph 中的一个 planner node 或 planner subgraph
+
+也就是说，二者不是二选一关系，更合理的组合是：
+
+- `LangGraph = 运行时图框架`
+- `LLMCompiler = 自动规划策略`
+
+### 16.6 我对“是否采用 LangGraph”的最终判断
+
+最终判断如下：
+
+- `LangGraph` 能实现你的需求。
+- 从能力匹配度看，它比“直接改造 LLMCompiler 官方仓库”更适合做你的主运行时框架。
+- 但对于当前项目而言，直接整体迁移到 `LangGraph` 的改造面会明显大于“在现有 Router 内引入 DAG planner + scheduler”。
+
+所以从工程策略上我建议：
+
+- 近阶段：
+  - 不直接迁移 LangGraph
+  - 先在现有项目里完成图模型升级
+- 中阶段：
+  - 如果图模型、重规划、并行控制被证明长期有效，再评估是否把 orchestrator runtime 迁到 LangGraph
+- 长阶段：
+  - 可考虑形成“LangGraph runtime + 本项目 intent schema + LLMCompiler-style planner”的组合架构
+
+这一判断的关键原因不是 LangGraph 能力不够，而是当前项目已经有一套能跑的 session/task/SSE/runtime 体系，贸然换底座的收益不一定立刻超过迁移成本。
+
+## 17. 推荐下一步
 
 推荐按下面顺序推进：
 
@@ -652,7 +878,7 @@ LLM 规划器最常见的问题是：
 3. 再做 `GraphScheduler`，实现受控并行。
 4. 最后把 waiting/resume 接入图模型。
 
-## 17. 参考资料
+## 18. 参考资料
 
 - 论文摘要页：<https://arxiv.org/abs/2312.04511>
 - PMLR 正式页面：<https://proceedings.mlr.press/v235/kim24y.html>
@@ -661,3 +887,10 @@ LLM 规划器最常见的问题是：
 - Planner 实现：<https://github.com/SqueezeAILab/LLMCompiler/blob/main/src/llm_compiler/planner.py>
 - Task Fetching Unit 实现：<https://github.com/SqueezeAILab/LLMCompiler/blob/main/src/llm_compiler/task_fetching_unit.py>
 - 主执行器实现：<https://github.com/SqueezeAILab/LLMCompiler/blob/main/src/llm_compiler/llm_compiler.py>
+- LangGraph 总览：<https://docs.langchain.com/oss/python/langgraph/overview>
+- LangGraph Graph API：<https://docs.langchain.com/oss/python/langgraph/use-graph-api>
+- LangGraph Interrupts：<https://docs.langchain.com/oss/python/langgraph/interrupts>
+- LangGraph Persistence：<https://docs.langchain.com/oss/python/langgraph/persistence>
+- LangGraph Durable Execution：<https://docs.langchain.com/oss/python/langgraph/durable-execution>
+- LangGraph Subgraphs：<https://docs.langchain.com/oss/python/langgraph/use-subgraphs>
+- LangGraph 官方仓库中保留的 LLMCompiler 示例入口：<https://github.com/langchain-ai/langgraph/blob/main/examples/llm-compiler/LLMCompiler.ipynb>
