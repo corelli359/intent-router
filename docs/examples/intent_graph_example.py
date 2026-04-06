@@ -4,7 +4,7 @@ from __future__ import annotations
 一个不依赖 LangGraph 的多意图执行图示例。
 
 目标：
-- 演示“多意图 -> ExecutionGraph”的建模方式
+- 演示“多意图识别 -> 意图关系推断 -> ExecutionGraph”的建模方式
 - 演示依赖、条件分支、受控并行的最小运行时
 - 让示例结构尽量贴近本项目后续建议的数据模型
 
@@ -17,6 +17,12 @@ from typing import Any, Literal
 import json
 
 from pydantic import BaseModel, Field
+
+
+class RelationType(StrEnum):
+    PARALLEL = "parallel"
+    DEPENDS_ON = "depends_on"
+    CONDITION_ON = "condition_on"
 
 
 class NodeType(StrEnum):
@@ -42,6 +48,24 @@ class ConditionExpression(BaseModel):
     left: str
     op: Literal[">", ">=", "==", "<", "<="]
     right: Any
+
+
+class IntentCandidate(BaseModel):
+    intent_code: str
+    confidence: float
+    title: str
+
+
+class IntentRelation(BaseModel):
+    source_intent: str
+    target_intent: str
+    relation_type: RelationType
+    condition_text: str | None = None
+
+
+class RecognitionResult(BaseModel):
+    primary: list[IntentCandidate] = Field(default_factory=list)
+    candidates: list[IntentCandidate] = Field(default_factory=list)
 
 
 class PlanNode(BaseModel):
@@ -197,6 +221,91 @@ class GraphRuntime:
 
 
 def build_demo_graph(user_message: str) -> ExecutionGraph:
+    recognition = mock_multi_intent_recognizer(user_message)
+    relations = mock_intent_relation_planner(user_message, recognition)
+    return build_execution_graph_from_recognition(
+        user_message=user_message,
+        recognition=recognition,
+        relations=relations,
+    )
+
+
+def mock_multi_intent_recognizer(user_message: str) -> RecognitionResult:
+    primary: list[IntentCandidate] = []
+    if "余额" in user_message:
+        primary.append(
+            IntentCandidate(
+                intent_code="query_account_balance",
+                confidence=0.96,
+                title="查询工资卡余额",
+            )
+        )
+    if "账单" in user_message:
+        primary.append(
+            IntentCandidate(
+                intent_code="query_credit_bill",
+                confidence=0.92,
+                title="查询信用卡账单",
+            )
+        )
+    if "转账" in user_message or "转 2000" in user_message:
+        primary.append(
+            IntentCandidate(
+                intent_code="transfer_money",
+                confidence=0.95,
+                title="执行转账",
+            )
+        )
+    return RecognitionResult(primary=primary, candidates=[])
+
+
+def mock_intent_relation_planner(
+    user_message: str,
+    recognition: RecognitionResult,
+) -> list[IntentRelation]:
+    intent_codes = {item.intent_code for item in recognition.primary}
+    relations: list[IntentRelation] = []
+
+    if {
+        "query_account_balance",
+        "query_credit_bill",
+    }.issubset(intent_codes):
+        relations.append(
+            IntentRelation(
+                source_intent="query_account_balance",
+                target_intent="query_credit_bill",
+                relation_type=RelationType.PARALLEL,
+            )
+        )
+
+    if {
+        "query_account_balance",
+        "transfer_money",
+    }.issubset(intent_codes) and "如果" in user_message:
+        relations.append(
+            IntentRelation(
+                source_intent="query_account_balance",
+                target_intent="transfer_money",
+                relation_type=RelationType.CONDITION_ON,
+                condition_text="余额 >= 2000 时才执行转账，否则发送余额不足提醒",
+            )
+        )
+
+    return relations
+
+
+def build_execution_graph_from_recognition(
+    *,
+    user_message: str,
+    recognition: RecognitionResult,
+    relations: list[IntentRelation],
+) -> ExecutionGraph:
+    intent_codes = {item.intent_code for item in recognition.primary}
+    relation_pairs = {
+        (relation.source_intent, relation.target_intent, relation.relation_type)
+        for relation in relations
+    }
+
     return ExecutionGraph(
         source_message=user_message,
         nodes=[
@@ -209,67 +318,102 @@ def build_demo_graph(user_message: str) -> ExecutionGraph:
                 can_run_in_parallel=False,
                 metadata={"slots": {"account_type": "salary_card"}},
             ),
-            PlanNode(
-                node_id="n2",
-                node_type=NodeType.INTENT_TASK,
-                title="查询信用卡账单",
-                intent_code="query_credit_bill",
-                interactive=False,
-                can_run_in_parallel=True,
-                metadata={"slots": {"account_type": "credit_card"}},
+            *(
+                [
+                    PlanNode(
+                        node_id="n2",
+                        node_type=NodeType.INTENT_TASK,
+                        title="查询信用卡账单",
+                        intent_code="query_credit_bill",
+                        interactive=False,
+                        can_run_in_parallel=True,
+                        metadata={"slots": {"account_type": "credit_card"}},
+                    )
+                ]
+                if "query_credit_bill" in intent_codes
+                else []
             ),
-            PlanNode(
-                node_id="n3",
-                node_type=NodeType.CONDITION,
-                title="判断余额是否足够",
-                depends_on=["n1"],
-                interactive=False,
-                can_run_in_parallel=False,
-                condition=ConditionExpression(
-                    left="artifacts.n1.balance",
-                    op=">=",
-                    right=2000,
-                ),
-            ),
-            PlanNode(
-                node_id="n4",
-                node_type=NodeType.INTENT_TASK,
-                title="执行转账",
-                intent_code="transfer_money",
-                depends_on=["n3"],
-                run_if=ConditionExpression(
-                    left="artifacts.n3.result",
-                    op="==",
-                    right=True,
-                ),
-                interactive=True,
-                can_run_in_parallel=False,
-                metadata={
-                    "slots": {
-                        "recipient_name": "张三",
-                        "amount": 2000,
-                    }
-                },
-            ),
-            PlanNode(
-                node_id="n5",
-                node_type=NodeType.NOTIFY,
-                title="余额不足提醒",
-                depends_on=["n3"],
-                run_if=ConditionExpression(
-                    left="artifacts.n3.result",
-                    op="==",
-                    right=False,
-                ),
-                interactive=False,
-                can_run_in_parallel=False,
-                metadata={"message": "余额不足，已跳过转账"},
+            *(
+                [
+                    PlanNode(
+                        node_id="n3",
+                        node_type=NodeType.CONDITION,
+                        title="判断余额是否足够",
+                        depends_on=["n1"],
+                        interactive=False,
+                        can_run_in_parallel=False,
+                        condition=ConditionExpression(
+                            left="artifacts.n1.balance",
+                            op=">=",
+                            right=2000,
+                        ),
+                    ),
+                    PlanNode(
+                        node_id="n4",
+                        node_type=NodeType.INTENT_TASK,
+                        title="执行转账",
+                        intent_code="transfer_money",
+                        depends_on=["n3"],
+                        run_if=ConditionExpression(
+                            left="artifacts.n3.result",
+                            op="==",
+                            right=True,
+                        ),
+                        interactive=True,
+                        can_run_in_parallel=False,
+                        metadata={
+                            "slots": {
+                                "recipient_name": "张三",
+                                "amount": 2000,
+                            }
+                        },
+                    ),
+                    PlanNode(
+                        node_id="n5",
+                        node_type=NodeType.NOTIFY,
+                        title="余额不足提醒",
+                        depends_on=["n3"],
+                        run_if=ConditionExpression(
+                            left="artifacts.n3.result",
+                            op="==",
+                            right=False,
+                        ),
+                        interactive=False,
+                        can_run_in_parallel=False,
+                        metadata={"message": "余额不足，已跳过转账"},
+                    ),
+                ]
+                if (
+                    "transfer_money" in intent_codes
+                    and (
+                        "query_account_balance",
+                        "transfer_money",
+                        RelationType.CONDITION_ON,
+                    )
+                    in relation_pairs
+                )
+                else []
             ),
             PlanNode(
                 node_id="n6",
                 node_type=NodeType.JOIN,
                 title="汇总结果",
-                depends_on=["n2", "n4", "n5"],
+                depends_on=[
+                    node_id
+                    for node_id in ["n2", "n4", "n5"]
+                    if (
+                        (node_id == "n2" and "query_credit_bill" in intent_codes)
+                        or (
+                            node_id in {"n4", "n5"}
+                            and (
+                                "query_account_balance",
+                                "transfer_money",
+                                RelationType.CONDITION_ON,
+                            )
+                            in relation_pairs
+                        )
+                    )
+                ],
                 interactive=False,
                 can_run_in_parallel=False,
             ),
@@ -295,7 +439,31 @@ def main() -> None:
         "先查余额，如果工资卡余额够 2000，就给张三转 2000；"
         "如果不够就提醒我余额不足。顺便再查一下信用卡账单。"
     )
-    runtime = GraphRuntime(build_demo_graph(message))
+    recognition = mock_multi_intent_recognizer(message)
+    relations = mock_intent_relation_planner(message, recognition)
+    graph = build_execution_graph_from_recognition(
+        user_message=message,
+        recognition=recognition,
+        relations=relations,
+    )
+    runtime = GraphRuntime(graph)
+
+    print("=== 多意图识别结果 ===")
+    print(
+        json.dumps(
+            recognition.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    print("\n=== 意图关系推断结果 ===")
+    print(
+        json.dumps(
+            [relation.model_dump(mode="json") for relation in relations],
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
     print_step("初始化", runtime)
 

@@ -919,13 +919,15 @@ LangGraph 负责图运行，不负责定义你的业务 agent 协议。
 
 这一节回答“要怎么改”。
 
-设计目标不是一次性做成全功能新框架，而是在当前代码结构上最小代价升级到“可规划、可依赖、可重规划”的图执行模型。
+设计目标不是一次性做成全功能新框架，而是在当前代码结构上最小代价升级到“可识别、可理解关系、可规划、可依赖、可重规划”的图执行模型。
 
 ### 18.1 设计目标
 
 本次功能设计要实现的核心能力是：
 
-- 在一次用户输入中识别多个意图，并生成可确认的执行图，而不只是顺序列表。
+- 在一次用户输入中识别多个意图。
+- 在 graph 生成之前，先识别意图之间的关系，而不是直接从原始文本硬生成图。
+- 基于“意图集合 + 意图关系”生成可确认的执行图，而不只是顺序列表。
 - 支持显式依赖关系。
 - 支持受控并行：
   - 同时只允许一个前台交互节点；
@@ -957,7 +959,12 @@ LangGraph 负责图运行，不负责定义你的业务 agent 协议。
 
 升级后：
 
-- 识别结果 -> `ExecutionGraph` -> `PlanNode` -> `GraphScheduler` -> 节点执行
+- 原始输入 -> `MultiIntentRecognizer`
+- `MultiIntentRecognizer` -> `IntentRelationPlanner`
+- `IntentRelationPlanner` -> `ExecutionGraphPlanner`
+- `ExecutionGraphPlanner` -> `ExecutionGraph`
+- `ExecutionGraph` -> `GraphScheduler`
+- `GraphScheduler` -> 节点执行
 
 其中：
 
@@ -971,7 +978,36 @@ LangGraph 负责图运行，不负责定义你的业务 agent 协议。
 
 建议在 [domain.py](/root/intent-router/backend/src/router_core/domain.py) 新增以下模型。
 
-#### 1. 图对象
+#### 1. 识别与关系对象
+
+```python
+class IntentCandidate(BaseModel):
+    intent_code: str
+    confidence: float
+    title: str
+    reason: str = ""
+
+
+class IntentRelationType(StrEnum):
+    PARALLEL = "parallel"
+    DEPENDS_ON = "depends_on"
+    CONDITION_ON = "condition_on"
+    FALLBACK_IF_FAILED = "fallback_if_failed"
+
+
+class IntentRelation(BaseModel):
+    source_intent: str
+    target_intent: str
+    relation_type: IntentRelationType
+    condition_text: str | None = None
+
+
+class MultiIntentRecognitionResult(BaseModel):
+    primary: list[IntentCandidate] = Field(default_factory=list)
+    candidates: list[IntentCandidate] = Field(default_factory=list)
+```
+
+#### 2. 图对象
 
 ```python
 class PlanNodeType(StrEnum):
@@ -1018,7 +1054,7 @@ class ExecutionGraph(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 ```
 
-#### 2. 节点产物
+#### 3. 节点产物
 
 ```python
 class TaskArtifact(BaseModel):
@@ -1028,7 +1064,7 @@ class TaskArtifact(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 ```
 
-#### 3. 会话态扩展
+#### 4. 会话态扩展
 
 在 `SessionState` 中新增：
 
@@ -1116,7 +1152,7 @@ class TaskArtifact(BaseModel):
 
 核心改造点在 [orchestrator.py](/root/intent-router/backend/src/router_core/orchestrator.py)。
 
-建议把现有流程拆成五个阶段：
+建议把现有流程拆成六个阶段：
 
 #### 阶段 1. 候选意图识别
 
@@ -1133,14 +1169,36 @@ class TaskArtifact(BaseModel):
 
 这一层不需要推翻重做。
 
-#### 阶段 2. 图规划
+#### 阶段 2. 意图关系推断
 
-新增 `GraphIntentPlanner`：
+新增 `IntentRelationPlanner`：
 
 - 输入：
   - 当前消息
   - primary intents
   - candidate intents
+  - 最近对话
+  - 当前 open task / graph summary
+- 输出：
+  - `IntentRelation[]`
+
+这一层负责回答：
+
+- 哪些 intent 是并列关系
+- 哪些 intent 有先后依赖
+- 哪些 intent 只有在条件成立时才执行
+- 哪些 intent 是失败改道分支
+
+这一步必须在 graph 之前完成，否则 graph 只能是拍脑袋拼节点。
+
+#### 阶段 3. 图规划
+
+新增 `ExecutionGraphPlanner`：
+
+- 输入：
+  - 当前消息
+  - `MultiIntentRecognitionResult`
+  - `IntentRelation[]`
   - 当前 open task / graph summary
   - registered intent metadata
 - 输出：
@@ -1148,16 +1206,7 @@ class TaskArtifact(BaseModel):
 
 如果只有一个主意图且没有依赖信号，可退化为单节点图。
 
-如果有多个主意图，或文本中出现条件词，例如：
-
-- 如果
-- 若
-- 不够就
-- 再 / 顺便 / 同时
-
-则进入图规划。
-
-#### 阶段 3. 图确认
+#### 阶段 4. 图确认
 
 沿用现有 plan confirm 思路，但展示对象从 `SessionPlan.items` 升级为 `ExecutionGraph.nodes`。
 
@@ -1175,7 +1224,7 @@ class TaskArtifact(BaseModel):
 
 但建议最终统一到 `graph` 语义。
 
-#### 阶段 4. 图执行
+#### 阶段 5. 图执行
 
 新增 `GraphScheduler` 替代 [task_queue.py](/root/intent-router/backend/src/router_core/task_queue.py) 当前的简单优先级队列。
 
@@ -1187,7 +1236,7 @@ class TaskArtifact(BaseModel):
 - 规则 4：某节点 `WAITING_*` 时，仅阻塞其下游，不必阻塞独立后台支路
 - 规则 5：`FAILED` 节点默认只影响其依赖后继，不影响独立支路
 
-#### 阶段 5. 重规划
+#### 阶段 6. 重规划
 
 新增 `PlanReplanner`，触发条件包括：
 
@@ -1270,7 +1319,11 @@ class TaskArtifact(BaseModel):
 - `artifacts_summary`
 - `waiting_for`
 
-原因是 planner / replanner 的稳定性非常依赖“当前系统到底执行到哪了”这类摘要。
+原因是：
+
+- recognizer 需要知道当前是不是补槽还是新目标
+- relation planner 需要知道当前意图之间可能是什么关系
+- planner / replanner 需要知道系统已经执行到哪里
 
 ### 18.11 Prompt 设计建议
 
@@ -1350,9 +1403,9 @@ class TaskArtifact(BaseModel):
 #### 必改
 
 - [domain.py](/root/intent-router/backend/src/router_core/domain.py)
-  - 新增图模型、节点模型、artifact 模型
+  - 新增识别结果模型、关系模型、图模型、artifact 模型
 - [orchestrator.py](/root/intent-router/backend/src/router_core/orchestrator.py)
-  - 增加 graph planning / graph execution / replanning 主流程
+  - 增加 recognition -> relation inference -> graph planning -> execution -> replanning 主流程
 - [task_queue.py](/root/intent-router/backend/src/router_core/task_queue.py)
   - 重构为 `graph_scheduler.py`
 - [context_builder.py](/root/intent-router/backend/src/router_core/context_builder.py)
@@ -1370,6 +1423,7 @@ class TaskArtifact(BaseModel):
 
 #### 新增文件建议
 
+- `backend/src/router_core/intent_relation_planner.py`
 - `backend/src/router_core/graph_planner.py`
 - `backend/src/router_core/graph_scheduler.py`
 - `backend/src/router_core/replanner.py`
@@ -1394,7 +1448,15 @@ class TaskArtifact(BaseModel):
 - interactive 标记
 - 条件节点正确生成
 
-#### 2. 图调度测试
+#### 2. 意图关系推断测试
+
+断言：
+
+- `查余额 + 查账单` 推断为 `parallel`
+- `查余额 + 如果够就转账` 推断为 `condition_on`
+- `先 A 再 B` 推断为 `depends_on`
+
+#### 3. 图调度测试
 
 断言：
 
@@ -1402,7 +1464,7 @@ class TaskArtifact(BaseModel):
 - 前台交互节点互斥
 - waiting 节点只阻塞依赖支路
 
-#### 3. 重规划测试
+#### 4. 重规划测试
 
 断言：
 
@@ -1415,6 +1477,7 @@ class TaskArtifact(BaseModel):
 - [test_router_api.py](/root/intent-router/backend/tests/test_router_api.py)
 - 新增 `backend/tests/test_graph_planner.py`
 - 新增 `backend/tests/test_graph_scheduler.py`
+- 新增 `backend/tests/test_intent_relation_planner.py`
 
 ### 18.15 分阶段实施方案
 
@@ -1446,12 +1509,14 @@ class TaskArtifact(BaseModel):
 如果现在立刻开始改，我建议严格按下面顺序做：
 
 1. `domain.py`
-2. `graph_planner.py`
-3. `orchestrator.py` 最小接入
-4. `test_graph_planner.py`
-5. `graph_scheduler.py`
-6. `sessions.py` graph snapshot
-7. replanner
+2. `intent_relation_planner.py`
+3. `graph_planner.py`
+4. `orchestrator.py` 最小接入
+5. `test_intent_relation_planner.py`
+6. `test_graph_planner.py`
+7. `graph_scheduler.py`
+8. `sessions.py` graph snapshot
+9. replanner
 
 这个顺序的原因是：
 
@@ -1463,13 +1528,15 @@ class TaskArtifact(BaseModel):
 
 推荐按下面顺序推进：
 
-1. 先做 `ExecutionGraph` 和 `GraphIntentPlanner`，不改执行器。
-2. 用现有测试场景补 3 类新用例：
+1. 先做 `MultiIntentRecognizer` 输出结构化结果，再做 `IntentRelationPlanner`。
+2. 再做 `ExecutionGraph` 和 `ExecutionGraphPlanner`，不改执行器。
+3. 用现有测试场景补 4 类新用例：
+   - 意图关系
    - 条件依赖
    - 可并行后台节点
    - 中途 replan
-3. 再做 `GraphScheduler`，实现受控并行。
-4. 最后把 waiting/resume 接入图模型。
+4. 再做 `GraphScheduler`，实现受控并行。
+5. 最后把 waiting/resume 接入图模型。
 
 ## 20. 示例代码说明
 
@@ -1485,6 +1552,10 @@ class TaskArtifact(BaseModel):
 
 主要包含四部分：
 
+- `mock_multi_intent_recognizer(...)`
+  - 先做多意图识别
+- `mock_intent_relation_planner(...)`
+  - 再推断意图关系
 - `ExecutionGraph`
   - 整张执行图
 - `PlanNode`
@@ -1496,6 +1567,8 @@ class TaskArtifact(BaseModel):
 
 这个示例重点展示了：
 
+- graph 之前必须先有多意图识别结果
+- graph 之前必须先有意图关系推断结果
 - 多意图如何转成图节点
 - 哪些节点可以一开始就 `ready`
 - 条件节点如何读取上游结果
@@ -1504,8 +1577,12 @@ class TaskArtifact(BaseModel):
 
 建议你重点看这几个函数：
 
+- `mock_multi_intent_recognizer()`
+  - 看“有哪些 intent”先怎么出来
+- `mock_intent_relation_planner()`
+  - 看“intent 之间是什么关系”怎么出来
 - `build_demo_graph()`
-  - 看一条用户请求如何被建模成一张图
+  - 看一条用户请求如何先经过识别和关系推断，再被建模成一张图
 - `ready_nodes()`
   - 看 runtime 如何找出当前可执行节点
 - `run_condition_node()`
@@ -1521,8 +1598,10 @@ class TaskArtifact(BaseModel):
 
 - [langgraph_intent_graph_example.py](/root/intent-router/docs/examples/langgraph_intent_graph_example.py)
 
-这个示例现在展示的是更严格的“graph factory”写法：
+这个示例现在展示的是更严格的“recognition -> relations -> graph spec -> graph factory”写法：
 
+- planner 之前先做多意图识别
+- graph spec 之前先做意图关系推断
 - planner 先产出 `ExecutionGraphSpec`
 - 再由：
   - `build_langgraph_from_execution_graph(spec, registry)`
@@ -1534,6 +1613,9 @@ class TaskArtifact(BaseModel):
 
 这个示例包含：
 
+- `mock_multi_intent_recognizer(...)`
+- `mock_intent_relation_planner(...)`
+- `build_execution_graph_spec_from_recognition(...)`
 - `ExecutionGraphSpec`
 - `GraphNodeSpec`
 - `make_node_runner(...)`
@@ -1543,7 +1625,20 @@ class TaskArtifact(BaseModel):
 
 其中最关键的是四点：
 
-#### 1. graph 是数据驱动生成的
+#### 1. graph 之前先有 recognition 和 relation inference
+
+graph spec 不是直接从原始 message 跳出来的，而是先经过：
+
+- 多意图识别
+- 意图关系推断
+
+再进入 graph spec 生成。
+
+这对应的是：
+
+- graph 是下游产物，不是第一步
+
+#### 2. graph 是数据驱动生成的
 
 业务 agent、条件节点、join 节点、依赖边，都不是硬编码在固定 workflow 里，而是来自：
 
@@ -1556,7 +1651,7 @@ class TaskArtifact(BaseModel):
 - 很多个 agent、很多条件、很多依赖，都可以通过 spec 注入
 - 每次 planner 输出不同，生成的 graph 也不同
 
-#### 2. 通用 node factory
+#### 3. 通用 node factory
 
 `make_node_runner(...)` 不是为某个固定业务写死实现，而是根据：
 
@@ -1571,7 +1666,7 @@ class TaskArtifact(BaseModel):
 
 - 同一个 factory 可以承载不同 planner 输出的节点类型组合
 
-#### 3. registry 驱动 agent 执行
+#### 4. registry 驱动 agent 执行
 
 `intent_task` 节点并不是直接写死业务逻辑，而是通过：
 
@@ -1584,7 +1679,7 @@ class TaskArtifact(BaseModel):
 - graph 结构和 agent 实现是解耦的
 - 新增 agent 时，不需要重写 graph factory，只需要扩充 planner 输出和 registry
 
-#### 4. human-in-the-loop 仍然成立
+#### 5. human-in-the-loop 仍然成立
 
 示例里 `transfer_money` 这种动态生成的节点，仍然可以在 node runner 内调用：
 

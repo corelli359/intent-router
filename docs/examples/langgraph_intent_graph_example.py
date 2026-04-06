@@ -18,7 +18,7 @@ from __future__ import annotations
 - 重点是 graph factory 的结构，而不是 planner 智能本身
 """
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Annotated, Any, Callable, Literal, TypedDict
 import json
@@ -66,6 +66,12 @@ class ConditionOperator(StrEnum):
     LTE = "<="
 
 
+class RelationType(StrEnum):
+    PARALLEL = "parallel"
+    DEPENDS_ON = "depends_on"
+    CONDITION_ON = "condition_on"
+
+
 @dataclass(slots=True)
 class ConditionSpec:
     left: str
@@ -91,6 +97,27 @@ class ExecutionGraphSpec:
     graph_id: str
     source_message: str
     nodes: list[GraphNodeSpec] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class IntentCandidate:
+    intent_code: str
+    confidence: float
+    title: str
+
+
+@dataclass(slots=True)
+class IntentRelation:
+    source_intent: str
+    target_intent: str
+    relation_type: RelationType
+    condition_text: str | None = None
+
+
+@dataclass(slots=True)
+class RecognitionResult:
+    primary: list[IntentCandidate] = field(default_factory=list)
+    candidates: list[IntentCandidate] = field(default_factory=list)
 
 
 class LangGraphState(TypedDict, total=False):
@@ -299,76 +326,175 @@ def mock_registry() -> dict[str, AgentHandler]:
     }
 
 
-def build_demo_spec(user_message: str) -> ExecutionGraphSpec:
-    """
-    用 mock planner 构造一张动态 execution graph。
+def mock_multi_intent_recognizer(user_message: str) -> RecognitionResult:
+    primary: list[IntentCandidate] = []
+    if "余额" in user_message:
+        primary.append(
+            IntentCandidate(
+                intent_code="query_account_balance",
+                confidence=0.96,
+                title="查询工资卡余额",
+            )
+        )
+    if "账单" in user_message:
+        primary.append(
+            IntentCandidate(
+                intent_code="query_credit_bill",
+                confidence=0.92,
+                title="查询信用卡账单",
+            )
+        )
+    if "转账" in user_message or "转 2000" in user_message:
+        primary.append(
+            IntentCandidate(
+                intent_code="transfer_money",
+                confidence=0.95,
+                title="执行转账",
+            )
+        )
+    return RecognitionResult(primary=primary, candidates=[])
 
-    重点在于：
-    - 节点与依赖是数据，不是硬编码在 LangGraph builder 里的固定 workflow
+
+def mock_intent_relation_planner(
+    user_message: str,
+    recognition: RecognitionResult,
+) -> list[IntentRelation]:
+    intent_codes = {item.intent_code for item in recognition.primary}
+    relations: list[IntentRelation] = []
+
+    if {
+        "query_account_balance",
+        "query_credit_bill",
+    }.issubset(intent_codes):
+        relations.append(
+            IntentRelation(
+                source_intent="query_account_balance",
+                target_intent="query_credit_bill",
+                relation_type=RelationType.PARALLEL,
+            )
+        )
+
+    if {
+        "query_account_balance",
+        "transfer_money",
+    }.issubset(intent_codes) and "如果" in user_message:
+        relations.append(
+            IntentRelation(
+                source_intent="query_account_balance",
+                target_intent="transfer_money",
+                relation_type=RelationType.CONDITION_ON,
+                condition_text="余额 >= 2000 时才执行转账，否则发送余额不足提醒",
+            )
+        )
+
+    return relations
+
+
+def build_execution_graph_spec_from_recognition(
+    *,
+    user_message: str,
+    recognition: RecognitionResult,
+    relations: list[IntentRelation],
+) -> ExecutionGraphSpec:
     """
-    nodes = [
-        GraphNodeSpec(
-            node_id="n1",
-            node_type=NodeType.INTENT_TASK,
-            title="查询工资卡余额",
-            intent_code="query_account_balance",
-        ),
-        GraphNodeSpec(
-            node_id="n2",
-            node_type=NodeType.INTENT_TASK,
-            title="查询信用卡账单",
-            intent_code="query_credit_bill",
-        ),
-        GraphNodeSpec(
-            node_id="n3",
-            node_type=NodeType.CONDITION,
-            title="判断余额是否足够",
-            depends_on=["n1"],
-            condition=ConditionSpec(
-                left="artifacts.n1.balance",
-                op=ConditionOperator.GTE,
-                right=2000,
-            ),
-        ),
-        GraphNodeSpec(
-            node_id="n4",
-            node_type=NodeType.INTENT_TASK,
-            title="执行转账",
-            intent_code="transfer_money",
-            depends_on=["n3"],
-            run_if=ConditionSpec(
-                left="artifacts.n3.result",
-                op=ConditionOperator.EQ,
-                right=True,
-            ),
-            interactive=True,
-            metadata={
-                "require_confirmation": True,
-                "slots": {
-                    "recipient_name": "张三",
-                    "amount": 2000,
-                },
-            },
-        ),
-        GraphNodeSpec(
-            node_id="n5",
-            node_type=NodeType.NOTIFY,
-            title="余额不足提醒",
-            depends_on=["n3"],
-            run_if=ConditionSpec(
-                left="artifacts.n3.result",
-                op=ConditionOperator.EQ,
-                right=False,
-            ),
-            metadata={"message": "余额不足，已跳过转账"},
-        ),
+    graph spec 是 recognizer + relation planner 的下游产物。
+    这一步才是把“有哪些意图”和“它们之间是什么关系”编译成可执行图。
+    """
+    intent_codes = {item.intent_code for item in recognition.primary}
+    relation_pairs = {
+        (relation.source_intent, relation.target_intent, relation.relation_type)
+        for relation in relations
+    }
+
+    nodes: list[GraphNodeSpec] = []
+
+    if "query_account_balance" in intent_codes:
+        nodes.append(
+            GraphNodeSpec(
+                node_id="n1",
+                node_type=NodeType.INTENT_TASK,
+                title="查询工资卡余额",
+                intent_code="query_account_balance",
+            )
+        )
+
+    if "query_credit_bill" in intent_codes:
+        nodes.append(
+            GraphNodeSpec(
+                node_id="n2",
+                node_type=NodeType.INTENT_TASK,
+                title="查询信用卡账单",
+                intent_code="query_credit_bill",
+            )
+        )
+
+    if (
+        "query_account_balance",
+        "transfer_money",
+        RelationType.CONDITION_ON,
+    ) in relation_pairs:
+        nodes.extend(
+            [
+                GraphNodeSpec(
+                    node_id="n3",
+                    node_type=NodeType.CONDITION,
+                    title="判断余额是否足够",
+                    depends_on=["n1"],
+                    condition=ConditionSpec(
+                        left="artifacts.n1.balance",
+                        op=ConditionOperator.GTE,
+                        right=2000,
+                    ),
+                ),
+                GraphNodeSpec(
+                    node_id="n4",
+                    node_type=NodeType.INTENT_TASK,
+                    title="执行转账",
+                    intent_code="transfer_money",
+                    depends_on=["n3"],
+                    run_if=ConditionSpec(
+                        left="artifacts.n3.result",
+                        op=ConditionOperator.EQ,
+                        right=True,
+                    ),
+                    interactive=True,
+                    metadata={
+                        "require_confirmation": True,
+                        "slots": {
+                            "recipient_name": "张三",
+                            "amount": 2000,
+                        },
+                    },
+                ),
+                GraphNodeSpec(
+                    node_id="n5",
+                    node_type=NodeType.NOTIFY,
+                    title="余额不足提醒",
+                    depends_on=["n3"],
+                    run_if=ConditionSpec(
+                        left="artifacts.n3.result",
+                        op=ConditionOperator.EQ,
+                        right=False,
+                    ),
+                    metadata={"message": "余额不足，已跳过转账"},
+                ),
+            ]
+        )
+
+    join_deps = [
+        node.node_id
+        for node in nodes
+        if node.node_type in {NodeType.INTENT_TASK, NodeType.NOTIFY}
+    ]
+    nodes.append(
         GraphNodeSpec(
             node_id="n6",
             node_type=NodeType.JOIN,
             title="汇总结果",
-            depends_on=["n2", "n4", "n5"],
-        ),
-    ]
+            depends_on=join_deps,
+        )
+    )
+
     return ExecutionGraphSpec(
         graph_id="graph_demo_v1",
         source_message=user_message,
@@ -401,7 +527,46 @@ def main() -> None:
         "如果不够就提醒我余额不足。顺便再查一下信用卡账单。"
     )
 
-    spec = build_demo_spec(user_message)
+    recognition = mock_multi_intent_recognizer(user_message)
+    relations = mock_intent_relation_planner(user_message, recognition)
+    spec = build_execution_graph_spec_from_recognition(
+        user_message=user_message,
+        recognition=recognition,
+        relations=relations,
+    )
+
+    print("=== 多意图识别结果 ===")
+    print(
+        json.dumps(
+            {
+                "primary": [asdict(item) for item in recognition.primary],
+                "candidates": [asdict(item) for item in recognition.candidates],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    print("\n=== 意图关系推断结果 ===")
+    print(
+        json.dumps(
+            [asdict(relation) for relation in relations],
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    print("\n=== ExecutionGraphSpec ===")
+    print(
+        json.dumps(
+            {
+                "graph_id": spec.graph_id,
+                "source_message": spec.source_message,
+                "nodes": [asdict(node) for node in spec.nodes],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
     graph = build_langgraph_from_execution_graph(spec, mock_registry())
     config = {"configurable": {"thread_id": "dynamic-factory-demo-1"}}
 
