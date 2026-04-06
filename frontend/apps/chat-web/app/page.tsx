@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { IntentRouterApiClient } from "@intent-router/api-client";
 import type {
   CandidateIntent,
@@ -218,6 +218,10 @@ function draftAssistantMessageId(taskId: string): string {
   return `assistant-draft-${taskId}`;
 }
 
+function finalAssistantMessageId(event: RouterSseEvent): string {
+  return `${event.data.taskId}-${event.data.createdAt}`;
+}
+
 function applyAssistantDelta(previous: ChatMessage[], event: RouterSseEvent): ChatMessage[] {
   if (!event.data.message) {
     return previous;
@@ -358,14 +362,156 @@ export default function ChatPage() {
   const [routerPlanCard, setRouterPlanCard] = useState<InteractionCard | null>(null);
   const [agentCard, setAgentCard] = useState<InteractionCard | null>(null);
   const [isSubmittingAction, setIsSubmittingAction] = useState(false);
+  const [renderedMessageContent, setRenderedMessageContent] = useState<Record<string, string>>({
+    [BOOT_MESSAGE.id]: BOOT_MESSAGE.content
+  });
+  const [typingMessageIds, setTypingMessageIds] = useState<Record<string, boolean>>({});
+  const renderedMessageContentRef = useRef<Record<string, string>>({
+    [BOOT_MESSAGE.id]: BOOT_MESSAGE.content
+  });
+  const typingTimersRef = useRef<Record<string, number>>({});
+  const typingQueuesRef = useRef<Record<string, string>>({});
+  const shouldAutoScrollRef = useRef(true);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+
+  function updateRenderedMessageContent(updater: (previous: Record<string, string>) => Record<string, string>) {
+    setRenderedMessageContent((previous) => {
+      const next = updater(previous);
+      renderedMessageContentRef.current = next;
+      return next;
+    });
+  }
+
+  function clearTypewriter(messageId: string) {
+    const timerId = typingTimersRef.current[messageId];
+    if (typeof timerId === "number") {
+      window.clearInterval(timerId);
+      delete typingTimersRef.current[messageId];
+    }
+    delete typingQueuesRef.current[messageId];
+    setTypingMessageIds((previous) => {
+      if (!(messageId in previous)) {
+        return previous;
+      }
+      const next = { ...previous };
+      delete next[messageId];
+      return next;
+    });
+  }
+
+  function syncRenderedMessages(nextMessages: ChatMessage[]) {
+    Object.keys(typingTimersRef.current).forEach((messageId) => clearTypewriter(messageId));
+    const nextContent = Object.fromEntries(nextMessages.map((message) => [message.id, message.content]));
+    renderedMessageContentRef.current = nextContent;
+    setRenderedMessageContent(nextContent);
+  }
+
+  function setRenderedMessageImmediately(messageId: string, content: string) {
+    updateRenderedMessageContent((previous) => {
+      if (previous[messageId] === content) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [messageId]: content
+      };
+    });
+  }
+
+  function ensureTypewriter(messageId: string) {
+    if (typeof typingTimersRef.current[messageId] === "number") {
+      return;
+    }
+    setTypingMessageIds((previous) => ({
+      ...previous,
+      [messageId]: true
+    }));
+    const timerId = window.setInterval(() => {
+      const queuedContent = typingQueuesRef.current[messageId] ?? "";
+      if (!queuedContent) {
+        clearTypewriter(messageId);
+        return;
+      }
+
+      const step =
+        queuedContent.length > 48 ? 5 : queuedContent.length > 24 ? 4 : queuedContent.length > 12 ? 3 : queuedContent.length > 6 ? 2 : 1;
+      const nextChunk = queuedContent.slice(0, step);
+      typingQueuesRef.current[messageId] = queuedContent.slice(step);
+      updateRenderedMessageContent((previous) => ({
+        ...previous,
+        [messageId]: `${previous[messageId] ?? ""}${nextChunk}`
+      }));
+    }, 16);
+    typingTimersRef.current[messageId] = timerId;
+  }
+
+  function queueTypewriterDelta(messageId: string, delta: string) {
+    if (!delta) {
+      return;
+    }
+    typingQueuesRef.current[messageId] = `${typingQueuesRef.current[messageId] ?? ""}${delta}`;
+    ensureTypewriter(messageId);
+  }
+
+  function startTypewriter(messageId: string, fullContent: string, seedContent = "") {
+    clearTypewriter(messageId);
+    const initialContent = fullContent.startsWith(seedContent) ? seedContent : "";
+    setRenderedMessageImmediately(messageId, initialContent);
+    if (initialContent === fullContent) {
+      return;
+    }
+    typingQueuesRef.current[messageId] = fullContent.slice(initialContent.length);
+    ensureTypewriter(messageId);
+  }
+
+  function scrollMessagesToLatest(behavior: ScrollBehavior) {
+    const node = messageListRef.current;
+    if (!node) {
+      return;
+    }
+    node.scrollTo({
+      top: node.scrollHeight,
+      behavior
+    });
+  }
+
+  function handleMessageListScroll() {
+    const node = messageListRef.current;
+    if (!node) {
+      return;
+    }
+    const distanceToBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    shouldAutoScrollRef.current = distanceToBottom < 96;
+  }
 
   function applySnapshot(snapshot: RouterSnapshot) {
-    setMessages(snapshot.messages.length > 0 ? snapshot.messages : [BOOT_MESSAGE]);
+    const nextMessages = snapshot.messages.length > 0 ? snapshot.messages : [BOOT_MESSAGE];
+    setMessages(nextMessages);
+    syncRenderedMessages(nextMessages);
     setTasks(snapshot.tasks);
     setCandidates(snapshot.candidateIntents);
     setActiveTaskId(snapshot.activeTaskId ?? null);
     setRouterPlanCard(snapshot.pendingPlan?.source === "router" ? snapshot.pendingPlan : null);
   }
+
+  useEffect(() => {
+    return () => {
+      Object.keys(typingTimersRef.current).forEach((messageId) => clearTypewriter(messageId));
+    };
+  }, []);
+
+  useEffect(() => {
+    const node = messageListRef.current;
+    if (!node || !shouldAutoScrollRef.current) {
+      return;
+    }
+    const behavior: ScrollBehavior =
+      Object.keys(typingMessageIds).length > 0 || isSending || isSubmittingAction ? "auto" : "smooth";
+    const frameId = window.requestAnimationFrame(() => {
+      scrollMessagesToLatest(behavior);
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [messages, renderedMessageContent, routerPlanCard, typingMessageIds, isSending, isSubmittingAction]);
 
   useEffect(() => {
     let cancelled = false;
@@ -434,10 +580,24 @@ export default function ChatPage() {
 
     if (event.event === "task.message") {
       setMessages((previous) => applyAssistantDelta(previous, event));
+      queueTypewriterDelta(draftAssistantMessageId(event.data.taskId), event.data.message ?? "");
     }
 
     if (["task.waiting_user_input", "task.waiting_confirmation", "task.completed", "task.failed"].includes(event.event)) {
+      const draftId = draftAssistantMessageId(event.data.taskId);
+      const nextMessageId = finalAssistantMessageId(event);
+      const draftContent = `${renderedMessageContentRef.current[draftId] ?? ""}${typingQueuesRef.current[draftId] ?? ""}`;
+      const finalContent = event.data.message || draftContent;
+      clearTypewriter(draftId);
       setMessages((previous) => finalizeAssistantMessage(previous, event));
+      updateRenderedMessageContent((previous) => {
+        const next = { ...previous };
+        delete next[draftId];
+        return next;
+      });
+      if (finalContent) {
+        startTypewriter(nextMessageId, finalContent, draftContent);
+      }
       if (event.event === "task.waiting_user_input") {
         setActiveTaskId(event.data.taskId);
       }
@@ -469,18 +629,26 @@ export default function ChatPage() {
     if (!sessionId || !hasRouterPlan || !routerPlanCard) return;
     setIsSubmittingAction(true);
     setErrorMessage(null);
+    shouldAutoScrollRef.current = true;
     try {
-      const snapshot = await api.sendSessionAction({
-        sessionId,
-        custId,
-        taskId: "session",
-        source: "router",
-        actionCode,
-        confirmToken: routerPlanCard.confirmToken,
-        payload: { decision: actionCode }
-      });
+      setStreamState("connecting");
+      await api.sendSessionActionStream(
+        {
+          sessionId,
+          custId,
+          taskId: "session",
+          source: "router",
+          actionCode,
+          confirmToken: routerPlanCard.confirmToken,
+          payload: { decision: actionCode }
+        },
+        { onEvent: handleStreamEvent }
+      );
+      const snapshot = await api.getSession(sessionId);
       applySnapshot(snapshot);
+      setStreamState("connected");
     } catch (error: unknown) {
+      setStreamState("disconnected");
       setErrorMessage(error instanceof Error ? error.message : "计划操作失败");
     } finally {
       setIsSubmittingAction(false);
@@ -493,21 +661,23 @@ export default function ChatPage() {
     setComposer("");
     setIsSending(true);
     setErrorMessage(null);
+    shouldAutoScrollRef.current = true;
+
+    const localMessage: ChatMessage = {
+      id: createLocalMessageId(),
+      role: "user",
+      content,
+      createdAt: new Date().toISOString()
+    };
 
     startTransition(() => {
-      setMessages((previous) => [
-        ...previous,
-        {
-          id: createLocalMessageId(),
-          role: "user",
-          content,
-          createdAt: new Date().toISOString()
-        }
-      ]);
+      setMessages((previous) => [...previous, localMessage]);
+      setRenderedMessageImmediately(localMessage.id, localMessage.content);
     });
 
     let streamError: string | null = null;
     try {
+      setStreamState("connecting");
       await api.sendMessageStream({ sessionId, content, custId }, { onEvent: handleStreamEvent });
       setStreamState("connected");
     } catch (error: unknown) {
@@ -525,9 +695,11 @@ export default function ChatPage() {
     <div className="shell">
       <header className="masthead">
         <div className="brand-copy">
-          <p className="eyebrow">Intent Router</p>
-          <h1>中文对话，清楚路由。</h1>
-          <p className="masthead-copy">主界面只保留会话、当前任务和发送动作，诊断信息按需展开。</p>
+          <div className="brand-headline">
+            <p className="eyebrow">Intent Router</p>
+            <h1>意图路由对话台</h1>
+          </div>
+          <p className="masthead-copy">页面固定一屏，对话区独立滚动，当前任务和规划保持可见。</p>
         </div>
         <div className="masthead-actions">
           <div className="status-row">
@@ -544,8 +716,8 @@ export default function ChatPage() {
         <section className="conversation-stage">
           <header className="stage-topline">
             <div>
-              <p className="section-label">当前会话</p>
-              <h2>对话窗口</h2>
+              <p className="section-label">会话区</p>
+              <h2>对话</h2>
             </div>
             <div className="glance-strip" aria-label="会话速览">
               <div className="glance-item">
@@ -559,14 +731,23 @@ export default function ChatPage() {
             </div>
           </header>
 
-          <div className="message-list" aria-live="polite">
+          <div
+            ref={messageListRef}
+            className="message-list"
+            aria-live="polite"
+            aria-relevant="additions text"
+            onScroll={handleMessageListScroll}
+          >
             {messages.map((message) => (
-              <article key={message.id} className={`message ${message.role === "user" ? "user" : ""}`}>
+              <article
+                key={message.id}
+                className={`message ${message.role === "user" ? "user" : ""} ${typingMessageIds[message.id] ? "typing" : ""}`.trim()}
+              >
                 <div className="meta">
                   {roleLabel(message.role)}
                   {formatTime(message.createdAt) ? ` · ${formatTime(message.createdAt)}` : ""}
                 </div>
-                <p>{message.content}</p>
+                <p>{renderedMessageContent[message.id] ?? message.content}</p>
               </article>
             ))}
           </div>
@@ -681,78 +862,85 @@ export default function ChatPage() {
       </main>
 
       {showDiagnostics ? (
-        <section className="diagnostic-sheet">
-          <header className="diagnostic-head">
-            <div>
-              <p className="eyebrow">诊断</p>
-              <h2>路由明细</h2>
-            </div>
-            {sessionId ? <small className="mono">{sessionId}</small> : null}
-          </header>
+        <div className="diagnostic-overlay" role="presentation">
+          <section className="diagnostic-sheet" aria-label="路由诊断面板" role="dialog" aria-modal="true">
+            <header className="diagnostic-head">
+              <div>
+                <p className="eyebrow">诊断</p>
+                <h2>路由诊断</h2>
+              </div>
+              <div className="diagnostic-actions">
+                {sessionId ? <small className="mono">{sessionId}</small> : null}
+                <button className="toggle-button diagnostic-close" onClick={() => setShowDiagnostics(false)} type="button">
+                  关闭
+                </button>
+              </div>
+            </header>
 
-          {hasDiagnostics ? (
-            <div className="diagnostic-grid">
-              {queuedTasks.length > 0 ? (
-                <section className="diagnostic-section">
-                  <h3>排队任务</h3>
-                  <div className="stack">
-                    {queuedTasks.map((task) => (
-                      <div key={task.taskId} className="diagnostic-item">
-                        <div className="line-item">
-                          <strong>{task.intentCode}</strong>
-                          <small>{STATUS_LABELS[task.status]}</small>
+            {hasDiagnostics ? (
+              <div className="diagnostic-grid">
+                {queuedTasks.length > 0 ? (
+                  <section className="diagnostic-section">
+                    <h3>排队任务</h3>
+                    <div className="stack">
+                      {queuedTasks.map((task) => (
+                        <div key={task.taskId} className="diagnostic-item">
+                          <div className="line-item">
+                            <strong>{task.intentCode}</strong>
+                            <small>{STATUS_LABELS[task.status]}</small>
+                          </div>
+                          <small className="mono">{task.taskId}</small>
                         </div>
-                        <small className="mono">{task.taskId}</small>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
 
-              {candidates.length > 0 ? (
-                <section className="diagnostic-section">
-                  <h3>候选意图</h3>
-                  <div className="stack">
-                    {candidates.map((candidate) => (
-                      <div key={candidate.intentCode} className="diagnostic-item">
-                        <div className="line-item">
-                          <strong>{candidate.intentCode}</strong>
-                          <small>{candidate.confidence.toFixed(2)}</small>
+                {candidates.length > 0 ? (
+                  <section className="diagnostic-section">
+                    <h3>候选意图</h3>
+                    <div className="stack">
+                      {candidates.map((candidate) => (
+                        <div key={candidate.intentCode} className="diagnostic-item">
+                          <div className="line-item">
+                            <strong>{candidate.intentCode}</strong>
+                            <small>{candidate.confidence.toFixed(2)}</small>
+                          </div>
+                          <small>{candidate.reason}</small>
                         </div>
-                        <small>{candidate.reason}</small>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
 
-              {sseEvents.length > 0 ? (
-                <section className="diagnostic-section">
-                  <h3>最近事件</h3>
-                  <div className="stack">
-                    {sseEvents.map((event, index) => (
-                      <div key={`${event.at}-${index}`} className="diagnostic-item">
-                        <div className="line-item">
-                          <strong>{eventLabel(event.event)}</strong>
-                          <small>{formatTime(event.at)}</small>
+                {sseEvents.length > 0 ? (
+                  <section className="diagnostic-section">
+                    <h3>最近事件</h3>
+                    <div className="stack">
+                      {sseEvents.map((event, index) => (
+                        <div key={`${event.at}-${index}`} className="diagnostic-item">
+                          <div className="line-item">
+                            <strong>{eventLabel(event.event)}</strong>
+                            <small>{formatTime(event.at)}</small>
+                          </div>
+                          <small>
+                            {event.data.intentCode} · {STATUS_LABELS[event.data.status]}
+                          </small>
+                          {event.data.message ? <small>{event.data.message}</small> : null}
                         </div>
-                        <small>
-                          {event.data.intentCode} · {STATUS_LABELS[event.data.status]}
-                        </small>
-                        {event.data.message ? <small>{event.data.message}</small> : null}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-            </div>
-          ) : (
-            <div className="diagnostic-empty">
-              <strong>目前没有额外诊断信号。</strong>
-              <p>当前会话运行正常，没有排队任务、候选冲突或事件堆积需要查看。</p>
-            </div>
-          )}
-        </section>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </div>
+            ) : (
+              <div className="diagnostic-empty">
+                <strong>目前没有额外诊断信号。</strong>
+                <p>当前会话运行正常，没有排队任务、候选冲突或事件堆积需要查看。</p>
+              </div>
+            )}
+          </section>
+        </div>
       ) : null}
     </div>
   );

@@ -27,6 +27,7 @@ body {
 }
 
 body {
+  min-height: 100svh;
   color: var(--ink);
   font-family: var(--font-display), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   background:
@@ -34,6 +35,7 @@ body {
     radial-gradient(1000px 460px at 100% 0%, rgba(73, 103, 138, 0.22), transparent 60%),
     linear-gradient(180deg, var(--bg-a), var(--bg-b));
   position: relative;
+  overflow: hidden;
 }
 
 body::before {
@@ -55,11 +57,14 @@ textarea {
 }
 
 .shell {
-  width: min(1320px, 100% - 32px);
+  width: min(1360px, 100% - 28px);
   margin: 0 auto;
-  padding: 26px 0 34px;
+  height: 100svh;
+  padding: 18px 0;
   display: grid;
-  gap: 22px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
 }
 
 .eyebrow {
@@ -79,15 +84,22 @@ textarea {
 .masthead {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 20px;
-  align-items: end;
-  padding: 10px 2px 0;
+  gap: 16px;
+  align-items: center;
+  padding: 4px 2px 0;
 }
 
 .brand-copy {
   display: grid;
-  gap: 10px;
-  max-width: 700px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.brand-headline {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
 }
 
 .brand-copy h1,
@@ -97,10 +109,10 @@ textarea {
 }
 
 .brand-copy h1 {
-  font-size: clamp(2.5rem, 4.8vw, 4.4rem);
-  line-height: 0.95;
-  letter-spacing: -0.06em;
-  max-width: 9ch;
+  font-size: clamp(1.7rem, 2.6vw, 2.45rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
 }
 
 .masthead-copy,
@@ -113,9 +125,9 @@ textarea {
 
 .masthead-actions {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   justify-items: end;
-  align-content: end;
+  align-content: center;
 }
 
 .status-row {
@@ -150,21 +162,26 @@ textarea {
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.46fr) minmax(300px, 0.74fr);
-  gap: 22px;
-  align-items: start;
+  gap: 18px;
+  align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .conversation-stage {
   border-radius: 30px;
-  padding: 22px;
+  padding: 20px;
   display: grid;
-  gap: 20px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 16px;
   border: 1px solid var(--line);
   background:
     linear-gradient(180deg, rgba(16, 23, 32, 0.84), rgba(11, 17, 24, 0.96)),
     linear-gradient(120deg, rgba(227, 150, 83, 0.06), transparent 42%);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .stage-topline {
@@ -194,13 +211,13 @@ textarea {
 }
 
 .glance-item {
-  min-width: 132px;
-  padding: 11px 14px;
-  border-radius: 18px;
+  min-width: 118px;
+  padding: 10px 13px;
+  border-radius: 16px;
   background: var(--panel-soft);
   border: 1px solid rgba(255, 255, 255, 0.06);
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .glance-item span,
@@ -223,9 +240,9 @@ textarea {
 .message-list {
   display: grid;
   gap: 12px;
-  max-height: min(62vh, 760px);
+  min-height: 0;
   overflow: auto;
-  padding-right: 6px;
+  padding-right: 8px;
 }
 
 .message {
@@ -255,12 +272,26 @@ textarea {
 .message p {
   margin: 0;
   line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message.typing p::after {
+  content: "";
+  display: inline-block;
+  width: 0.58em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.16em;
+  border-radius: 999px;
+  background: rgba(255, 234, 213, 0.86);
+  animation: typing-cursor 720ms steps(1, end) infinite;
 }
 
 .composer {
   display: grid;
   gap: 12px;
-  padding-top: 18px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
 }
 
@@ -270,13 +301,15 @@ textarea {
 }
 
 .composer textarea {
-  min-height: 116px;
+  min-height: 88px;
+  max-height: 24svh;
   border-radius: 22px;
   border: 1px solid rgba(102, 121, 145, 0.34);
   background: rgba(7, 12, 18, 0.72);
   color: var(--ink);
   padding: 16px 18px;
-  resize: vertical;
+  resize: none;
+  overflow: auto;
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease,
@@ -329,8 +362,6 @@ textarea {
 }
 
 .context-rail {
-  position: sticky;
-  top: 20px;
   border-radius: 30px;
   padding: 20px;
   border: 1px solid var(--line);
@@ -339,6 +370,8 @@ textarea {
     linear-gradient(180deg, rgba(227, 150, 83, 0.04), transparent 35%);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+  min-height: 0;
+  overflow: auto;
 }
 
 .rail-section {
@@ -480,15 +513,30 @@ textarea {
   letter-spacing: 0.03em;
 }
 
+.diagnostic-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 18px;
+  background: rgba(4, 8, 13, 0.52);
+  backdrop-filter: blur(8px);
+}
+
 .diagnostic-sheet {
+  width: min(560px, 100%);
+  max-height: calc(100svh - 36px);
   border-radius: 28px;
   padding: 20px;
   display: grid;
   gap: 16px;
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(13, 20, 28, 0.92), rgba(10, 15, 22, 0.96));
+  background: linear-gradient(180deg, rgba(13, 20, 28, 0.94), rgba(10, 15, 22, 0.98));
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+  overflow: auto;
 }
 
 .diagnostic-grid {
@@ -550,6 +598,18 @@ textarea {
   outline-offset: 2px;
 }
 
+.diagnostic-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.diagnostic-close {
+  padding-inline: 14px;
+}
+
 @keyframes settle {
   from {
     opacity: 0;
@@ -574,20 +634,33 @@ textarea {
   }
 }
 
+@keyframes typing-cursor {
+  0%,
+  48% {
+    opacity: 1;
+  }
+
+  49%,
+  100% {
+    opacity: 0;
+  }
+}
+
 @media (max-width: 980px) {
   .workspace {
     grid-template-columns: 1fr;
+    overflow: auto;
   }
 
   .context-rail {
-    position: static;
+    overflow: visible;
   }
 }
 
 @media (max-width: 760px) {
   .shell {
     width: min(100% - 18px, 100%);
-    padding: 16px 0 24px;
+    padding: 14px 0;
   }
 
   .conversation-stage,
@@ -603,6 +676,7 @@ textarea {
   }
 
   .masthead,
+  .brand-headline,
   .composer-foot,
   .stage-topline,
   .diagnostic-head {
@@ -613,6 +687,11 @@ textarea {
   .stage-topline,
   .diagnostic-head {
     justify-items: start;
+  }
+
+  .brand-copy h1 {
+    font-size: clamp(1.48rem, 6.4vw, 1.88rem);
+    white-space: nowrap;
   }
 
   .status-row {
@@ -629,7 +708,7 @@ textarea {
   }
 
   .message-list {
-    max-height: none;
+    min-height: 320px;
   }
 
   .message {
@@ -637,6 +716,16 @@ textarea {
   }
 
   .composer button {
+    width: 100%;
+  }
+
+  .diagnostic-overlay {
+    padding: 10px;
+    align-items: flex-end;
+  }
+
+  .diagnostic-sheet {
+    max-height: calc(100svh - 20px);
     width: 100%;
   }
 }
