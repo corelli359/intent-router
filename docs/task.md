@@ -2,6 +2,20 @@
 
 ## 2026-04-05 补充执行情况
 
+## 2026-04-07 V2 Graph Runtime
+
+### [x] T21 · V2 动态执行图运行时
+设计：在不替换 V1 的前提下，为 Router 增加第二套路由内核。V2 必须先做多意图识别，再做意图关系推断和 graph factory，最后才进入节点调度。
+实现：新增 `router_core/v2_domain.py`、`router_core/v2_planner.py`、`router_core/v2_orchestrator.py`，并通过 `router_api/routes/sessions_v2.py` 暴露 `/api/router/v2/*`。V2 运行时支持 graph 确认、节点 waiting/resume、取消当前 node、等待态意图切换后重规划。
+
+### [x] T22 · `/chat/v2` 前端入口
+设计：V2 前端必须独立于 V1 `/chat` 页面，避免影响已有会话页，同时要能直观看到 graph、node、edge、当前活跃节点和事件时间线。
+实现：新增 `frontend/apps/chat-web/app/v2/page.tsx`，使用现有 chat-web 的视觉语言，直接对接 `/api/router/v2`，支持发送消息、确认/取消执行图、取消当前节点，并展示 graph 状态和 SSE 时间线。
+
+### [x] T23 · V2 文档与部署说明
+设计：V2 是版本化入口，不是简单 demo。文档必须明确它与 LLMCompiler/LangGraph 的关系、与 V1 的边界、以及部署时的内存策略。
+实现：新增 `docs/dynamic-intent-graph-v2-design.md`，并更新 `README.md`、`docs/llmcompiler-intent-routing-report.md`、`k8s/intent/README.md`。当前结论是 V2 先以内嵌在现有 chat-web/router-api 的方式发布，使用 `/chat/v2` 与 `/api/router/v2` 暴露能力，以最小化额外常驻内存。
+
 ### [x] T13 · 管理面与运行面部署解耦
 设计：`admin-api` 负责意图治理与配置发布，`router-api` 负责识别、状态机与分发，二者必须独立 Deployment，不能继续共用一个 `backend` 部署。
 实现：新增 `k8s/intent/admin-api.yaml` 与 `k8s/intent/router-api.yaml`，删除 `k8s/intent/backend.yaml`；统一入口固定为 `/admin`、`/chat`、`/api/admin/*`、`/api/router/*`；相关约束已补充到 `docs/intent-router-prd.md` 与 `docs/deerflow-inspired-architecture.md`。

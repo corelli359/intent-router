@@ -38,10 +38,21 @@ Required ingress path conventions:
 
 - `/admin` -> Admin Web
 - `/chat` -> Chat Web
+- `/chat/v2` -> Chat Web V2 entry
 - `/api/admin/*` -> Admin API
 - `/api/router/*` -> Router API
+- `/api/router/v2/*` -> Router API V2 entry
 
 This keeps UI routes and API routes explicit, and avoids mixing admin and chat traffic.
+
+## V2 Dynamic Graph Runtime
+
+The repository now ships two router experiences in parallel:
+
+- V1: serial task queue under `/chat` and `/api/router/*`
+- V2: dynamic intent graph runtime under `/chat/v2` and `/api/router/v2/*`
+
+V2 is implemented inside the existing chat-web and router-api services instead of cloning a second full deployment set. This keeps memory usage lower while still exposing a separate versioned path for rollout.
 
 ## Runtime and LLM Wiring
 
@@ -129,3 +140,8 @@ npm install
 npm run dev:chat
 npm run dev:admin
 ```
+
+Chat entries after startup:
+
+- V1: `http://127.0.0.1:3000/chat`
+- V2: `http://127.0.0.1:3000/chat/v2`

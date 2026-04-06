@@ -259,6 +259,24 @@
 
 ### 9.1 借鉴一：Planner 思想
 
+## 14. 当前项目 V2 落地决策
+
+结合本项目现状，当前已经形成的工程决策是：
+
+- 不直接引入 `LLMCompiler` 作为运行时。
+- 在 `router_core` 内实现一套原生的 V2 graph runtime。
+- 多意图识别仍复用现有 `IntentRecognizer`。
+- graph factory、关系推断、节点状态机和重规划语义由 V2 runtime 补上。
+- 节点执行继续复用现有 `Task`、`StreamingAgentClient` 和 SSE 协议。
+
+这意味着：
+
+- `LLMCompiler` 仍然是非常重要的规划器设计参考。
+- 但从当前代码基础出发，最优路径不是“接一个外部 DAG 框架替换现有 router”，而是“在现有 router 上升级一层 graph 调度能力”。
+- 这条路径在保留现有 waiting/resume、cancel、session 管理能力的同时，最贴合本项目的多轮对话需求。
+
+同理，`LangGraph` 更适合作为未来更复杂 graph runtime 的承载框架，而不是当前阶段必须强依赖的前置条件。当前 V2 已经先把 graph factory、节点调度和版本化入口落地到 `/chat/v2` 与 `/api/router/v2`，后续如果要进一步增强 checkpoint、human-in-the-loop 和更复杂的分支恢复，再评估把底层执行器切到 `LangGraph` 会更稳妥。
+
 保留其核心优点：
 
 - 用 LLM 直接产出任务分解和依赖关系。

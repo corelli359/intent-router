@@ -15,6 +15,8 @@ from router_core.llm_client import LangChainLLMClient
 from router_core.orchestrator import RouterOrchestrator, RouterOrchestratorConfig
 from router_core.prompt_templates import DEFAULT_RECOGNIZER_HUMAN_PROMPT, DEFAULT_RECOGNIZER_SYSTEM_PROMPT
 from router_core.recognizer import LLMIntentRecognizer, SimpleIntentRecognizer
+from router_core.v2_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
+from router_core.v2_planner import IntentGraphPlanner
 
 
 logger = logging.getLogger(__name__)
@@ -23,10 +25,12 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class RouterRuntime:
     event_broker: EventBroker
+    event_broker_v2: EventBroker
     llm_client: LangChainLLMClient | None
     intent_catalog: RepositoryIntentCatalog
     agent_client: StreamingAgentClient
     orchestrator: RouterOrchestrator
+    orchestrator_v2: GraphRouterOrchestrator
 
 
 def _warn_simple_recognizer(
@@ -48,6 +52,10 @@ def _warn_simple_recognizer(
 def build_router_runtime() -> RouterRuntime:
     settings = get_settings()
     event_broker = EventBroker(
+        heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
+        max_idle_seconds=settings.router_sse_max_idle_seconds,
+    )
+    event_broker_v2 = EventBroker(
         heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
         max_idle_seconds=settings.router_sse_max_idle_seconds,
     )
@@ -84,12 +92,25 @@ def build_router_runtime() -> RouterRuntime:
             agent_timeout_seconds=settings.router_agent_timeout_seconds,
         ),
     )
+    orchestrator_v2 = GraphRouterOrchestrator(
+        publish_event=event_broker_v2.publish,
+        intent_catalog=intent_catalog,
+        recognizer=recognizer,
+        planner=IntentGraphPlanner(),
+        agent_client=agent_client,
+        config=GraphRouterOrchestratorConfig(
+            intent_switch_threshold=settings.router_intent_switch_threshold,
+            agent_timeout_seconds=settings.router_agent_timeout_seconds,
+        ),
+    )
     return RouterRuntime(
         event_broker=event_broker,
+        event_broker_v2=event_broker_v2,
         llm_client=llm_client,
         intent_catalog=intent_catalog,
         agent_client=agent_client,
         orchestrator=orchestrator,
+        orchestrator_v2=orchestrator_v2,
     )
 
 
@@ -129,6 +150,14 @@ def get_intent_catalog(request: Request) -> RepositoryIntentCatalog:
 
 def get_orchestrator(request: Request) -> RouterOrchestrator:
     return get_router_runtime(request).orchestrator
+
+
+def get_event_broker_v2(request: Request) -> EventBroker:
+    return get_router_runtime(request).event_broker_v2
+
+
+def get_orchestrator_v2(request: Request) -> GraphRouterOrchestrator:
+    return get_router_runtime(request).orchestrator_v2
 
 
 async def close_router_runtime(runtime: RouterRuntime) -> None:

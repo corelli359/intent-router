@@ -26,10 +26,19 @@ Ingress must expose these stable paths:
 
 - `/admin` -> `intent-admin-web`
 - `/chat` -> `intent-chat-web`
+- `/chat/v2` -> V2 chat page inside the same `intent-chat-web`
 - `/api/admin/*` -> `intent-admin-api`
 - `/api/router/*` -> `intent-router-api`
+- `/api/router/v2/*` -> V2 router API inside the same `intent-router-api`
 
 Do not use `/` as chat root in the target model. Chat entry should be explicit under `/chat`.
+
+V2 note:
+
+- current manifests do not need a second chat-web or router-api Deployment just to expose V2
+- existing prefix routing already covers `/chat/v2` via `/chat`
+- existing prefix routing already covers `/api/router/v2/*` via `/api/router`
+- this is the preferred rollout mode while keeping total memory lower than duplicating the full runtime plane
 
 ## Resource Requests Requirement
 
