@@ -605,7 +605,7 @@ LLM 规划器最常见的问题是：
 
 - interactive 节点全局互斥。
 - 默认只并行 non-interactive 节点。
-- agent 注册信息里新增 `interaction_mode` / `can_run_in_background`。
+- agent 注册信息里新增 `interaction_mode` / `can_run_in_parallel`。
 
 ### 14.3 第三风险：replan 过于频繁
 
@@ -866,7 +866,600 @@ LangGraph 负责图运行，不负责定义你的业务 agent 协议。
 
 这一判断的关键原因不是 LangGraph 能力不够，而是当前项目已经有一套能跑的 session/task/SSE/runtime 体系，贸然换底座的收益不一定立刻超过迁移成本。
 
-## 17. 推荐下一步
+## 17. 最终技术决策
+
+这一节给出一个可以直接执行的结论，避免前面分析太多后落不到工程决策上。
+
+### 17.1 关于 LLMCompiler
+
+结论：
+
+- 不建议把 `LLMCompiler` 作为依赖或子模块集成进本项目。
+- 可以把 `LLMCompiler` 作为设计参考继续保留。
+- 当前项目后续要补的能力，本质上仍然是 `LLMCompiler` 那套：
+  - planner
+  - DAG
+  - dependency-aware scheduling
+  - replanning
+
+换句话说：
+
+- 可以不考虑“引入 LLMCompiler 仓库”
+- 不能不考虑“实现 LLMCompiler 式能力”
+
+### 17.2 关于 LangGraph
+
+结论：
+
+- `LangGraph` 适合作为未来可能的运行时底座。
+- 但当前阶段不建议直接迁移到 `LangGraph`。
+
+原因不是它能力不够，而是：
+
+- 当前仓库已经有可运行的会话态、任务态、SSE 和 agent 协议。
+- 直接迁移底座会带来较大的重构成本。
+- 你当前最缺的是“图规划与图调度能力”，而不是“把现有 runtime 全部推翻重写”。
+
+### 17.3 当前推荐路线
+
+当前最优工程路线是：
+
+1. 保留现有 Router runtime。
+2. 在当前代码库中新增图模型和图调度能力。
+3. 先做静态图，再做受控并行，再做 replanner。
+4. 等图模型被验证稳定后，再决定是否需要迁到 `LangGraph`。
+
+一句话总结：
+
+- 短期：不接 LLMCompiler，不迁 LangGraph。
+- 中期：在现有 Router 上实现 LLMCompiler 式 DAG 能力。
+- 长期：若运行时复杂度明显升高，再评估 LangGraph 迁移。
+
+## 18. 功能设计
+
+这一节回答“要怎么改”。
+
+设计目标不是一次性做成全功能新框架，而是在当前代码结构上最小代价升级到“可规划、可依赖、可重规划”的图执行模型。
+
+### 18.1 设计目标
+
+本次功能设计要实现的核心能力是：
+
+- 在一次用户输入中识别多个意图，并生成可确认的执行图，而不只是顺序列表。
+- 支持显式依赖关系。
+- 支持受控并行：
+  - 同时只允许一个前台交互节点；
+  - 后台非交互节点可以并行。
+- 支持条件分支。
+- 支持中间结果触发的重规划。
+- 保留当前项目已有能力：
+  - waiting / resume
+  - intent switch
+  - SSE
+  - 外部 HTTP intent agent 协议
+  - plan confirm
+
+### 18.2 非目标
+
+本轮不建议做的事：
+
+- 不把整个 runtime 迁到 `LangGraph`
+- 不引入 `LLMCompiler` 官方代码作为运行时依赖
+- 不改前端协议为全新格式
+- 不一次性做复杂 patch-based graph merge
+- 不在第一阶段就做多节点无限并发
+
+### 18.3 总体方案
+
+当前系统：
+
+- 识别结果 -> `SessionPlan.items` -> `Task` 队列 -> 顺序执行
+
+升级后：
+
+- 识别结果 -> `ExecutionGraph` -> `PlanNode` -> `GraphScheduler` -> 节点执行
+
+其中：
+
+- `Task` 不立即删除，继续作为“intent agent 调用执行单元”
+- `PlanNode` 变成更高层的图节点
+- 一个 `intent_task` 节点在运行时可以绑定一个现有 `Task`
+
+也就是说，推荐演进方式不是替换 `Task`，而是让 `Task` 成为图节点的一种执行后端。
+
+### 18.4 新增领域模型
+
+建议在 [domain.py](/root/intent-router/backend/src/router_core/domain.py) 新增以下模型。
+
+#### 1. 图对象
+
+```python
+class PlanNodeType(StrEnum):
+    INTENT_TASK = "intent_task"
+    CONDITION = "condition"
+    JOIN = "join"
+    HUMAN_GATE = "human_gate"
+    NOTIFY = "notify"
+
+
+class PlanNodeStatus(StrEnum):
+    PENDING = "pending"
+    READY = "ready"
+    RUNNING = "running"
+    WAITING_USER_INPUT = "waiting_user_input"
+    WAITING_CONFIRMATION = "waiting_confirmation"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+
+
+class PlanNode(BaseModel):
+    node_id: str
+    node_type: PlanNodeType
+    title: str
+    intent_code: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    run_if: str | None = None
+    interactive: bool = True
+    task_id: str | None = None
+    status: PlanNodeStatus = PlanNodeStatus.PENDING
+    output_key: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionGraph(BaseModel):
+    graph_id: str = Field(default_factory=lambda: f"graph_{uuid4().hex[:10]}")
+    source_message: str
+    version: int = 1
+    status: SessionPlanStatus = SessionPlanStatus.WAITING_CONFIRMATION
+    nodes: list[PlanNode] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+```
+
+#### 2. 节点产物
+
+```python
+class TaskArtifact(BaseModel):
+    node_id: str
+    intent_code: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+```
+
+#### 3. 会话态扩展
+
+在 `SessionState` 中新增：
+
+- `execution_graph: ExecutionGraph | None = None`
+- `artifacts: dict[str, TaskArtifact] = Field(default_factory=dict)`
+- `active_node_id: str | None = None`
+
+同时保留：
+
+- `tasks`
+- `pending_plan`
+
+迁移初期建议 `pending_plan` 和 `execution_graph` 并存一段时间，用于兼容旧前端和旧测试。
+
+### 18.5 节点类型语义
+
+#### 1. `intent_task`
+
+- 对应一个已注册 intent
+- 真正执行时仍然走 `Task + StreamingAgentClient`
+- 适用于：
+  - 查余额
+  - 转账
+  - 查账单
+
+#### 2. `condition`
+
+- 不调 agent
+- 读取上游 `TaskArtifact`
+- 做简单布尔判断
+- 输出 `{ "result": true | false }`
+
+第一阶段建议只支持白名单表达式，不支持自由 Python。
+
+#### 3. `human_gate`
+
+- 不调 agent
+- 代表等待用户输入或确认
+- 恢复后把用户输入写入 `metadata` 或 artifact，再解锁下游
+
+#### 4. `join`
+
+- 聚合多个上游结果
+- 主要用于：
+  - 生成计划摘要
+  - 生成统一完成事件
+  - 给 replanner 提供汇总上下文
+
+#### 5. `notify`
+
+- 不调用业务 agent
+- 由 Router 直接发 SSE/消息
+- 适合：
+  - 余额不足提示
+  - 执行结果聚合提示
+
+### 18.6 Intent 注册模型要加什么
+
+为了支持图规划，建议在 [models/intent.py](/root/intent-router/backend/src/models/intent.py)、[schemas.py](/root/intent-router/backend/src/admin_api/schemas.py)、[sql_intent_repository.py](/root/intent-router/backend/src/persistence/sql_intent_repository.py) 增加最小必要字段。
+
+建议新增：
+
+- `interaction_mode: str = "foreground"`
+  - 可选：
+    - `foreground`
+    - `background`
+- `can_run_in_parallel: bool = False`
+- `planner_hints: dict[str, Any] = {}`
+- `result_schema: dict[str, Any] = {}`
+
+其中：
+
+- `interaction_mode`
+  - 决定该 intent 默认是否属于前台交互型节点
+- `can_run_in_parallel`
+  - 决定 scheduler 是否允许并发
+- `planner_hints`
+  - 用于告诉 planner 这个 intent 常见前置条件、风险级别、适配场景
+- `result_schema`
+  - 用于约束该 intent 输出哪些结构化字段，方便 condition / downstream node 使用
+
+这是最小集合，先不要扩太多。
+
+### 18.7 Router 核心链路如何改
+
+核心改造点在 [orchestrator.py](/root/intent-router/backend/src/router_core/orchestrator.py)。
+
+建议把现有流程拆成五个阶段：
+
+#### 阶段 1. 候选意图识别
+
+沿用当前 recognizer：
+
+- 输入：
+  - 当前消息
+  - recent messages
+  - long-term memory
+  - active intents
+- 输出：
+  - primary intents
+  - candidate intents
+
+这一层不需要推翻重做。
+
+#### 阶段 2. 图规划
+
+新增 `GraphIntentPlanner`：
+
+- 输入：
+  - 当前消息
+  - primary intents
+  - candidate intents
+  - 当前 open task / graph summary
+  - registered intent metadata
+- 输出：
+  - `ExecutionGraph`
+
+如果只有一个主意图且没有依赖信号，可退化为单节点图。
+
+如果有多个主意图，或文本中出现条件词，例如：
+
+- 如果
+- 若
+- 不够就
+- 再 / 顺便 / 同时
+
+则进入图规划。
+
+#### 阶段 3. 图确认
+
+沿用现有 plan confirm 思路，但展示对象从 `SessionPlan.items` 升级为 `ExecutionGraph.nodes`。
+
+新增 SSE 事件：
+
+- `session.graph.proposed`
+- `session.graph.confirmed`
+- `session.graph.updated`
+- `session.graph.completed`
+- `session.graph.replanned`
+
+迁移期可同时保留现有：
+
+- `session.plan.*`
+
+但建议最终统一到 `graph` 语义。
+
+#### 阶段 4. 图执行
+
+新增 `GraphScheduler` 替代 [task_queue.py](/root/intent-router/backend/src/router_core/task_queue.py) 当前的简单优先级队列。
+
+调度规则建议如下：
+
+- 规则 1：只有依赖全部完成的节点才进入 `READY`
+- 规则 2：同一时刻最多 1 个 `interactive=True` 节点进入前台
+- 规则 3：`interactive=False` 且 `can_run_in_parallel=True` 的节点可以并发
+- 规则 4：某节点 `WAITING_*` 时，仅阻塞其下游，不必阻塞独立后台支路
+- 规则 5：`FAILED` 节点默认只影响其依赖后继，不影响独立支路
+
+#### 阶段 5. 重规划
+
+新增 `PlanReplanner`，触发条件包括：
+
+- 条件节点需要更多上下文
+- 上游结果导致原图不可行
+- 用户中途切换目标
+- 某个节点失败但可改道
+
+第一阶段建议做：
+
+- 整图重算
+
+不要做：
+
+- 局部图 patch merge
+
+### 18.8 节点执行如何复用现有 Task
+
+为了降低改造成本，建议保留当前 `Task` 作为 `intent_task` 的执行载体。
+
+执行方式：
+
+1. `PlanNode(node_type=intent_task)` 进入 `READY`
+2. orchestrator 为它创建现有 `Task`
+3. `Task.task_id` 回写到 `node.task_id`
+4. agent 返回结果后：
+   - 更新 `task.status`
+   - 同步更新 `node.status`
+   - 生成 `TaskArtifact`
+
+也就是说：
+
+- `Task` 继续负责 agent 调用
+- `PlanNode` 负责图级调度与依赖
+
+这样不需要推翻 [agent_client.py](/root/intent-router/backend/src/router_core/agent_client.py)。
+
+### 18.9 Waiting / Resume 如何并入图模型
+
+这是最重要的运行时设计。
+
+当前逻辑是：
+
+- 找最新 waiting task
+- 用户补充输入 -> resume 该 task
+
+升级后建议变成：
+
+- 找当前 `active_node_id`
+- 若该 node 为 `WAITING_USER_INPUT` 或 `WAITING_CONFIRMATION`
+  - 优先尝试恢复该 node
+- 若新输入明显改变全局目标
+  - 触发 graph-level replan
+
+判断顺序建议保持为：
+
+1. 是否有 waiting foreground node
+2. 当前输入是否像补槽
+3. 当前输入是否显式切意图
+4. 若是补槽，resume 当前 node
+5. 若是切换，取消当前 open branch 并 replan
+
+这基本延续现有 waiting decision 思路，只是作用对象从 `Task` 升级到 `PlanNode`。
+
+### 18.10 ContextBuilder 如何增强
+
+建议增强 [context_builder.py](/root/intent-router/backend/src/router_core/context_builder.py)。
+
+现状只有：
+
+- recent messages
+- long-term memory
+- slot memory
+
+建议增加：
+
+- `open_graph_summary`
+- `open_node_summary`
+- `closed_task_summaries`
+- `artifacts_summary`
+- `waiting_for`
+
+原因是 planner / replanner 的稳定性非常依赖“当前系统到底执行到哪了”这类摘要。
+
+### 18.11 Prompt 设计建议
+
+建议在 [prompt_templates.py](/root/intent-router/backend/src/router_core/prompt_templates.py) 新增三组 prompt。
+
+#### 1. planner prompt
+
+目标：
+
+- 从多意图和用户原始目标中生成结构化图
+
+输出强制为 JSON。
+
+#### 2. replanner prompt
+
+目标：
+
+- 根据：
+  - 原始目标
+  - 当前图
+  - 已完成节点结果
+  - 当前 waiting 节点
+  - 新用户输入
+  生成新图
+
+#### 3. waiting decision prompt
+
+当前 waiting decision 还偏过程式逻辑。
+
+后续建议单独抽出来，输出：
+
+- `resume_current_node`
+- `switch_goal_and_replan`
+- `cancel_current_branch`
+
+### 18.12 API 与 SSE 协议怎么改
+
+建议尽量保持 [sessions.py](/root/intent-router/backend/src/router_api/routes/sessions.py) 现有接口不变：
+
+- `POST /api/router/sessions/{session_id}/messages`
+- `POST /api/router/sessions/{session_id}/messages/stream`
+- `POST /api/router/sessions/{session_id}/actions`
+- `POST /api/router/sessions/{session_id}/actions/stream`
+
+这样前端不需要立刻大改。
+
+需要新增的是 snapshot 字段和 SSE 事件类型。
+
+#### snapshot 建议新增字段
+
+- `execution_graph`
+- `active_node_id`
+- `artifacts`
+- `graph_version`
+
+#### SSE 建议新增事件
+
+- `session.graph.proposed`
+- `session.graph.confirmed`
+- `session.graph.updated`
+- `session.graph.completed`
+- `session.graph.replanned`
+- `node.ready`
+- `node.running`
+- `node.waiting_user_input`
+- `node.waiting_confirmation`
+- `node.completed`
+- `node.failed`
+- `node.cancelled`
+
+迁移期可继续发旧事件，方便前端渐进兼容。
+
+### 18.13 文件级修改清单
+
+这一节直接回答“该改哪些文件”。
+
+#### 必改
+
+- [domain.py](/root/intent-router/backend/src/router_core/domain.py)
+  - 新增图模型、节点模型、artifact 模型
+- [orchestrator.py](/root/intent-router/backend/src/router_core/orchestrator.py)
+  - 增加 graph planning / graph execution / replanning 主流程
+- [task_queue.py](/root/intent-router/backend/src/router_core/task_queue.py)
+  - 重构为 `graph_scheduler.py`
+- [context_builder.py](/root/intent-router/backend/src/router_core/context_builder.py)
+  - 增加 graph-aware context
+- [prompt_templates.py](/root/intent-router/backend/src/router_core/prompt_templates.py)
+  - 增加 planner / replanner 模板
+- [models/intent.py](/root/intent-router/backend/src/models/intent.py)
+  - 增加 intent 图执行元数据字段
+- [schemas.py](/root/intent-router/backend/src/admin_api/schemas.py)
+  - 暴露新增 intent 元数据
+- [sql_intent_repository.py](/root/intent-router/backend/src/persistence/sql_intent_repository.py)
+  - 持久化新增字段
+- [sessions.py](/root/intent-router/backend/src/router_api/routes/sessions.py)
+  - snapshot / SSE 兼容 graph 字段
+
+#### 新增文件建议
+
+- `backend/src/router_core/graph_planner.py`
+- `backend/src/router_core/graph_scheduler.py`
+- `backend/src/router_core/replanner.py`
+- `backend/src/router_core/graph_validator.py`
+
+### 18.14 测试设计
+
+建议新增三类测试，先于大规模实现落地。
+
+#### 1. 图规划测试
+
+输入：
+
+- “先查余额，再转账”
+- “如果余额够 2000 就转账，不够就提醒”
+- “同时查余额和账单”
+
+断言：
+
+- 输出节点数
+- 依赖关系
+- interactive 标记
+- 条件节点正确生成
+
+#### 2. 图调度测试
+
+断言：
+
+- 后台节点可并行 ready
+- 前台交互节点互斥
+- waiting 节点只阻塞依赖支路
+
+#### 3. 重规划测试
+
+断言：
+
+- 用户补槽时恢复当前 node
+- 用户换目标时触发 replan
+- 节点失败时可按策略跳转
+
+建议主要新增到：
+
+- [test_router_api.py](/root/intent-router/backend/tests/test_router_api.py)
+- 新增 `backend/tests/test_graph_planner.py`
+- 新增 `backend/tests/test_graph_scheduler.py`
+
+### 18.15 分阶段实施方案
+
+#### Phase 1
+
+- 落 `ExecutionGraph`
+- 落 `GraphIntentPlanner`
+- 保持串行执行
+- 前端先继续消费旧 plan/任务语义
+
+#### Phase 2
+
+- 落 `GraphScheduler`
+- 启用受控并行
+- 增加节点级 SSE
+
+#### Phase 3
+
+- 落 `condition` 节点
+- 落 `PlanReplanner`
+
+#### Phase 4
+
+- 把 waiting/resume 全面切到 node 级
+- 逐步废弃只面向 `Task` 的思维模型
+
+### 18.16 最小实现优先级
+
+如果现在立刻开始改，我建议严格按下面顺序做：
+
+1. `domain.py`
+2. `graph_planner.py`
+3. `orchestrator.py` 最小接入
+4. `test_graph_planner.py`
+5. `graph_scheduler.py`
+6. `sessions.py` graph snapshot
+7. replanner
+
+这个顺序的原因是：
+
+- 先把“表达能力”补上
+- 再补“调度能力”
+- 最后补“动态能力”
+
+## 19. 推荐下一步
 
 推荐按下面顺序推进：
 
@@ -878,7 +1471,7 @@ LangGraph 负责图运行，不负责定义你的业务 agent 协议。
 3. 再做 `GraphScheduler`，实现受控并行。
 4. 最后把 waiting/resume 接入图模型。
 
-## 18. 参考资料
+## 20. 参考资料
 
 - 论文摘要页：<https://arxiv.org/abs/2312.04511>
 - PMLR 正式页面：<https://proceedings.mlr.press/v235/kim24y.html>
