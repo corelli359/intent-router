@@ -1521,59 +1521,77 @@ class TaskArtifact(BaseModel):
 
 - [langgraph_intent_graph_example.py](/root/intent-router/docs/examples/langgraph_intent_graph_example.py)
 
-这个示例展示的是：“如果以后用 LangGraph 作为运行时底座，大概会怎么表达同一个场景”。
+这个示例现在展示的不是“固定业务 workflow”，而是更贴近真实需求的写法：
+
+- LangGraph 外层只保留少数固定 runtime 节点
+- 真正动态的业务图存放在 `state["execution_graph"]`
+- 运行时每一轮都从 `execution_graph` 里挑出 ready 节点
+- 每个 ready 节点通过同一个通用 `run_node()` 执行
+
+也就是说，这个文件演示的是：
+
+- “静态外层控制图 + 动态内层执行图”
 
 这个示例包含：
 
-- `recognize_intents`
-- `query_account_balance`
-- `query_credit_bill`
-- `decide_after_parallel`
-- `transfer_money`
-- `notify_insufficient_balance`
+- `recognize_or_update_goal`
+- `plan_graph`
+- `pick_ready_nodes`
+- `run_node`
 - `finalize`
 
-其中最关键的是三点：
+其中最关键的是四点：
 
-#### 1. 并行分支
+#### 1. 动态规划结果不写死在 LangGraph 边上
 
-从 `recognize_intents` 同时连到：
+业务 agent、条件节点、join 节点，都不是写死在 LangGraph 的 `add_edge(...)` 里，而是由：
 
-- `query_account_balance`
-- `query_credit_bill`
+- `mock_dynamic_planner(...)`
 
-再在 `decide_after_parallel` 汇合。
-
-这对应的是：
-
-- 多意图中的后台支路并行执行
-
-#### 2. 条件路由
-
-`decide_after_parallel` 后通过 `add_conditional_edges(...)` 路由到：
-
-- `transfer_money`
-- 或 `notify_insufficient_balance`
+生成一张 `execution_graph`。
 
 这对应的是：
 
-- 条件依赖执行规划
+- 很多个 agent、很多条件、很多依赖，都作为运行时状态存在
+- 外层图不需要随着业务 agent 数量增长而无限膨胀
 
-#### 3. human-in-the-loop
+#### 2. 动态 fan-out
 
-`transfer_money()` 里用了：
+`pick_ready_nodes()` 不是返回一个固定节点名，而是根据当前 `execution_graph` 和 `artifacts` 动态找出 ready 节点，然后返回：
+
+- `Send("run_node", {...})`
+
+这对应的是：
+
+- 可以动态并行派发多个 ready 节点
+- 不需要提前把所有业务路径写成固定边
+
+#### 3. 通用节点执行器
+
+`run_node()` 是通用执行器，而不是每个 agent 一个 LangGraph 节点。
+
+它会根据 `node_type / intent_code` 决定：
+
+- 执行 intent task
+- 执行 condition
+- 执行 notify
+- 执行 join
+
+这对应的是：
+
+- 未来真正接入时，只需要把 `run_node()` 里的 mock 逻辑替换成你当前的 `StreamingAgentClient`
+
+#### 4. human-in-the-loop
+
+示例里 `transfer_money` 这类节点仍然可以在通用 `run_node()` 内部使用：
 
 - `interrupt(...)`
 
-它会在转账前暂停图，等待外部确认；之后通过：
+暂停图执行；恢复时通过：
 
 - `Command(resume=True)`
 
-恢复执行。
-
-这对应的是：
-
-- 你当前系统里的 `waiting_confirmation`
+继续执行。
 
 如果你关心“未来迁到 LangGraph 会长什么样”，这个文件更重要。
 
