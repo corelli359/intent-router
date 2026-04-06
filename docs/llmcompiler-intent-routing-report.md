@@ -1471,7 +1471,144 @@ class TaskArtifact(BaseModel):
 3. 再做 `GraphScheduler`，实现受控并行。
 4. 最后把 waiting/resume 接入图模型。
 
-## 20. 参考资料
+## 20. 示例代码说明
+
+为了让设计更直观，仓库里额外补了两个 Python 示例文件，建议和本报告第 18 节一起看。
+
+### 20.1 纯 Python 图模型示例
+
+文件：
+
+- [intent_graph_example.py](/root/intent-router/docs/examples/intent_graph_example.py)
+
+这个示例不依赖 `LangGraph`，它展示的是“按本项目当前代码结构，建议怎么落地图模型”。
+
+主要包含四部分：
+
+- `ExecutionGraph`
+  - 整张执行图
+- `PlanNode`
+  - 图中的每个节点
+- `TaskArtifact`
+  - 上游节点的结构化产物
+- `GraphRuntime`
+  - 一个最小可运行调度器
+
+这个示例重点展示了：
+
+- 多意图如何转成图节点
+- 哪些节点可以一开始就 `ready`
+- 条件节点如何读取上游结果
+- 条件分支如何自动把不满足条件的节点标记为 `SKIPPED`
+- 最终 join 节点如何在多个依赖完成后进入 `READY`
+
+建议你重点看这几个函数：
+
+- `build_demo_graph()`
+  - 看一条用户请求如何被建模成一张图
+- `ready_nodes()`
+  - 看 runtime 如何找出当前可执行节点
+- `run_condition_node()`
+  - 看条件节点如何消费上游 artifact
+- `complete_node()`
+  - 看节点完成后如何解锁后继节点
+
+如果你关心“当前项目以后应该怎么改”，这个文件更重要。
+
+### 20.2 LangGraph 示例
+
+文件：
+
+- [langgraph_intent_graph_example.py](/root/intent-router/docs/examples/langgraph_intent_graph_example.py)
+
+这个示例展示的是：“如果以后用 LangGraph 作为运行时底座，大概会怎么表达同一个场景”。
+
+这个示例包含：
+
+- `recognize_intents`
+- `query_account_balance`
+- `query_credit_bill`
+- `decide_after_parallel`
+- `transfer_money`
+- `notify_insufficient_balance`
+- `finalize`
+
+其中最关键的是三点：
+
+#### 1. 并行分支
+
+从 `recognize_intents` 同时连到：
+
+- `query_account_balance`
+- `query_credit_bill`
+
+再在 `decide_after_parallel` 汇合。
+
+这对应的是：
+
+- 多意图中的后台支路并行执行
+
+#### 2. 条件路由
+
+`decide_after_parallel` 后通过 `add_conditional_edges(...)` 路由到：
+
+- `transfer_money`
+- 或 `notify_insufficient_balance`
+
+这对应的是：
+
+- 条件依赖执行规划
+
+#### 3. human-in-the-loop
+
+`transfer_money()` 里用了：
+
+- `interrupt(...)`
+
+它会在转账前暂停图，等待外部确认；之后通过：
+
+- `Command(resume=True)`
+
+恢复执行。
+
+这对应的是：
+
+- 你当前系统里的 `waiting_confirmation`
+
+如果你关心“未来迁到 LangGraph 会长什么样”，这个文件更重要。
+
+### 20.3 两个示例该怎么看
+
+建议按这个顺序看：
+
+1. 先看 [intent_graph_example.py](/root/intent-router/docs/examples/intent_graph_example.py)
+   - 理解“图模型长什么样”
+2. 再看 [langgraph_intent_graph_example.py](/root/intent-router/docs/examples/langgraph_intent_graph_example.py)
+   - 理解“如果换成图运行时框架会怎么写”
+
+这样更容易区分两层问题：
+
+- 图模型和调度规则
+- 图运行时底座
+
+### 20.4 运行说明
+
+纯 Python 示例：
+
+```bash
+python docs/examples/intent_graph_example.py
+```
+
+LangGraph 示例：
+
+```bash
+pip install -U langgraph
+python docs/examples/langgraph_intent_graph_example.py
+```
+
+当前仓库默认依赖里没有 `langgraph`，所以第二个示例默认不会直接跑通，这个是有意为之，因为当前项目还没有决定正式迁到 LangGraph。
+
+## 21. 参考资料
 
 - 论文摘要页：<https://arxiv.org/abs/2312.04511>
 - PMLR 正式页面：<https://proceedings.mlr.press/v235/kim24y.html>
