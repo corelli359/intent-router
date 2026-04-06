@@ -14,45 +14,48 @@
 
 ## Slide 2: 核心挑战与定位
 * **面临的挑战**：
-  * 大模型直接闭环全量业务不可控，缺乏原子业务的确定性。
-  * 用户意图多样发散（单次发问包含多意图、中途改变主意图）。
+  * 大模型直接闭环全量业务不可控，容易答非所问或产生幻觉。
+  * 用户意图多样发散（一句包含多意图、中途改变主意、中途变更目标）。
   * 状态管理复杂：多轮对话中上下文极易污染（例如：查完余额的卡号被带入转账任务）。
 * **Intent Router 的系统定位**：
-  * **分离“路由”与“执行”**：作为大脑中枢，专职负责意图判定、任务编排、上下文生命周期管理。
-  * **不碰底层业务语义**：业务要素（如转账给谁）交由下游具体的 Intent Agent 处理。
-  * **统一展现层**：作为统一的流式出口（SSE），对前端屏蔽后端多个 Agent 的调用复杂性。
+  * **分离“路由”与“执行”**：作为大脑中枢，专职负责意图判定、任务编排、多意图规划卡片分发。
+  * **不碰底层业务语义**：具体业务逻辑（如校验转账额度）交由下游具体的 Intent Agent 处理。
+  * **统一展现与交互**：通过独立 Action 流和 SSE，为前端提供高度结构化的界面（按钮/表单/打字机效果）。
 
 ---
 
 ## Slide 3: 整体功能全景图与系统图
-* **1. 动态意图路由**：支持从持久化存储（Intent Catalog）准实时热更新意图定义，即插即用。
-* **2. 混合意图识别**：提供 LLM 语义识别兜底至简单关键字。
-* **3. 串行与流式编排**：内置任务队列，实时推送动作。
+* **1. 动态意图路由**：支持从持久化存储准实时热更新意图定义，即插即用。
+* **2. 意图识别引擎**：以大模型（LLM）语义识别为主，辅助 CJK 中文语法正则匹配进行极端降级兜底。
+* **3. 多任务规划 (Session Planner)**：发觉多个诉求时，生成规划清单，用户打勾确认后再做。
+* **4. 多轮对话流控 (Suspend, Cancel & Switch)**：
+  * 精准感知 Agent 的补槽状态。支持无缝“中途切换意图”并一键中断级联任务。
+* **5. 双轨流式通道**：自然语言聊天推送通道 + 独立的高稳态结构化事件流通道。
 
 ```mermaid
 graph TD
     User([多端前端界面])
     subgraph Router Service
-        API[Router API - 统一网关 & SSE流]
+        API[Router API - 统一网关与SSE流]
         Orch[Orchestrator - 核心大脑]
-        Recog[双引擎 Recognizer]
+        Recog[意图识别 LLM与降级规则]
         Ctx[上下文分层系统]
         Broker[事件与心跳分发]
     end
-    subgraph Downstream Agents
+    subgraph 意图执行 Agents
         A1[转账 Agent]
         A2[余额 Agent]
         A3[高危审批 Agent]
     end
 
-    User -->|"1. 消息/卡片点击"| API
+    User -->|接收消息或卡片点击| API
     API --> Orch
-    Orch -->|"2. 提取特征"| Ctx
-    Orch -->|"3. 识别"| Recog
-    Orch -->|"4. 直播流调度"| A1
-    A1 -->|"5. 状态与卡片回传"| Orch
-    Orch -->|"6. 发送"| Broker
-    Broker -->|"7. SSE 流式渲染"| User
+    Orch -->|提取特征| Ctx
+    Orch -->|意图识别| Recog
+    Orch -->|直播流调度| A1
+    A1 -->|状态与卡片回传| Orch
+    Orch -->|发送事件| Broker
+    Broker -->|SSE 流式渲染| User
 ```
 
 ---
@@ -105,83 +108,93 @@ graph TD
 
 ---
 
-## Slide 6: 核心逻辑三：双态卡片体系 (Router vs Agent Cards)
-* 针对复杂与高危操作，避免纯文本黑盒，引入双态结构化卡片与独立 Action 接口。
-* **Planner Card (Router 规划确认卡片)**：
-  * **场景**：一次识别出多个意图（如“先查余额再打给张三500”）。
-  * **行为**：Router 截停执行流，发送规划清单。用户确认后开始按队列调度，随时同步子任务进度。
-* **Confirm Card (Agent 业务确认卡片)**：
-  * **场景**：涉及转账等高危动作，或“同意图内目标对象突变”。
-  * **行为**：Agent 中断识别返回卡片，前端展示结构化表单等待用户按键授权（而非普通文本回复），Router 做 Action 路由透传。
+## Slide 6: 核心逻辑三：同意图下“换目标”与槽位防污染
+* **痛点**：用户在转账补槽阶段改变主意：“啊不是转给张三，是转给李四，账号是 xxxx”。
+* **Router 的防污染机制**：
+  * 上下文识别：发现新的账号/手机号特征（正则提取）。
+  * **无缝覆盖 (Override)**：当继续当前任务时，精准剔除工作记忆中原有的冲突槽位（如旧卡号），防止将“李四+旧卡号”拼接成错误指令。
+  * 由 Agent 决定是否重新弹卡片让用户核对。
 
 ---
 
-## Slide 7: 系统架构设计剖析
+## Slide 7: 核心逻辑四：双态卡片体系与 Action 接口
+* 针对复杂操作，避免大模型“自说自话”，提供 100% 确定的 GUI 交互。
+* **Planner Card (Router 规划全局卡片)**：
+  * **场景**：一次发现多个新意图（如“先查余额再打给张三500”）。
+  * **行为**：后台将任务暂挂入等待区，前端展出计划清单。
+* **Confirm Card (Agent 业务确认卡片)**：
+  * **场景**：涉及金融转账、系统审批。
+  * **行为**：进入核心操作前，前端渲染确认表单。
+* **独立交互接口 (`/actions`)**：所有卡片按钮的点击脱离自然语言文本通道，通过高可靠后端 HTTP 验签和路由。
+
+---
+
+## Slide 8: 系统架构设计剖析
 *(内部技术架构分解)*
 
 ```mermaid
 graph TD
-    subgraph `router_api`
-        FastAPI(FastAPI HTTP / Action)
-        SSE(SSE Event Broker)
+    subgraph 接入层 router_api
+        接口路由
+        SSE(SSE 事件流推送中心)
     end
 
-    subgraph `router_core` 
-        Orchestrator((Task<br>Orchestrator))
-        Queue[(Priority Task Queue)]
-        Context[Context Builder]
-        Recognizer[Intent Recognizer<br>LLM / KeyWord]
-        Catalog[(CoW Intent Catalog<br>Lock-Free)]
+    subgraph 核心引擎层 router_core
+        Orchestrator((任务调度中心<br>Orchestrator))
+        Queue[(优先级任务队列)]
+        Context[上下文构建器]
+        Recognizer[意图识别组件]
+        Catalog[(意图字典缓存<br>无锁热更新)]
     end
 
     subgraph 下游基础设施
-        LLM[大模型 API]
-        AgentClient[共享 HTTPX 连接池<br>Streaming Call]
+        LLM[大模型服务 API]
+        AgentClient[请求调度客户端<br>连接池复用]
     end
 
-    FastAPI --> Orchestrator
-    Orchestrator <--> Context
-    Orchestrator <--> Recognizer
-    Recognizer --> LLM
-    Recognizer --> Catalog
-    Orchestrator --> Queue
-    Queue --> AgentClient
-    AgentClient --> SSE
+    FastAPI -->|"接收消息/动作"| Orchestrator
+    Orchestrator <-->|"构建记忆"| Context
+    Orchestrator <-->|"发起识别"| Recognizer
+    Recognizer -->|"大模型调用"| LLM
+    Recognizer -->|"下发配置"| Catalog
+    Orchestrator -->|"压入调度流"| Queue
+    Queue -->|"流式调度分发"| AgentClient
+    AgentClient -->|"转发流式事件"| SSE
 ```
 
 ---
 
-## Slide 8: 核心执行流时序图
+## Slide 9: 核心执行流时序图
 
 ```mermaid
 sequenceDiagram
-    participant User as 用户 (Client)
+    participant User as 用户
+    participant API as Actions API
     participant Router as Router大脑
     participant Agent as 意图 Agent
 
     User->>Router: "先查余额，再转500块"
-    activate Router
-    Router->>Router: 双引擎意图识别，生成任务队列
-    Router-->>User: (SSE) [事件] 规划卡片弹窗 (Plan Card)
-    User->>Router: "点击确认执行"
+    Router->>Router: 执行意图识别，发现双诉求
+    Router-->>User: (SSE) 展示多意图规划卡片 (Plan Card)
     
-    Router->>Agent: 发起流式调度 (查余额)
-    loop [余额查询] Agent 迭代返回
-        Agent-->>Router: Chunk 数据 (status=running)
-        Router-->>User: (SSE) 持续渲染 AI 气泡
-    end
-    Agent-->>Router: status=completed
+    User->>API: 独立接口: 点击"确认执行"
+    API->>Router: 触发 Action Router
     
-    Router->>Agent: 调度下一个任务 (转账)
-    Agent-->>Router: 发现缺乏核心要素卡号
-    Agent-->>Router: 返回 `waiting_user_input` 状态
-    Router-->>User: 画面暂停，等待用户输入...
-    deactivate Router
+    Router->>Agent: 调度[余额Agent]
+    Agent-->>Router: 返回金额
+    
+    Router->>Agent: 调度[转账Agent]
+    Agent-->>Router: 返回待确认表单 (waiting_confirmation)
+    Router-->>User: 画面弹出转账核对按钮
+    
+    User->>API: 独立接口: 点击"确认"
+    API->>Router: Action透传
+    Router->>Agent: 放行交易
 ```
 
 ---
 
-## Slide 9: 生产级可靠性保障 (Production Resilience)
+## Slide 10: 生产级可靠性保障 (Production Resilience)
 * **无状态路由扩容设计**：
   * 配合 K8s Ingress 开启 Sticky Session (Cookie Affinity) 实现单会话 Pod 极速亲和绑定。
   * 规避跨 Pod 消息投递黑洞，随时可水平扩容。
@@ -194,7 +207,7 @@ sequenceDiagram
 
 ---
 
-## Slide 10: 演进路线规划 (Roadmap)
+## Slide 11: 演进路线规划 (Roadmap)
 * **Phase 1 (MVP 可用层) [进行中]**：
   * 完善 Waiting 态补槽/切换的判定机制、实现超时与资源安全兜底。
 * **Phase 2 (上下文闭环层)**：
@@ -206,12 +219,12 @@ sequenceDiagram
 
 ---
 
-## Slide 11: 总结 (Summary)
+## Slide 12: 总结 (Summary)
 * **Intent Router** = 大脑层执行引擎 + 胶水层状态机。
 * 通过极强的边界设计（状态管理、上下文分层、明确的切流规则），将发散不可控的 LLM 多轮聊天，转化为了确定性的 API 工作流调度过程。
 * **价值**：极大降低各个意图智能体（Agent）的开发复杂度，专注垂类业务语义理解即可。
 
 ---
-## Slide 12: Q&A
+## Slide 13: Q&A
 * 感谢聆听！
 * Open Questions / 自由讨论
