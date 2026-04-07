@@ -8,7 +8,7 @@ from models.intent import IntentRecord, IntentStatus
 from persistence.intent_repository import IntentRepository
 from router_core.demo_intents import DEMO_INTENTS
 from router_core.domain import IntentDefinition
-from router_core.recognizer import extract_patterns
+from router_core.rule_recognizer import extract_patterns
 
 
 @dataclass(frozen=True, slots=True)

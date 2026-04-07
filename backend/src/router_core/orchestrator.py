@@ -27,7 +27,7 @@ from router_core.domain import (
     TaskStatus,
     utc_now,
 )
-from router_core.recognizer import IntentRecognizer, SimpleIntentRecognizer
+from router_core.recognizer import IntentRecognizer, NullIntentRecognizer
 from router_core.task_queue import next_runnable_task, queue_pending_tasks
 
 
@@ -131,7 +131,7 @@ class RouterOrchestrator:
         self.publish_event = publish_event
         self.session_store = session_store or SessionStore()
         self.intent_catalog = intent_catalog
-        self.recognizer = recognizer or SimpleIntentRecognizer()
+        self.recognizer = recognizer or NullIntentRecognizer()
         self.context_builder = context_builder or ContextBuilder()
         self.agent_client = agent_client or StreamingAgentClient()
         self.config = config or RouterOrchestratorConfig()

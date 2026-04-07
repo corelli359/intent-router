@@ -107,7 +107,7 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
         database_url = f"sqlite:///{tmp_path / 'intent-router.db'}"
         monkeypatch.setenv("ADMIN_REPOSITORY_BACKEND", "database")
         monkeypatch.setenv("ADMIN_DATABASE_URL", database_url)
-        monkeypatch.setenv("ROUTER_RECOGNIZER_BACKEND", "rules")
+        monkeypatch.setenv("ROUTER_RECOGNIZER_BACKEND", "llm")
         monkeypatch.setenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "0.01")
         monkeypatch.setenv("ROUTER_USE_DEMO_INTENTS", "0")
 

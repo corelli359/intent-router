@@ -11,8 +11,9 @@ from router_api.app import create_router_app
 from router_api.sse.broker import EventBroker
 from router_core.agent_client import MockStreamingAgentClient, StreamingAgentClient
 
-from router_core.domain import IntentDefinition, TaskEvent, TaskStatus, utc_now
+from router_core.domain import IntentDefinition, IntentMatch, TaskEvent, TaskStatus, utc_now
 from router_core.orchestrator import RouterOrchestrator
+from router_core.recognizer import RecognitionResult
 
 
 class _StaticCatalog:
@@ -24,6 +25,28 @@ class _StaticCatalog:
 
     def priorities(self) -> dict[str, int]:
         return {intent.intent_code: intent.dispatch_priority for intent in self._intents}
+
+
+class _MessageRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        active_codes = {intent.intent_code for intent in intents}
+        primary: list[IntentMatch] = []
+
+        def add(intent_code: str, confidence: float, reason: str) -> None:
+            if intent_code not in active_codes:
+                return
+            if any(match.intent_code == intent_code for match in primary):
+                return
+            primary.append(IntentMatch(intent_code=intent_code, confidence=confidence, reason=reason))
+
+        if any(token in message for token in ("余额", "查余额", "账户余额")):
+            add("query_account_balance", 0.96, "test recognizer matched balance intent")
+        if any(token in message for token in ("转账", "给张三转", "给李四转", "转 200 元", "转100", "转 100", "给我转")):
+            add("transfer_money", 0.95, "test recognizer matched transfer intent")
+        if any(token in message for token in ("缴费", "电费", "水费", "话费")):
+            add("pay_bill", 0.94, "test recognizer matched bill intent")
+
+        return RecognitionResult(primary=primary, candidates=[])
 
 
 def _mock_intents() -> list[IntentDefinition]:
@@ -168,6 +191,7 @@ def _test_app_with_mock_orchestrator() -> tuple[object, RouterOrchestrator]:
     orchestrator = RouterOrchestrator(
         publish_event=broker.publish,
         intent_catalog=_StaticCatalog(_mock_intents()),
+        recognizer=_MessageRecognizer(),
         agent_client=MockStreamingAgentClient(),
     )
     app = create_router_app()
@@ -183,6 +207,7 @@ def _test_stream_app_with_mock_orchestrator() -> tuple[object, RouterOrchestrato
     orchestrator = RouterOrchestrator(
         publish_event=broker.publish,
         intent_catalog=_StaticCatalog(_mock_intents()),
+        recognizer=_MessageRecognizer(),
         agent_client=MockStreamingAgentClient(),
     )
     app = create_router_app()
@@ -199,6 +224,7 @@ def test_registered_intents_without_keywords_still_propose_multi_intent_plan() -
         orchestrator = RouterOrchestrator(
             publish_event=broker.publish,
             intent_catalog=_StaticCatalog(_registered_style_intents()),
+            recognizer=_MessageRecognizer(),
             agent_client=MockStreamingAgentClient(),
         )
         app = create_router_app()
@@ -346,6 +372,7 @@ def test_stream_message_endpoint_emits_sse_events_then_snapshot() -> None:
         orchestrator = RouterOrchestrator(
             publish_event=broker.publish,
             intent_catalog=_StaticCatalog(_mock_intents()),
+            recognizer=_MessageRecognizer(),
             agent_client=MockStreamingAgentClient(),
         )
         app = create_router_app()
@@ -885,6 +912,7 @@ def test_intent_switch_cancels_waiting_and_queued_tasks_before_dispatching_new_i
         orchestrator = RouterOrchestrator(
             publish_event=events.append,
             intent_catalog=MultiIntentCatalog(),
+            recognizer=_MessageRecognizer(),
             agent_client=MockStreamingAgentClient(),
         )
         app = create_router_app()
@@ -976,6 +1004,7 @@ def test_stream_disconnect_keeps_waiting_task() -> None:
         orchestrator = RouterOrchestrator(
             publish_event=broker.publish,
             intent_catalog=_StaticCatalog(_mock_intents()),
+            recognizer=_MessageRecognizer(),
             agent_client=MockStreamingAgentClient(),
         )
         app = create_router_app()
@@ -1013,6 +1042,7 @@ def test_events_disconnect_keeps_waiting_task() -> None:
         orchestrator = RouterOrchestrator(
             publish_event=broker.publish,
             intent_catalog=_StaticCatalog(_mock_intents()),
+            recognizer=_MessageRecognizer(),
             agent_client=MockStreamingAgentClient(),
         )
         app = create_router_app()
@@ -1057,6 +1087,7 @@ def test_events_endpoint_emits_initial_heartbeat() -> None:
         orchestrator = RouterOrchestrator(
             publish_event=broker.publish,
             intent_catalog=_StaticCatalog(_mock_intents()),
+            recognizer=_MessageRecognizer(),
             agent_client=MockStreamingAgentClient(),
         )
         app = create_router_app()
@@ -1264,6 +1295,7 @@ def test_multi_intent_serial_flow_over_http_agents_uses_history_on_resumed_turn(
             orchestrator = RouterOrchestrator(
                 publish_event=lambda event: None,
                 intent_catalog=StaticCatalog(),
+                recognizer=_MessageRecognizer(),
                 agent_client=StreamingAgentClient(http_client=http_client),
             )
             app = create_router_app()

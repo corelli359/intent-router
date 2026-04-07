@@ -132,10 +132,7 @@ def test_llm_intent_recognizer_can_fail_closed_without_regex_fallback() -> None:
             )
         ]
 
-        recognizer = LLMIntentRecognizer(
-            FailingClient(),
-            fallback=NullIntentRecognizer(),
-        )
+        recognizer = LLMIntentRecognizer(FailingClient())
         result = await recognizer.recognize(
             message="帮我转账给张三 200 元",
             intents=intents,

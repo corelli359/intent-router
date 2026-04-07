@@ -14,7 +14,7 @@ from router_core.intent_catalog import RepositoryIntentCatalog
 from router_core.llm_client import LangChainLLMClient
 from router_core.orchestrator import RouterOrchestrator, RouterOrchestratorConfig
 from router_core.prompt_templates import DEFAULT_RECOGNIZER_HUMAN_PROMPT, DEFAULT_RECOGNIZER_SYSTEM_PROMPT
-from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, SimpleIntentRecognizer
+from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer
 from router_core.v2_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
 from router_core.v2_planner import (
     BasicTurnInterpreter,
@@ -38,20 +38,15 @@ class RouterRuntime:
     orchestrator_v2: GraphRouterOrchestrator
 
 
-def _warn_simple_recognizer(
-    fallback: SimpleIntentRecognizer,
-    *,
-    recognizer_backend: str,
-    llm_available: bool,
-) -> SimpleIntentRecognizer:
+def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
     logger.warning(
-        "Router recognizer is using SimpleIntentRecognizer fallback "
-        "(backend=%s, llm_available=%s). This path is keyword-only and should "
-        "not be used as the primary production recognizer.",
+        "Router intent recognition requires LLM semantics "
+        "(backend=%s, llm_available=%s). Falling back to NullIntentRecognizer "
+        "so unmatched requests can be handled by the fallback intent/agent.",
         recognizer_backend,
         llm_available,
     )
-    return fallback
+    return NullIntentRecognizer()
 
 
 def _warn_v2_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
@@ -81,20 +76,18 @@ def build_router_runtime() -> RouterRuntime:
         refresh_interval_seconds=settings.router_intent_refresh_interval_seconds,
         use_demo_intents=settings.router_use_demo_intents,
     )
-    simple_recognizer = SimpleIntentRecognizer(intent_catalog=intent_catalog)
     recognizer = (
         LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=simple_recognizer,
+            fallback=NullIntentRecognizer(),
             system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
             human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
         )
-        if settings.recognizer_backend == "llm" and llm_client is not None
-        else _warn_simple_recognizer(
-            simple_recognizer,
+        if llm_client is not None
+        else _warn_null_recognizer(
             recognizer_backend=settings.recognizer_backend,
-            llm_available=llm_client is not None,
+            llm_available=False,
         )
     )
     agent_client = StreamingAgentClient(http_timeout_seconds=settings.agent_http_timeout_seconds)

@@ -11,8 +11,9 @@ if str(BACKEND_SRC) not in sys.path:
 
 from router_core.orchestrator import RouterOrchestrator  # noqa: E402
 from router_core.agent_client import MockStreamingAgentClient  # noqa: E402
-from router_core.domain import IntentDefinition, TaskStatus  # noqa: E402
+from router_core.domain import IntentDefinition, IntentMatch, TaskStatus  # noqa: E402
 from router_core.orchestrator import RouterOrchestratorConfig  # noqa: E402
+from router_core.recognizer import RecognitionResult  # noqa: E402
 
 
 class StaticCatalog:
@@ -61,6 +62,20 @@ class TransferCatalog:
         return {intent.intent_code: intent.dispatch_priority for intent in self._intents}
 
 
+class StaticRecognizer:
+    def __init__(self, intent_code: str) -> None:
+        self.intent_code = intent_code
+
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        active_codes = {intent.intent_code for intent in intents}
+        if self.intent_code not in active_codes:
+            return RecognitionResult(primary=[], candidates=[])
+        return RecognitionResult(
+            primary=[IntentMatch(intent_code=self.intent_code, confidence=0.96, reason="test recognizer")],
+            candidates=[],
+        )
+
+
 def test_orchestrator_publishes_recognition_then_task_events() -> None:
     async def run() -> None:
         events = []
@@ -71,6 +86,7 @@ def test_orchestrator_publishes_recognition_then_task_events() -> None:
         orchestrator = RouterOrchestrator(
             publish_event=publish,
             intent_catalog=StaticCatalog(),
+            recognizer=StaticRecognizer("query_account_balance"),
             agent_client=MockStreamingAgentClient(),
         )
         session = orchestrator.create_session(cust_id="cust_demo")
@@ -100,6 +116,7 @@ def test_transfer_waiting_task_emits_resuming_before_completion() -> None:
         orchestrator = RouterOrchestrator(
             publish_event=publish,
             intent_catalog=TransferCatalog(),
+            recognizer=StaticRecognizer("transfer_money"),
             agent_client=MockStreamingAgentClient(),
         )
         session = orchestrator.create_session(cust_id="cust_demo")
@@ -137,6 +154,7 @@ def test_agent_timeout_marks_task_failed() -> None:
         orchestrator = RouterOrchestrator(
             publish_event=publish,
             intent_catalog=StaticCatalog(),
+            recognizer=StaticRecognizer("query_account_balance"),
             agent_client=HangingAgentClient(),
             config=RouterOrchestratorConfig(agent_timeout_seconds=0.01),
         )
