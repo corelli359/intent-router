@@ -243,6 +243,44 @@ def test_transfer_money_service_accepts_standalone_amount_when_only_amount_is_mi
     asyncio.run(run())
 
 
+def test_transfer_money_service_accepts_numeric_amount_from_request_slots() -> None:
+    async def run() -> None:
+        service = TransferMoneyAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "recipient_name": None,
+                    "recipient_card_number": "6222020100049999999",
+                    "recipient_phone_last4": "1234",
+                    "amount": None,
+                    "has_enough_information": True,
+                    "ask_message": "",
+                }
+            )
+        )
+        response = await service.handle(
+            TransferMoneyAgentRequest(
+                sessionId="session_transfer_006",
+                taskId="task_transfer_006",
+                input="收款卡号 6222020100049999999，收款人手机号后四位 1234",
+                recipient={"name": "我媳妇儿"},
+                transfer={"amount": 1000},
+                conversation={
+                    "recentMessages": [
+                        "user: 帮我查一下余额，如果超过5000，就跟我媳妇儿转1000",
+                        "assistant: 请提供收款卡号、收款人手机号后4位",
+                    ],
+                    "longTermMemory": [],
+                },
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.slot_memory["amount"] == "1000"
+        assert response.content == "已向我媳妇儿转账 1000 元，转账成功"
+
+    asyncio.run(run())
+
+
 def test_transfer_money_service_fails_when_amount_exceeds_limit() -> None:
     async def run() -> None:
         service = TransferMoneyAgentService(

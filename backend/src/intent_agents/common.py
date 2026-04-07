@@ -194,15 +194,20 @@ class LangChainJsonObjectRunner:
             default_headers=self.settings.llm_headers or None,
             http_async_client=self.http_async_client,
         )
+        structured_error: Exception | None = None
         if schema is not None:
-            structured_chain = prompt | model.with_structured_output(
-                schema,
-                method="json_mode",
-            )
-            response = await structured_chain.ainvoke(variables)
-            if isinstance(response, BaseModel):
-                return response.model_dump()
-            return response
+            try:
+                structured_chain = prompt | model.with_structured_output(
+                    schema,
+                    method="json_mode",
+                )
+                response = await structured_chain.ainvoke(variables)
+                if isinstance(response, BaseModel):
+                    return response.model_dump()
+                if response:
+                    return response
+            except Exception as exc:
+                structured_error = exc
 
         chain = prompt | model
         chunks: list[str] = []
@@ -210,7 +215,16 @@ class LangChainJsonObjectRunner:
             text = _chunk_text(chunk.content)
             if text:
                 chunks.append(text)
-        return extract_json_value("".join(chunks))
+        payload = extract_json_value("".join(chunks))
+        if schema is None:
+            return payload
+        try:
+            validated = schema.model_validate(payload)
+        except Exception:
+            if structured_error is not None:
+                raise structured_error
+            raise
+        return validated.model_dump()
 
 
 def dump_json(value: Any) -> str:

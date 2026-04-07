@@ -20,14 +20,14 @@ class TransferRecipient(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str | None = Field(default=None, alias="name")
-    card_number: str | None = Field(default=None, alias="cardNumber")
-    phone_last4: str | None = Field(default=None, alias="phoneLast4")
+    card_number: str | int | None = Field(default=None, alias="cardNumber")
+    phone_last4: str | int | None = Field(default=None, alias="phoneLast4")
 
 
 class TransferDetails(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    amount: str | None = Field(default=None, alias="amount")
+    amount: str | int | float | None = Field(default=None, alias="amount")
 
 
 class TransferMoneyAgentRequest(BaseModel):

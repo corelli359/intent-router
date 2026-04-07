@@ -24,6 +24,11 @@ class FakeJsonRunner:
         return self.payload
 
 
+class FailingJsonRunner:
+    async def run_json(self, *, prompt, variables: dict[str, Any], schema=None) -> Any:
+        raise RuntimeError("llm unavailable")
+
+
 def test_account_balance_service_waits_for_both_fields() -> None:
     async def run() -> None:
         service = AccountBalanceAgentService(
@@ -171,6 +176,63 @@ def test_account_balance_service_uses_default_ask_message_when_prompt_omits_it()
         assert response.status == "waiting_user_input"
         assert response.content == "请提供手机号后4位"
         assert response.payload["missing_fields"] == ["phone_last_four"]
+
+    asyncio.run(run())
+
+
+def test_account_balance_service_extracts_compact_card_and_phone_when_llm_fails() -> None:
+    async def run() -> None:
+        service = AccountBalanceAgentService(resolver=FailingJsonRunner())
+        response = await service.handle(
+            AccountBalanceAgentRequest(
+                sessionId="session_balance_006",
+                taskId="task_balance_006",
+                input="6222021234567890，1234",
+                conversation={
+                    "recentMessages": [
+                        "user: 帮我查一下余额",
+                        "assistant: 请提供卡号和手机号后4位",
+                        "user: 6222021234567890，1234",
+                    ],
+                    "longTermMemory": [],
+                },
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.slot_memory == {
+            "card_number": "6222021234567890",
+            "phone_last_four": "1234",
+        }
+
+    asyncio.run(run())
+
+
+def test_account_balance_service_extracts_phone_last_four_when_card_is_already_seeded() -> None:
+    async def run() -> None:
+        service = AccountBalanceAgentService(resolver=FailingJsonRunner())
+        response = await service.handle(
+            AccountBalanceAgentRequest(
+                sessionId="session_balance_007",
+                taskId="task_balance_007",
+                input="1234",
+                account={"cardNumber": "6222021234567890"},
+                conversation={
+                    "recentMessages": [
+                        "user: 帮我查一下余额",
+                        "assistant: 请提供卡号和手机号后4位",
+                        "user: 1234",
+                    ],
+                    "longTermMemory": [],
+                },
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.slot_memory == {
+            "card_number": "6222021234567890",
+            "phone_last_four": "1234",
+        }
 
     asyncio.run(run())
 

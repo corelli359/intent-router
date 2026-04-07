@@ -470,6 +470,90 @@ textarea {
   cursor: not-allowed;
 }
 
+.graph-flow,
+.graph-edge-list {
+  display: grid;
+  gap: 10px;
+}
+
+.graph-node-card,
+.graph-edge-card {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.025));
+  padding: 14px;
+}
+
+.graph-node-card.is-active {
+  border-color: rgba(242, 168, 103, 0.48);
+  box-shadow: inset 0 0 0 1px rgba(242, 168, 103, 0.16);
+}
+
+.graph-node-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.graph-node-meta {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.graph-node-meta strong,
+.graph-edge-card strong {
+  display: block;
+  margin: 0;
+}
+
+.graph-node-meta small,
+.graph-edge-card small,
+.graph-ghost-note {
+  color: var(--muted);
+}
+
+.graph-node-index {
+  min-width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono), "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+  color: rgba(255, 236, 213, 0.92);
+  background: rgba(227, 150, 83, 0.14);
+  border: 1px solid rgba(227, 150, 83, 0.24);
+}
+
+.graph-slot-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.graph-slot-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  color: rgba(255, 241, 228, 0.94);
+  background: rgba(227, 150, 83, 0.12);
+  border: 1px solid rgba(227, 150, 83, 0.24);
+}
+
+.graph-ghost-note {
+  margin: 10px 0 0;
+  font-size: 0.84rem;
+}
+
 .rail-section + .rail-section {
   padding-top: 18px;
   border-top: 1px solid var(--line);

@@ -18,8 +18,8 @@ from intent_agents.common import (
 class BalanceAccount(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    card_number: str | None = Field(default=None, alias="cardNumber")
-    phone_last4: str | None = Field(default=None, alias="phoneLast4")
+    card_number: str | int | None = Field(default=None, alias="cardNumber")
+    phone_last4: str | int | None = Field(default=None, alias="phoneLast4")
 
 
 class AccountBalanceAgentRequest(BaseModel):
@@ -124,8 +124,9 @@ class AccountBalanceAgentService:
         request: AccountBalanceAgentRequest,
         seeded: AccountBalanceResolution,
     ) -> AccountBalanceResolution:
+        heuristic = self._extract_from_input(request.input)
         if self.resolver is None:
-            return self._finalize_resolution(seeded, AccountBalanceResolution())
+            return self._finalize_resolution(seeded, heuristic)
 
         try:
             raw_payload = await self.resolver.run_json(
@@ -142,6 +143,11 @@ class AccountBalanceAgentService:
             resolved = AccountBalanceResolution.model_validate(raw_payload)
         except Exception:
             resolved = AccountBalanceResolution()
+
+        if heuristic.card_number and not resolved.card_number:
+            resolved.card_number = heuristic.card_number
+        if heuristic.phone_last4 and not resolved.phone_last4:
+            resolved.phone_last4 = heuristic.phone_last4
 
         return self._finalize_resolution(seeded, resolved)
 
@@ -200,3 +206,48 @@ class AccountBalanceAgentService:
         if resolution.phone_last4:
             slot_memory["phone_last_four"] = resolution.phone_last4
         return slot_memory
+
+    def _extract_from_input(self, text: str) -> AccountBalanceResolution:
+        digit_runs = self._digit_runs(text)
+        card_number = next((run for run in digit_runs if 12 <= len(run) <= 19), None)
+        phone_last4 = self._extract_phone_last4_from_runs(text, digit_runs, card_number)
+        return AccountBalanceResolution(
+            card_number=card_number,
+            phone_last4=phone_last4,
+            has_enough_information=bool(card_number and phone_last4),
+            ask_message="",
+        )
+
+    def _extract_phone_last4_from_runs(
+        self,
+        text: str,
+        digit_runs: list[str],
+        card_number: str | None,
+    ) -> str | None:
+        explicit_phone_markers = ("尾号", "后4位", "后四位", "手机", "手机号")
+        phone_candidates = [
+            run[-4:]
+            for run in digit_runs
+            if run != card_number and 4 <= len(run) < 12
+        ]
+        if any(marker in text for marker in explicit_phone_markers):
+            return phone_candidates[-1] if phone_candidates else None
+        if phone_candidates:
+            return phone_candidates[-1]
+        if len(digit_runs) == 1 and len(digit_runs[0]) == 4:
+            return digit_runs[0]
+        return None
+
+    def _digit_runs(self, text: str) -> list[str]:
+        runs: list[str] = []
+        current: list[str] = []
+        for character in text:
+            if character.isdigit():
+                current.append(character)
+                continue
+            if current:
+                runs.append("".join(current))
+                current = []
+        if current:
+            runs.append("".join(current))
+        return runs

@@ -38,34 +38,34 @@ DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT = (
     "长期记忆(JSON):\n{long_term_memory_json}\n\n"
     "本轮已识别 intent(JSON):\n{matched_intents_json}\n\n"
     "请输出 JSON:\n"
-    "{\n"
+    "{{\n"
     '  "summary": "string",\n'
     '  "needs_confirmation": true,\n'
     '  "nodes": [\n'
-    "    {\n"
+    "    {{\n"
     '      "intent_code": "string",\n'
     '      "title": "string",\n'
     '      "confidence": 0.0,\n'
     '      "source_fragment": "string | null",\n'
-    '      "slot_memory": {}\n'
-    "    }\n"
+    '      "slot_memory": {{}}\n'
+    "    }}\n"
     "  ],\n"
     '  "edges": [\n'
-    "    {\n"
+    "    {{\n"
     '      "source_index": 0,\n'
     '      "target_index": 1,\n'
     '      "relation_type": "sequential | conditional | parallel",\n'
     '      "label": "string | null",\n'
-    '      "condition": {\n'
+    '      "condition": {{\n'
     '        "expected_statuses": ["completed"],\n'
     '        "left_key": "string | null",\n'
     '        "operator": "> | >= | == | < | <= | null",\n'
     '        "right_value": 0,\n'
     '        "expression": "string | null"\n'
-    "      }\n"
-    "    }\n"
+    "      }}\n"
+    "    }}\n"
     "  ]\n"
-    "}"
+    "}}"
 )
 
 DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT = (
@@ -86,11 +86,11 @@ DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT = (
     "本轮识别主意图(JSON):\n{primary_intents_json}\n\n"
     "本轮识别候选意图(JSON):\n{candidate_intents_json}\n\n"
     "请输出 JSON:\n"
-    "{\n"
+    "{{\n"
     '  "action": "resume_current | cancel_current | replan | confirm_pending_graph | cancel_pending_graph | wait",\n'
     '  "reason": "string",\n'
     '  "target_intent_code": "string | null"\n'
-    "}"
+    "}}"
 )
 
 
