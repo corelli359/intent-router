@@ -557,6 +557,21 @@ export class IntentRouterApiClient {
     return mapSnapshot(result.snapshot as BackendSnapshot);
   }
 
+  async sendSessionActionStream(input: SessionActionInput, handlers: MessageStreamHandlers = {}): Promise<void> {
+    await this.streamPost(
+      `${this.options.routerBaseUrl}/sessions/${input.sessionId}/actions/stream`,
+      {
+        task_id: input.taskId,
+        cust_id: input.custId,
+        source: input.source,
+        action_code: input.actionCode,
+        confirm_token: input.confirmToken,
+        payload: input.payload ?? {}
+      },
+      handlers
+    );
+  }
+
   async listIntents(): Promise<IntentDefinition[]> {
     const response = await fetch(`${this.options.adminBaseUrl}/intents`);
     const payload = await response.json();
