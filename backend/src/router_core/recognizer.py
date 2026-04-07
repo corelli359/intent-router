@@ -119,6 +119,20 @@ class IntentRecognizer(Protocol):
     ) -> RecognitionResult: ...
 
 
+class NullIntentRecognizer:
+    """Fail-closed recognizer used when semantic recognition must not degrade to rules."""
+
+    async def recognize(
+        self,
+        message: str,
+        intents: Iterable[IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> RecognitionResult:
+        return RecognitionResult(primary=[], candidates=[])
+
+
 class SimpleIntentRecognizer:
     """Keyword/phrase-based intent recognizer — **last-resort fallback only**.
 

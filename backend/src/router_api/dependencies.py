@@ -14,9 +14,14 @@ from router_core.intent_catalog import RepositoryIntentCatalog
 from router_core.llm_client import LangChainLLMClient
 from router_core.orchestrator import RouterOrchestrator, RouterOrchestratorConfig
 from router_core.prompt_templates import DEFAULT_RECOGNIZER_HUMAN_PROMPT, DEFAULT_RECOGNIZER_SYSTEM_PROMPT
-from router_core.recognizer import LLMIntentRecognizer, SimpleIntentRecognizer
+from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, SimpleIntentRecognizer
 from router_core.v2_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
-from router_core.v2_planner import IntentGraphPlanner
+from router_core.v2_planner import (
+    BasicTurnInterpreter,
+    LLMGraphTurnInterpreter,
+    LLMIntentGraphPlanner,
+    SequentialIntentGraphPlanner,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +52,17 @@ def _warn_simple_recognizer(
         llm_available,
     )
     return fallback
+
+
+def _warn_v2_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
+    logger.warning(
+        "Router V2 requires LLM-based intent recognition "
+        "(backend=%s, llm_available=%s). Falling back to NullIntentRecognizer "
+        "instead of regex/rules.",
+        recognizer_backend,
+        llm_available,
+    )
+    return NullIntentRecognizer()
 
 
 def build_router_runtime() -> RouterRuntime:
@@ -95,8 +111,38 @@ def build_router_runtime() -> RouterRuntime:
     orchestrator_v2 = GraphRouterOrchestrator(
         publish_event=event_broker_v2.publish,
         intent_catalog=intent_catalog,
-        recognizer=recognizer,
-        planner=IntentGraphPlanner(),
+        recognizer=(
+            LLMIntentRecognizer(
+                llm_client,
+                model=settings.llm_recognizer_model or settings.llm_model,
+                fallback=NullIntentRecognizer(),
+                system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
+                human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
+            )
+            if llm_client is not None
+            else _warn_v2_null_recognizer(
+                recognizer_backend=settings.recognizer_backend,
+                llm_available=False,
+            )
+        ),
+        planner=(
+            LLMIntentGraphPlanner(
+                llm_client,
+                model=settings.llm_model,
+                fallback=SequentialIntentGraphPlanner(),
+            )
+            if llm_client is not None
+            else SequentialIntentGraphPlanner()
+        ),
+        turn_interpreter=(
+            LLMGraphTurnInterpreter(
+                llm_client,
+                model=settings.llm_model,
+                fallback=BasicTurnInterpreter(),
+            )
+            if llm_client is not None
+            else BasicTurnInterpreter()
+        ),
         agent_client=agent_client,
         config=GraphRouterOrchestratorConfig(
             intent_switch_threshold=settings.router_intent_switch_threshold,

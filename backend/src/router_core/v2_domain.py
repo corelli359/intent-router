@@ -49,6 +49,9 @@ class GraphAction(BaseModel):
 class GraphCondition(BaseModel):
     source_node_id: str
     expected_statuses: list[str] = Field(default_factory=lambda: [GraphNodeStatus.COMPLETED.value])
+    left_key: str | None = None
+    operator: str | None = None
+    right_value: float | int | str | bool | None = None
     expression: str | None = None
 
 
@@ -67,6 +70,7 @@ class GraphNodeState(BaseModel):
     title: str
     confidence: float
     position: int = 0
+    source_fragment: str | None = None
     status: GraphNodeStatus = GraphNodeStatus.DRAFT
     task_id: str | None = None
     depends_on: list[str] = Field(default_factory=list)

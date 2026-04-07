@@ -13,11 +13,17 @@ if str(BACKEND_SRC) not in sys.path:
 
 from router_core.agent_client import StreamingAgentClient  # noqa: E402
 from router_core.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
+from router_core.domain import IntentMatch  # noqa: E402
 from router_core.llm_client import (  # noqa: E402
     IntentRecognitionMatchPayload,
     IntentRecognitionPayload,
 )
-from router_core.recognizer import LLMIntentRecognizer  # noqa: E402
+from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
+from router_core.v2_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
+from router_core.v2_planner import (  # noqa: E402
+    LLMGraphTurnInterpreter,
+    LLMIntentGraphPlanner,
+)
 
 
 class FakeLangChainClient:
@@ -102,6 +108,43 @@ def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
         assert "field_mapping" not in first_intent_payload
         assert [match.intent_code for match in result.primary] == ["transfer_money"]
         assert [match.intent_code for match in result.candidates] == ["pay_bill"]
+
+    asyncio.run(run())
+
+
+def test_llm_intent_recognizer_can_fail_closed_without_regex_fallback() -> None:
+    class FailingClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            raise RuntimeError("llm unavailable")
+
+    async def run() -> None:
+        intents = [
+            IntentDefinition(
+                intent_code="transfer_money",
+                name="转账",
+                description="执行转账",
+                examples=["给张三转 200 元"],
+                keywords=["转账", "汇款"],
+                agent_url="https://agent.example.com/transfer",
+                dispatch_priority=100,
+                primary_threshold=0.7,
+                candidate_threshold=0.5,
+            )
+        ]
+
+        recognizer = LLMIntentRecognizer(
+            FailingClient(),
+            fallback=NullIntentRecognizer(),
+        )
+        result = await recognizer.recognize(
+            message="帮我转账给张三 200 元",
+            intents=intents,
+            recent_messages=[],
+            long_term_memory=[],
+        )
+
+        assert result.primary == []
+        assert result.candidates == []
 
     asyncio.run(run())
 
@@ -193,5 +236,111 @@ def test_streaming_agent_client_closes_owned_http_pool() -> None:
         assert client.http_client.is_closed is False
         await client.close()
         assert client.http_client.is_closed is True
+
+    asyncio.run(run())
+
+
+def test_llm_graph_planner_converts_structured_payload_to_execution_graph() -> None:
+    class FakePlannerClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            return {
+                "summary": "识别到 2 个事项，先查余额，再转账",
+                "needs_confirmation": True,
+                "nodes": [
+                    {
+                        "intent_code": "query_account_balance",
+                        "title": "查询账户余额",
+                        "confidence": 0.97,
+                        "source_fragment": "先查余额",
+                    },
+                    {
+                        "intent_code": "transfer_money",
+                        "title": "给张三转账 200 元",
+                        "confidence": 0.93,
+                        "source_fragment": "再给张三转账 200 元",
+                        "slot_memory": {"recipient_name": "张三", "amount": "200"},
+                    },
+                ],
+                "edges": [
+                    {
+                        "source_index": 0,
+                        "target_index": 1,
+                        "relation_type": "sequential",
+                        "label": "先查询再执行转账",
+                    }
+                ],
+            }
+
+    async def run() -> None:
+        planner = LLMIntentGraphPlanner(FakePlannerClient(), model="graph-planner-model")
+        intents = {
+            "query_account_balance": IntentDefinition(
+                intent_code="query_account_balance",
+                name="查询账户余额",
+                description="查询账户余额",
+                examples=["查余额"],
+                agent_url="https://agent.example.com/balance",
+            ),
+            "transfer_money": IntentDefinition(
+                intent_code="transfer_money",
+                name="转账",
+                description="执行转账",
+                examples=["给张三转账"],
+                agent_url="https://agent.example.com/transfer",
+            ),
+        }
+        graph = await planner.plan(
+            message="先查余额，再给张三转账 200 元",
+            matches=[
+                IntentMatch(intent_code="query_account_balance", confidence=0.97, reason="fixed"),
+                IntentMatch(intent_code="transfer_money", confidence=0.93, reason="fixed"),
+            ],
+            intents_by_code=intents,
+            recent_messages=[],
+            long_term_memory=[],
+        )
+
+        assert graph.summary == "识别到 2 个事项，先查余额，再转账"
+        assert [node.intent_code for node in graph.nodes] == ["query_account_balance", "transfer_money"]
+        assert graph.nodes[1].slot_memory == {"recipient_name": "张三", "amount": "200"}
+        assert graph.edges[0].relation_type.value == "sequential"
+        assert graph.edges[0].label == "先查询再执行转账"
+
+    asyncio.run(run())
+
+
+def test_llm_turn_interpreter_uses_structured_llm_decision() -> None:
+    class FakeTurnClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            return {
+                "action": "replan",
+                "reason": "用户明确切换为新的余额查询诉求",
+                "target_intent_code": "query_account_balance",
+            }
+
+    async def run() -> None:
+        interpreter = LLMGraphTurnInterpreter(FakeTurnClient(), model="turn-model")
+        decision = await interpreter.interpret_waiting_node(
+            message="别转了，先帮我查余额",
+            waiting_node=GraphNodeState(
+                intent_code="transfer_money",
+                title="转账",
+                confidence=0.9,
+            ),
+            current_graph=ExecutionGraphState(source_message="帮我转账"),
+            recognition=RecognitionResult(
+                primary=[
+                    IntentMatch(
+                        intent_code="query_account_balance",
+                        confidence=0.98,
+                        reason="explicit switch",
+                    )
+                ],
+                candidates=[],
+            ),
+        )
+
+        assert decision.action == "replan"
+        assert decision.target_intent_code == "query_account_balance"
 
     asyncio.run(run())

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -13,8 +14,9 @@ if str(BACKEND_SRC) not in sys.path:
 
 from admin_api.dependencies import get_intent_repository, get_settings  # noqa: E402
 from app import create_app  # noqa: E402
+from intent_agents.account_balance_service import AccountBalanceAgentService  # noqa: E402
 from intent_agents.fallback_app import create_app as create_fallback_app  # noqa: E402
-from intent_agents.order_status_app import create_app as create_order_status_app  # noqa: E402
+from intent_agents.order_status_app import create_app as create_order_status_app, get_order_status_service  # noqa: E402
 from persistence.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
 from router_api.dependencies import get_orchestrator  # noqa: E402
 from router_core.agent_client import StreamingAgentClient  # noqa: E402
@@ -62,6 +64,44 @@ class RegistryAwareRecognizer:
         return RecognitionResult(primary=[], candidates=[])
 
 
+def _digit_sequences(text: str) -> list[str]:
+    sequences: list[str] = []
+    current: list[str] = []
+    for character in text:
+        if character.isdigit():
+            current.append(character)
+            continue
+        if current:
+            sequences.append("".join(current))
+            current = []
+    if current:
+        sequences.append("".join(current))
+    return sequences
+
+
+class DeterministicBalanceRunner:
+    async def run_json(self, *, prompt, variables, schema=None):
+        current_input = str(variables.get("input_text", ""))
+        account_payload = json.loads(str(variables.get("account_json", "{}")))
+        card_number = account_payload.get("cardNumber") or account_payload.get("card_number")
+        phone_last4 = account_payload.get("phoneLast4") or account_payload.get("phone_last4")
+
+        for sequence in _digit_sequences(current_input):
+            if card_number is None and 12 <= len(sequence) <= 19:
+                card_number = sequence
+                continue
+            if len(sequence) == 4:
+                phone_last4 = sequence
+
+        has_enough_information = bool(card_number and phone_last4)
+        return {
+            "card_number": card_number,
+            "phone_last4": phone_last4,
+            "has_enough_information": has_enough_information,
+            "ask_message": "" if has_enough_information else "请提供卡号和手机号后4位",
+        }
+
+
 def test_register_activate_and_route_via_database_repository(tmp_path: Path, monkeypatch) -> None:
     async def run() -> None:
         database_url = f"sqlite:///{tmp_path / 'intent-router.db'}"
@@ -76,9 +116,13 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
         repository = get_intent_repository()
         assert isinstance(repository, DatabaseIntentRepository)
 
+        order_app = create_order_status_app()
+        order_app.dependency_overrides[get_order_status_service] = lambda: AccountBalanceAgentService(
+            resolver=DeterministicBalanceRunner()
+        )
         agent_transport = HostRouterTransport(
             {
-                "intent-order-agent": create_order_status_app(),
+                "intent-order-agent": order_app,
                 "intent-fallback-agent": create_fallback_app(),
             }
         )

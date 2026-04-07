@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-import re
 from typing import Any
 from uuid import uuid4
 
@@ -20,28 +19,26 @@ from router_core.domain import (
     utc_now,
 )
 from router_core.orchestrator import LongTermMemoryStore
-from router_core.recognizer import IntentRecognizer, SimpleIntentRecognizer
+from router_core.recognizer import IntentRecognizer, RecognitionResult
 from router_core.v2_domain import (
     ExecutionGraphState,
+    GraphCondition,
     GraphNodeState,
     GraphNodeStatus,
     GraphRouterSnapshot,
     GraphSessionState,
     GraphStatus,
 )
-from router_core.v2_planner import IntentGraphPlanner
+from router_core.v2_planner import (
+    BasicTurnInterpreter,
+    IntentGraphPlanner,
+    SequentialIntentGraphPlanner,
+    TurnDecisionPayload,
+    TurnInterpreter,
+)
 
 
 logger = logging.getLogger(__name__)
-
-FAST_CANCEL_TERMS = ("取消", "算了", "不需要了", "不用了", "别了", "停止")
-SWITCH_INTENT_TERMS = ("改成", "改为", "换成", "换为", "不要", "不查了", "不转了", "先别", "别")
-CARD_NUMBER_RE = re.compile(r"\b\d{12,19}\b")
-PHONE_LAST4_RE = re.compile(r"(?:后4位|后四位|尾号)\D*\d{4}")
-FOUR_DIGITS_ONLY_RE = re.compile(r"^\D*(\d{4})\D*$")
-AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*元")
-AMOUNT_LABEL_RE = re.compile(r"(?:转账金额|金额)\D*(\d+(?:\.\d+)?)")
-NAME_CUE_RE = re.compile(r"(?:给|向|转给|转账给)([\u4e00-\u9fffA-Za-z]{2,16})")
 
 TERMINAL_NODE_STATUSES = {
     GraphNodeStatus.COMPLETED,
@@ -102,6 +99,11 @@ class GraphSessionStore:
         return _Compat(session)
 
 
+class _NoopIntentRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        return RecognitionResult(primary=[], candidates=[])
+
+
 class GraphRouterOrchestrator:
     def __init__(
         self,
@@ -110,6 +112,7 @@ class GraphRouterOrchestrator:
         intent_catalog: Any | None = None,
         recognizer: IntentRecognizer | None = None,
         planner: IntentGraphPlanner | None = None,
+        turn_interpreter: TurnInterpreter | None = None,
         context_builder: ContextBuilder | None = None,
         agent_client: AgentClient | None = None,
         config: GraphRouterOrchestratorConfig | None = None,
@@ -117,8 +120,9 @@ class GraphRouterOrchestrator:
         self.publish_event = publish_event
         self.session_store = session_store or GraphSessionStore()
         self.intent_catalog = intent_catalog
-        self.recognizer = recognizer or SimpleIntentRecognizer()
-        self.planner = planner or IntentGraphPlanner()
+        self.recognizer = recognizer or _NoopIntentRecognizer()
+        self.planner = planner or SequentialIntentGraphPlanner()
+        self.turn_interpreter = turn_interpreter or BasicTurnInterpreter()
         self.context_builder = context_builder or ContextBuilder()
         self.agent_client = agent_client or StreamingAgentClient()
         self.config = config or GraphRouterOrchestratorConfig()
@@ -154,20 +158,12 @@ class GraphRouterOrchestrator:
         session.touch()
 
         if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
-            if self._is_plan_confirm_message(content):
-                await self._confirm_pending_graph(session, graph_id=None, confirm_token=None)
-                return self.snapshot(session.session_id)
-            if self._contains_fast_cancel(content):
-                await self._cancel_pending_graph(session, graph_id=None, confirm_token=None)
-                return self.snapshot(session.session_id)
-            await self._publish_graph_waiting_hint(session)
+            await self._handle_pending_graph_turn(session, content)
             return self.snapshot(session.session_id)
 
         waiting_node = self._get_waiting_node(session)
         if waiting_node is not None:
-            if await self._maybe_cancel_or_switch_waiting_node(session, waiting_node, content):
-                return self.snapshot(session.session_id)
-            await self._resume_waiting_node(session, waiting_node, content)
+            await self._handle_waiting_node_turn(session, waiting_node, content)
             return self.snapshot(session.session_id)
 
         await self._route_new_message(session, content)
@@ -235,7 +231,13 @@ class GraphRouterOrchestrator:
             matches = [type("Match", (), {"intent_code": fallback_intent.intent_code, "confidence": 0.0})()]
             active_intents[fallback_intent.intent_code] = fallback_intent
 
-        graph = self.planner.plan(message=content, matches=matches, intents_by_code=active_intents)
+        graph = await self.planner.plan(
+            message=content,
+            matches=matches,
+            intents_by_code=active_intents,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+        )
         if len(graph.nodes) > 1:
             graph.touch(GraphStatus.WAITING_CONFIRMATION)
             session.pending_graph = graph
@@ -381,19 +383,22 @@ class GraphRouterOrchestrator:
         user_input: str,
     ) -> None:
         task = self._get_task(session, node.task_id)
+        created_new_task = task is None
         if task is None:
             task = await self._create_task_for_node(session, graph, node)
-        else:
-            self._prepare_resuming_task(task, user_input)
 
+        previous_initial_source_input = task.input_context.get("initial_source_input")
+        if not (isinstance(previous_initial_source_input, str) and previous_initial_source_input):
+            previous_initial_source_input = node.source_fragment or graph.source_message
+        effective_user_input = (node.source_fragment or user_input) if created_new_task else user_input
         task.input_context = self._build_session_context(session, task=task)
         task.input_context.update(
             {
                 "graph_id": graph.graph_id,
                 "graph_version": graph.version,
                 "node_id": node.node_id,
-                "source_input": user_input,
-                "initial_source_input": task.input_context.get("initial_source_input") or graph.source_message,
+                "source_input": effective_user_input,
+                "initial_source_input": previous_initial_source_input,
             }
         )
 
@@ -408,7 +413,7 @@ class GraphRouterOrchestrator:
 
         try:
             async with asyncio.timeout(self.config.agent_timeout_seconds):
-                async for chunk in self.agent_client.stream(task, user_input):
+                async for chunk in self.agent_client.stream(task, effective_user_input):
                     await self._handle_agent_chunk(session, graph, node, task, chunk)
                     if chunk.status in {
                         TaskStatus.WAITING_USER_INPUT,
@@ -444,8 +449,8 @@ class GraphRouterOrchestrator:
         context = self._build_session_context(session)
         context.update(
             {
-                "source_input": graph.source_message,
-                "initial_source_input": graph.source_message,
+                "source_input": node.source_fragment or graph.source_message,
+                "initial_source_input": node.source_fragment or graph.source_message,
                 "graph_id": graph.graph_id,
                 "graph_version": graph.version,
                 "node_id": node.node_id,
@@ -576,12 +581,10 @@ class GraphRouterOrchestrator:
         await self._run_node(session, graph, node, content)
         await self._drain_graph(session, graph.source_message)
 
-    async def _maybe_cancel_or_switch_waiting_node(
-        self,
-        session: GraphSessionState,
-        waiting_node: GraphNodeState,
-        content: str,
-    ) -> bool:
+    async def _handle_pending_graph_turn(self, session: GraphSessionState, content: str) -> None:
+        pending_graph = session.pending_graph
+        if pending_graph is None:
+            return
         recognition = await self._recognize_message(
             session,
             content,
@@ -589,30 +592,19 @@ class GraphRouterOrchestrator:
             long_term_memory=[],
             emit_events=False,
         )
-        fast_cancel = self._contains_fast_cancel(content)
-        explicit_switch = self._contains_explicit_switch_intent(content)
-        switch_match = self._intent_switch_match(waiting_node, recognition)
-        if switch_match is None and explicit_switch:
-            switch_match = self._best_different_intent_match(waiting_node, recognition)
-        if switch_match is not None and self._looks_like_slot_supplement(content) and not self._contains_explicit_switch_intent(content):
-            return False
-
-        if not fast_cancel and switch_match is None:
-            return False
-
-        if switch_match is None and self._is_pure_cancel_message(content):
-            await self._cancel_current_node(session, reason="用户取消当前节点")
-            graph = session.current_graph
-            await self._drain_graph(session, graph.source_message if graph is not None else content)
-            return True
-
-        reason = (
-            f"检测到用户切换意图至 {switch_match.intent_code}"
-            if switch_match is not None
-            else "用户取消当前执行图"
+        decision = await self.turn_interpreter.interpret_pending_graph(
+            message=content,
+            pending_graph=pending_graph,
+            recognition=recognition,
         )
-        await self._cancel_current_graph(session, reason=reason)
-        if switch_match is not None:
+        if decision.action == "confirm_pending_graph":
+            await self._confirm_pending_graph(session, graph_id=None, confirm_token=None)
+            return
+        if decision.action == "cancel_pending_graph":
+            await self._cancel_pending_graph(session, graph_id=None, confirm_token=None)
+            return
+        if decision.action == "replan":
+            session.pending_graph = None
             await self._route_new_message(
                 session,
                 content,
@@ -620,7 +612,49 @@ class GraphRouterOrchestrator:
                 recent_messages=[],
                 long_term_memory=[],
             )
-        return True
+            return
+        await self._publish_graph_waiting_hint(session)
+
+    async def _handle_waiting_node_turn(
+        self,
+        session: GraphSessionState,
+        waiting_node: GraphNodeState,
+        content: str,
+    ) -> None:
+        recognition = await self._recognize_message(
+            session,
+            content,
+            recent_messages=[],
+            long_term_memory=[],
+            emit_events=False,
+        )
+        graph = session.current_graph
+        if graph is None:
+            return
+        decision = await self.turn_interpreter.interpret_waiting_node(
+            message=content,
+            waiting_node=waiting_node,
+            current_graph=graph,
+            recognition=recognition,
+        )
+        if decision.action == "resume_current":
+            await self._resume_waiting_node(session, waiting_node, content)
+            return
+        if decision.action == "cancel_current":
+            await self._cancel_current_node(session, reason=decision.reason or "用户取消当前节点")
+            await self._drain_graph(session, graph.source_message)
+            return
+        if decision.action == "replan":
+            await self._cancel_current_graph(session, reason=decision.reason or "检测到用户修改了目标，准备重规划")
+            await self._route_new_message(
+                session,
+                content,
+                recognition=recognition,
+                recent_messages=[],
+                long_term_memory=[],
+            )
+            return
+        await self._publish_session_state(session, "session.waiting_user_input")
 
     async def _cancel_current_node(self, session: GraphSessionState, *, reason: str) -> None:
         graph = session.current_graph
@@ -894,6 +928,14 @@ class GraphRouterOrchestrator:
                     else [GraphNodeStatus.COMPLETED.value]
                 )
                 if source.status.value in expected_statuses:
+                    if edge.condition is not None and (
+                        edge.condition.left_key is not None or edge.condition.expression is not None
+                    ):
+                        if self._condition_matches_from_condition(source, edge.condition):
+                            continue
+                        should_skip = True
+                        blocking_reason = edge.label or "条件依赖未满足"
+                        break
                     continue
                 if source.status in TERMINAL_NODE_STATUSES:
                     should_skip = True
@@ -907,6 +949,33 @@ class GraphRouterOrchestrator:
                 node.touch(GraphNodeStatus.READY)
             else:
                 node.touch(GraphNodeStatus.BLOCKED, blocking_reason=blocking_reason)
+
+    def _condition_matches_from_condition(self, source: GraphNodeState, condition: GraphCondition | None) -> bool:
+        if condition is None or condition.left_key is None or condition.operator is None:
+            return False
+        current_value = source.output_payload.get(condition.left_key)
+        if current_value is None:
+            return False
+        threshold = condition.right_value
+        operator = condition.operator
+        if isinstance(current_value, (int, float)) and isinstance(threshold, (int, float)):
+            left = float(current_value)
+            right = float(threshold)
+        else:
+            left = current_value
+            right = threshold
+        try:
+            if operator == ">":
+                return left > right
+            if operator == ">=":
+                return left >= right
+            if operator == "<":
+                return left < right
+            if operator == "<=":
+                return left <= right
+            return left == right
+        except TypeError:
+            return False
 
     def _graph_status(self, graph: ExecutionGraphState) -> GraphStatus:
         statuses = [node.status for node in graph.nodes]
@@ -969,109 +1038,6 @@ class GraphRouterOrchestrator:
         if getter is None:
             return None
         return getter()
-
-    def _intent_switch_match(self, waiting_node: GraphNodeState, recognition: Any) -> Any | None:
-        switch_candidates = [
-            match
-            for match in [*recognition.primary, *recognition.candidates]
-            if match.intent_code != waiting_node.intent_code and match.confidence >= self.config.intent_switch_threshold
-        ]
-        if not switch_candidates:
-            return None
-        switch_candidates.sort(key=lambda match: match.confidence, reverse=True)
-        return switch_candidates[0]
-
-    def _best_different_intent_match(self, waiting_node: GraphNodeState, recognition: Any) -> Any | None:
-        switch_candidates = [
-            match
-            for match in [*recognition.primary, *recognition.candidates]
-            if match.intent_code != waiting_node.intent_code
-        ]
-        if not switch_candidates:
-            return None
-        switch_candidates.sort(key=lambda match: match.confidence, reverse=True)
-        return switch_candidates[0]
-
-    def _prepare_resuming_task(self, task: Task, user_input: str) -> None:
-        conflicting_keys = self._conflicting_slot_keys(task, user_input)
-        for key in conflicting_keys:
-            task.slot_memory.pop(key, None)
-
-    def _conflicting_slot_keys(self, task: Task, user_input: str) -> set[str]:
-        if not task.slot_memory:
-            return set()
-        standalone_digits_role = self._standalone_digits_role_for_conflict(task, user_input)
-        has_name = NAME_CUE_RE.search(user_input) is not None
-        has_card = CARD_NUMBER_RE.search(user_input) is not None or standalone_digits_role == "card"
-        has_phone = PHONE_LAST4_RE.search(user_input) is not None or standalone_digits_role == "phone"
-        has_amount = (
-            AMOUNT_RE.search(user_input) is not None
-            or AMOUNT_LABEL_RE.search(user_input) is not None
-            or standalone_digits_role == "amount"
-        )
-        keys_to_clear: set[str] = set()
-        for key in task.slot_memory:
-            lowered = key.lower()
-            if has_name and "name" in lowered:
-                keys_to_clear.add(key)
-                continue
-            if has_card and ("card" in lowered or "account" in lowered):
-                keys_to_clear.add(key)
-                continue
-            if has_phone and ("phone" in lowered or "mobile" in lowered):
-                keys_to_clear.add(key)
-                continue
-            if has_amount and ("amount" in lowered or "money" in lowered):
-                keys_to_clear.add(key)
-        return keys_to_clear
-
-    def _standalone_digits_role_for_conflict(self, task: Task, user_input: str) -> str | None:
-        stripped = user_input.strip()
-        if not stripped.isdigit():
-            return None
-
-        has_phone_slot = any("phone" in key.lower() or "mobile" in key.lower() for key in task.slot_memory)
-        has_amount_slot = any("amount" in key.lower() or "money" in key.lower() for key in task.slot_memory)
-        length = len(stripped)
-        if 12 <= length <= 19:
-            return "card"
-        if length == 11:
-            return "phone"
-        if length == 4:
-            if has_phone_slot and not has_amount_slot:
-                return "amount"
-            if has_amount_slot and not has_phone_slot:
-                return "phone"
-            return None
-        return "amount"
-
-    def _contains_fast_cancel(self, content: str) -> bool:
-        normalized = re.sub(r"\s+", "", content)
-        return any(term in normalized for term in FAST_CANCEL_TERMS)
-
-    def _is_pure_cancel_message(self, content: str) -> bool:
-        normalized = re.sub(r"[\s，,。.!！？、；;]", "", content)
-        for term in FAST_CANCEL_TERMS:
-            normalized = normalized.replace(term, "")
-        return normalized == ""
-
-    def _contains_explicit_switch_intent(self, content: str) -> bool:
-        normalized = re.sub(r"\s+", "", content)
-        return any(term in normalized for term in SWITCH_INTENT_TERMS)
-
-    def _looks_like_slot_supplement(self, content: str) -> bool:
-        normalized = content.strip()
-        if not normalized:
-            return False
-        if CARD_NUMBER_RE.search(normalized):
-            return True
-        if PHONE_LAST4_RE.search(normalized) or FOUR_DIGITS_ONLY_RE.match(normalized):
-            return True
-        if AMOUNT_RE.search(normalized) or AMOUNT_LABEL_RE.search(normalized):
-            return True
-        if NAME_CUE_RE.search(normalized):
-            return True
-        return False
 
     def _node_status_for_task_status(self, status: TaskStatus) -> GraphNodeStatus:
         mapping = {
@@ -1152,6 +1118,7 @@ class GraphRouterOrchestrator:
             "title": node.title,
             "confidence": node.confidence,
             "position": node.position,
+            "source_fragment": node.source_fragment,
             "status": node.status.value,
             "task_id": node.task_id,
             "depends_on": list(node.depends_on),
@@ -1190,7 +1157,3 @@ class GraphRouterOrchestrator:
         result = self.publish_event(event)
         if result is not None and hasattr(result, "__await__"):
             await result
-
-    def _is_plan_confirm_message(self, content: str) -> bool:
-        normalized = re.sub(r"[\s，,。.!！？、；;]", "", content)
-        return normalized in {"确认", "确认执行", "开始", "开始执行", "执行", "执行吧", "好的", "好"}
