@@ -8,7 +8,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-TRUE_VALUES = {"1", "true", "yes", "on"}
 ENV_FILENAMES = (".env", ".env.local")
 
 
@@ -35,14 +34,6 @@ def _load_local_env_files() -> None:
                 value = value[1:-1]
             os.environ[key] = value
 
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in TRUE_VALUES
-
-
 def _env_headers(name: str) -> dict[str, str]:
     raw_value = os.getenv(name)
     if not raw_value:
@@ -59,7 +50,6 @@ class Settings(BaseModel):
     repository_backend: Literal["memory", "database", "postgres"] = Field(default="memory")
     database_url: str | None = Field(default=None)
     recognizer_backend: Literal["rules", "llm"] = Field(default="llm")
-    router_use_demo_intents: bool = Field(default=False)
     router_intent_refresh_interval_seconds: float = Field(default=5.0, gt=0)
     router_intent_switch_threshold: float = Field(default=0.80, ge=0, le=1)
     router_agent_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -95,7 +85,6 @@ class Settings(BaseModel):
             repository_backend=os.getenv("ADMIN_REPOSITORY_BACKEND", "memory"),
             database_url=os.getenv("ADMIN_DATABASE_URL") or os.getenv("ADMIN_POSTGRES_DSN"),
             recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "llm"),
-            router_use_demo_intents=_env_bool("ROUTER_USE_DEMO_INTENTS"),
             router_intent_refresh_interval_seconds=float(
                 os.getenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "5")
             ),

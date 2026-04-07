@@ -109,7 +109,6 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
         monkeypatch.setenv("ADMIN_DATABASE_URL", database_url)
         monkeypatch.setenv("ROUTER_RECOGNIZER_BACKEND", "llm")
         monkeypatch.setenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "0.01")
-        monkeypatch.setenv("ROUTER_USE_DEMO_INTENTS", "0")
 
         get_settings.cache_clear()
         get_intent_repository.cache_clear()
@@ -127,7 +126,7 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
             }
         )
         agent_http_client = httpx.AsyncClient(transport=agent_transport)
-        catalog = RepositoryIntentCatalog(repository, refresh_interval_seconds=0.01, use_demo_intents=False)
+        catalog = RepositoryIntentCatalog(repository, refresh_interval_seconds=0.01)
         orchestrator = RouterOrchestrator(
             publish_event=lambda event: None,
             intent_catalog=catalog,

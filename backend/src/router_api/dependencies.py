@@ -74,7 +74,6 @@ def build_router_runtime() -> RouterRuntime:
     intent_catalog = RepositoryIntentCatalog(
         get_intent_repository(),
         refresh_interval_seconds=settings.router_intent_refresh_interval_seconds,
-        use_demo_intents=settings.router_use_demo_intents,
     )
     recognizer = (
         LLMIntentRecognizer(

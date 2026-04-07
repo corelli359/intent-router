@@ -6,7 +6,6 @@ from typing import Callable
 
 from models.intent import IntentRecord, IntentStatus
 from persistence.intent_repository import IntentRepository
-from router_core.demo_intents import DEMO_INTENTS
 from router_core.domain import IntentDefinition
 from router_core.rule_recognizer import extract_patterns
 
@@ -25,12 +24,10 @@ class RepositoryIntentCatalog:
         repository: IntentRepository,
         *,
         refresh_interval_seconds: float = 5.0,
-        use_demo_intents: bool = False,
         clock: Callable[[], float] | None = None,
     ) -> None:
         self.repository = repository
         self.refresh_interval_seconds = refresh_interval_seconds
-        self.use_demo_intents = use_demo_intents
         self.clock = clock or time.monotonic
         self._snapshot = CatalogSnapshot()
         self._last_refresh_at: float | None = None
@@ -66,9 +63,6 @@ class RepositoryIntentCatalog:
                 fallback_intents.append(definition)
             else:
                 routable_intents.append(definition)
-
-        if not routable_intents and self.use_demo_intents:
-            routable_intents = list(DEMO_INTENTS)
 
         fallback_intents.sort(key=lambda intent: intent.dispatch_priority, reverse=True)
         fallback_intent = fallback_intents[0] if fallback_intents else None
