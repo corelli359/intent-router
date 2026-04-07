@@ -104,7 +104,7 @@ const DEFAULT_CUST_ID = "cust_demo";
 const BOOT_MESSAGE: BackendMessage = {
   role: "assistant",
   content: "V2 已就绪。你可以一次输入多个事项、条件依赖，或在执行中补充、修改、取消当前诉求。",
-  created_at: new Date().toISOString(),
+  created_at: "",
 };
 
 const STREAM_STATE_LABELS: Record<StreamState, string> = {
@@ -317,8 +317,16 @@ export default function ChatV2Page() {
   const [streamState, setStreamState] = useState<StreamState>("booting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+
+  function clearReconnectTimer() {
+    if (typeof reconnectTimerRef.current === "number") {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }
 
   function applySnapshot(body: BackendSnapshot) {
     setSnapshot(body);
@@ -352,20 +360,35 @@ export default function ChatV2Page() {
 
   function subscribe(nextSessionId: string) {
     eventSourceRef.current?.close();
+    clearReconnectTimer();
     setStreamState("connecting");
 
     const source = new EventSource(`${API_BASE}/sessions/${nextSessionId}/events`);
     eventSourceRef.current = source;
 
     source.onopen = () => {
+      clearReconnectTimer();
       setStreamState("connected");
     };
     source.onerror = () => {
-      setStreamState("disconnected");
+      if (source.readyState === EventSource.CLOSED) {
+        clearReconnectTimer();
+        setStreamState("disconnected");
+        return;
+      }
+      setStreamState((previous) => (previous === "booting" ? "connecting" : previous));
+      if (reconnectTimerRef.current === null) {
+        reconnectTimerRef.current = window.setTimeout(() => {
+          reconnectTimerRef.current = null;
+          setStreamState((previous) => (previous === "connected" ? previous : "disconnected"));
+        }, 5000);
+      }
     };
 
     const forward = (eventName: string, rawEvent: MessageEvent<string>) => {
       try {
+        clearReconnectTimer();
+        setStreamState("connected");
         const data = JSON.parse(rawEvent.data) as BackendTaskEvent;
         setTimeline((previous) => [
           {
@@ -420,6 +443,7 @@ export default function ChatV2Page() {
     void boot();
     return () => {
       cancelled = true;
+      clearReconnectTimer();
       eventSourceRef.current?.close();
     };
   }, []);
