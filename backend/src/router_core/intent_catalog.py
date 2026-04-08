@@ -66,5 +66,7 @@ class RepositoryIntentCatalog:
             dispatch_priority=record.dispatch_priority,
             request_schema=record.request_schema,
             field_mapping=record.field_mapping,
+            slot_schema=record.slot_schema,
+            graph_build_hints=record.graph_build_hints,
             resume_policy=record.resume_policy,
         )

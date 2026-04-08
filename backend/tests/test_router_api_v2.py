@@ -166,6 +166,7 @@ class _ConditionalPlanner:
 def _test_v2_app(
     *,
     recognizer=None,
+    graph_builder=None,
     planner=None,
     turn_interpreter=None,
 ) -> tuple[object, GraphRouterOrchestrator]:
@@ -174,6 +175,7 @@ def _test_v2_app(
         publish_event=broker.publish,
         intent_catalog=_StaticCatalog(_mock_intents()),
         recognizer=recognizer or _MessageRecognizer(),
+        graph_builder=graph_builder,
         planner=planner or SequentialIntentGraphPlanner(),
         turn_interpreter=turn_interpreter or BasicTurnInterpreter(),
         agent_client=MockStreamingAgentClient(),
@@ -182,6 +184,40 @@ def _test_v2_app(
     app.dependency_overrides[get_orchestrator_v2] = lambda: orchestrator
     app.dependency_overrides[get_event_broker_v2] = lambda: broker
     return app, orchestrator
+
+
+class _SingleNodeConfirmGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="识别到 1 个高风险事项，需要确认后执行",
+            status=GraphStatus.WAITING_CONFIRMATION,
+            actions=[
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ],
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="transfer_money",
+                title="给我媳妇儿转1000元",
+                confidence=0.97,
+                position=0,
+                source_fragment=message,
+                slot_memory={"recipient_name": "我媳妇儿", "amount": "1000"},
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": RecognitionResult(
+                    primary=[IntentMatch(intent_code="transfer_money", confidence=0.97, reason="fixed")],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
 
 
 def test_v2_multi_intent_graph_requires_confirmation_and_runs_sequentially() -> None:
@@ -220,6 +256,28 @@ def test_v2_multi_intent_graph_requires_confirmation_and_runs_sequentially() -> 
                 "completed",
             }
             assert confirmed_snapshot["pending_graph"] is None
+
+    asyncio.run(run())
+
+
+def test_v2_single_node_waiting_confirmation_from_unified_builder_stays_pending() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(graph_builder=_SingleNodeConfirmGraphBuilder())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "给我媳妇儿转1000"},
+            )
+            assert first_turn.status_code == 200
+            snapshot = first_turn.json()["snapshot"]
+            assert snapshot["pending_graph"] is not None
+            assert snapshot["pending_graph"]["status"] == "waiting_confirmation"
+            assert len(snapshot["pending_graph"]["nodes"]) == 1
+            assert snapshot["current_graph"] is None
 
     asyncio.run(run())
 

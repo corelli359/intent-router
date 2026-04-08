@@ -24,6 +24,19 @@ def _payload(*, intent_code: str, status: IntentStatus) -> IntentPayload:
         dispatch_priority=100,
         request_schema={"type": "object"},
         field_mapping={"input": "$message.current"},
+        slot_schema=[
+            {
+                "slot_key": "input",
+                "label": "输入",
+                "description": "示例输入字段",
+                "value_type": "string",
+                "required": True,
+            }
+        ],
+        graph_build_hints={
+            "intent_scope_rule": "单条消息默认只映射一个节点。",
+            "planner_notes": "只有明确并列动作才允许拆分。",
+        },
         resume_policy="resume_same_task",
     )
 
@@ -42,6 +55,7 @@ def test_catalog_keeps_cached_snapshot_until_refresh_now() -> None:
 
     catalog.refresh_now()
     assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
+    assert catalog.list_active()[0].slot_schema[0].slot_key == "input"
 
     repository.update_intent(
         "query_order_status",

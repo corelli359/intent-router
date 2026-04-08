@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, select
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from models.intent import IntentPayload, IntentRecord, IntentStatus
+from models.intent import IntentGraphBuildHints, IntentPayload, IntentRecord, IntentSlotDefinition, IntentStatus
 from persistence.intent_repository import (
     IntentAlreadyExistsError,
     IntentNotFoundError,
@@ -45,6 +45,8 @@ class IntentRow(Base):
     dispatch_priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     request_schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     field_mapping_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    slot_schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    graph_build_hints_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     resume_policy: Mapped[str] = mapped_column(String(128), nullable=False, default="resume_same_task")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -62,6 +64,7 @@ class DatabaseIntentRepository(IntentRepository):
         self._engine = create_engine(self.database_url, future=True, pool_pre_ping=True, connect_args=connect_args)
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False, class_=Session)
         Base.metadata.create_all(self._engine)
+        self._ensure_compatible_schema()
 
     def list_intents(self, status: IntentStatus | None = None) -> list[IntentRecord]:
         with self._session() as session:
@@ -96,6 +99,8 @@ class DatabaseIntentRepository(IntentRepository):
                 dispatch_priority=payload.dispatch_priority,
                 request_schema_json=self._dump_json(payload.request_schema),
                 field_mapping_json=self._dump_json(payload.field_mapping),
+                slot_schema_json=self._dump_json([slot.model_dump(mode="json") for slot in payload.slot_schema]),
+                graph_build_hints_json=self._dump_json(payload.graph_build_hints.model_dump(mode="json")),
                 resume_policy=payload.resume_policy,
                 created_at=now,
                 updated_at=now,
@@ -125,6 +130,8 @@ class DatabaseIntentRepository(IntentRepository):
             row.dispatch_priority = payload.dispatch_priority
             row.request_schema_json = self._dump_json(payload.request_schema)
             row.field_mapping_json = self._dump_json(payload.field_mapping)
+            row.slot_schema_json = self._dump_json([slot.model_dump(mode="json") for slot in payload.slot_schema])
+            row.graph_build_hints_json = self._dump_json(payload.graph_build_hints.model_dump(mode="json"))
             row.resume_policy = payload.resume_policy
             row.updated_at = utcnow()
 
@@ -162,10 +169,34 @@ class DatabaseIntentRepository(IntentRepository):
             dispatch_priority=row.dispatch_priority,
             request_schema=self._load_json_object(row.request_schema_json),
             field_mapping=self._load_json_str_dict(row.field_mapping_json),
+            slot_schema=self._load_slot_schema(getattr(row, "slot_schema_json", "[]")),
+            graph_build_hints=self._load_graph_build_hints(getattr(row, "graph_build_hints_json", "{}")),
             resume_policy=row.resume_policy,
             created_at=self._ensure_aware(row.created_at),
             updated_at=self._ensure_aware(row.updated_at),
         )
+
+    def _ensure_compatible_schema(self) -> None:
+        inspector = inspect(self._engine)
+        if "intent_registry" not in inspector.get_table_names():
+            return
+        existing_columns = {column["name"] for column in inspector.get_columns("intent_registry")}
+        additions = {
+            "slot_schema_json": "[]",
+            "graph_build_hints_json": "{}",
+        }
+        missing = {name: default for name, default in additions.items() if name not in existing_columns}
+        if not missing:
+            return
+
+        with self._engine.begin() as connection:
+            for column_name, default_value in missing.items():
+                connection.execute(
+                    text(
+                        f"ALTER TABLE intent_registry "
+                        f"ADD COLUMN {column_name} TEXT NOT NULL DEFAULT '{default_value}'"
+                    )
+                )
 
     def _dump_json(self, value: object) -> str:
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
@@ -185,6 +216,25 @@ class DatabaseIntentRepository(IntentRepository):
     def _load_json_str_dict(self, raw_value: str) -> dict[str, str]:
         loaded = self._load_json_object(raw_value)
         return {str(key): str(value) for key, value in loaded.items()}
+
+    def _load_slot_schema(self, raw_value: str) -> list[IntentSlotDefinition]:
+        loaded = json.loads(raw_value or "[]")
+        if not isinstance(loaded, list):
+            return []
+        slots: list[IntentSlotDefinition] = []
+        for item in loaded:
+            try:
+                slots.append(IntentSlotDefinition.model_validate(item))
+            except Exception:
+                continue
+        return slots
+
+    def _load_graph_build_hints(self, raw_value: str) -> IntentGraphBuildHints:
+        loaded = self._load_json_object(raw_value)
+        try:
+            return IntentGraphBuildHints.model_validate(loaded)
+        except Exception:
+            return IntentGraphBuildHints()
 
     def _ensure_aware(self, value: datetime) -> datetime:
         if value.tzinfo is None:

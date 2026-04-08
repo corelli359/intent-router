@@ -18,6 +18,18 @@
 
 ## 2026-04-08 Runtime Cleanup
 
+### [x] T28 · V2.1 Unified Graph Builder 设计
+设计：V2 当前首轮新消息要经过 `recognizer + planner` 两次 LLM，语义边界被拆开。V2.1 需要把“意图识别 + graph factory”合并成一次 LLM 输出，并且明确不新增 `/chat/v2.1`，而是在 `/chat/v2` 内通过内部配置切换。
+实现：新增 `docs/v2.1-unified-graph-builder-design.md`，明确 unified builder 的目标、为什么保留独立 `TurnInterpreter`、为什么不新增 V2.1 路由、注册期 `slot_schema / graph_build_hints` 约束，以及 deterministic normalization 与迁移策略。
+
+### [x] T29 · 意图注册期要素约束入模
+设计：slot 约束和建图提示必须是正式的 intent schema，而不是散落在 prompt 里的临时文本。只有这样，LLM 才能在识别阶段就严格区分“槽位”和“新意图”。
+实现：`models.intent`、`admin_api.schemas`、`router_core.domain`、`router_core.intent_catalog`、`router_core.recognizer` 已补充 `slot_schema / graph_build_hints`；`sql_intent_repository` 增加对应 JSON 列与旧表自动补列逻辑，为 V2.1 unified builder 提供正式输入。
+
+### [x] T30 · Unified Builder 骨架接入
+设计：首轮新消息需要可选地走 “一次 LLM 直接产出 GraphDraft”，但等待态解释和重规划先保持现有 `recognizer + turn interpreter + planner` 路径，避免一次性耦死。
+实现：新增 `router_core/v2_graph_builder.py`，包含 `LLMIntentGraphBuilder`、`GraphDraftNormalizer` 和统一 draft schema；`GraphRouterOrchestrator` 已支持 `graph_builder` 可选路径；`router_api/dependencies.py` 新增 `ROUTER_V2_GRAPH_BUILD_MODE=legacy|unified` 装配开关。
+
 ### [x] T24 · 运行时 `mock://` 清理
 设计：`MockStreamingAgentClient` 只能存在于测试支撑层，生产 `StreamingAgentClient` 必须严格限制为 `http://` / `https://`，对非法 scheme fail-closed，而不是偷偷执行 mock。
 实现：`router_core/agent_client.py` 已移除内置 `MockStreamingAgentClient` 和 `mock://` 分流；测试专用 mock client 已迁移到 `backend/tests/support/mock_agent_client.py`；补充了 runtime fail-closed 回归测试，覆盖 V1、V2 和 `StreamingAgentClient` 本身。

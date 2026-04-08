@@ -16,6 +16,10 @@
 
 - `docs/v2-llm-call-flow.md`
 
+如果你要看下一阶段把“意图识别 + graph factory”合并成一次 LLM 的 V2.1 设计，直接看：
+
+- `docs/v2.1-unified-graph-builder-design.md`
+
 ## 2. 当前目标边界
 
 当前 V2 graph runtime 的定位不是“全自动通用工作流引擎”，而是：

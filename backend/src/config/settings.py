@@ -50,6 +50,7 @@ class Settings(BaseModel):
     repository_backend: Literal["memory", "database", "postgres"] = Field(default="memory")
     database_url: str | None = Field(default=None)
     recognizer_backend: Literal["rules", "llm"] = Field(default="llm")
+    router_v2_graph_build_mode: Literal["legacy", "unified"] = Field(default="legacy")
     router_intent_refresh_interval_seconds: float = Field(default=5.0, gt=0)
     router_intent_switch_threshold: float = Field(default=0.80, ge=0, le=1)
     router_agent_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -85,6 +86,7 @@ class Settings(BaseModel):
             repository_backend=os.getenv("ADMIN_REPOSITORY_BACKEND", "memory"),
             database_url=os.getenv("ADMIN_DATABASE_URL") or os.getenv("ADMIN_POSTGRES_DSN"),
             recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "llm"),
+            router_v2_graph_build_mode=os.getenv("ROUTER_V2_GRAPH_BUILD_MODE", "legacy"),
             router_intent_refresh_interval_seconds=float(
                 os.getenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "5")
             ),

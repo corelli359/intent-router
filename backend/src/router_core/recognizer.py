@@ -34,6 +34,8 @@ def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
         "dispatch_priority": intent.dispatch_priority,
         "primary_threshold": intent.primary_threshold,
         "candidate_threshold": intent.candidate_threshold,
+        "slot_schema": [slot.model_dump(mode="json") for slot in intent.slot_schema],
+        "graph_build_hints": intent.graph_build_hints.model_dump(mode="json"),
     }
 
 

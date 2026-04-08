@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, model_validator
 
-from models.intent import IntentRecord, IntentStatus
+from models.intent import IntentGraphBuildHints, IntentRecord, IntentSlotDefinition, IntentStatus
 
 
 class IntentCreateRequest(BaseModel):
@@ -20,6 +20,8 @@ class IntentCreateRequest(BaseModel):
     dispatch_priority: int = Field(default=100, ge=0, le=10_000)
     request_schema: dict[str, Any] = Field(default_factory=dict)
     field_mapping: dict[str, str] = Field(default_factory=dict)
+    slot_schema: list[IntentSlotDefinition] = Field(default_factory=list)
+    graph_build_hints: IntentGraphBuildHints = Field(default_factory=IntentGraphBuildHints)
     resume_policy: str = Field(default="resume_same_task", min_length=1, max_length=128)
 
     @model_validator(mode="after")
@@ -45,6 +47,8 @@ class IntentResponse(BaseModel):
     dispatch_priority: int
     request_schema: dict[str, Any]
     field_mapping: dict[str, str]
+    slot_schema: list[IntentSlotDefinition]
+    graph_build_hints: IntentGraphBuildHints
     resume_policy: str
     created_at: datetime
     updated_at: datetime

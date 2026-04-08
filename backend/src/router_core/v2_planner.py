@@ -57,6 +57,88 @@ class GraphPlanningPayload(BaseModel):
     edges: list[GraphPlanEdgePayload] = Field(default_factory=list)
 
 
+class GraphPlanNormalizer:
+    def normalize(
+        self,
+        *,
+        payload: GraphPlanningPayload,
+        message: str,
+        matches: list[IntentMatch],
+        intents_by_code: dict[str, IntentDefinition],
+    ) -> ExecutionGraphState:
+        confidence_by_code: dict[str, float] = {}
+        for match in matches:
+            confidence_by_code[match.intent_code] = max(confidence_by_code.get(match.intent_code, 0.0), match.confidence)
+
+        allowed_intents = {match.intent_code for match in matches}
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary=payload.summary,
+            status=GraphStatus.WAITING_CONFIRMATION if payload.needs_confirmation or len(payload.nodes) > 1 else GraphStatus.DRAFT,
+            actions=[] if not (payload.needs_confirmation or len(payload.nodes) > 1) else [
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ],
+        )
+
+        for index, node_payload in enumerate(payload.nodes):
+            if node_payload.intent_code not in allowed_intents:
+                continue
+            intent = intents_by_code.get(node_payload.intent_code)
+            if intent is None:
+                continue
+            graph.nodes.append(
+                GraphNodeState(
+                    intent_code=node_payload.intent_code,
+                    title=node_payload.title or intent.name,
+                    confidence=(
+                        node_payload.confidence
+                        if node_payload.confidence is not None
+                        else confidence_by_code.get(node_payload.intent_code, 0.0)
+                    ),
+                    position=index,
+                    source_fragment=node_payload.source_fragment or message,
+                    slot_memory=dict(node_payload.slot_memory),
+                )
+            )
+
+        for edge_payload in payload.edges:
+            if edge_payload.source_index >= len(graph.nodes) or edge_payload.target_index >= len(graph.nodes):
+                continue
+            source = graph.nodes[edge_payload.source_index]
+            target = graph.nodes[edge_payload.target_index]
+            if source.node_id not in target.depends_on:
+                target.depends_on.append(source.node_id)
+            target.relation_reason = edge_payload.label
+            graph.edges.append(
+                GraphEdge(
+                    source_node_id=source.node_id,
+                    target_node_id=target.node_id,
+                    relation_type=edge_payload.relation_type,
+                    label=edge_payload.label,
+                    condition=(
+                        GraphCondition(
+                            source_node_id=source.node_id,
+                            expected_statuses=edge_payload.condition.expected_statuses,
+                            left_key=edge_payload.condition.left_key,
+                            operator=edge_payload.condition.operator,
+                            right_value=edge_payload.condition.right_value,
+                        )
+                        if edge_payload.condition is not None
+                        else None
+                    ),
+                )
+            )
+
+        if not graph.summary:
+            graph.summary = (
+                f"识别到 {len(graph.nodes)} 个事项，已生成动态执行图"
+                if len(graph.nodes) > 1
+                else f"识别到事项：{graph.nodes[0].title}" if graph.nodes else "未识别到明确事项"
+            )
+        return graph
+
+
 class TurnDecisionPayload(BaseModel):
     action: Literal[
         "resume_current",
@@ -213,6 +295,7 @@ class LLMIntentGraphPlanner:
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or SequentialIntentGraphPlanner()
+        self.normalizer = GraphPlanNormalizer()
         self.prompt = build_v2_graph_planner_prompt(
             system_prompt=system_prompt_template,
             human_prompt=human_prompt_template,
@@ -253,6 +336,13 @@ class LLMIntentGraphPlanner:
                                     "name": intents_by_code[match.intent_code].name,
                                     "description": intents_by_code[match.intent_code].description,
                                     "examples": intents_by_code[match.intent_code].examples,
+                                    "slot_schema": [
+                                        slot.model_dump(mode="json")
+                                        for slot in intents_by_code[match.intent_code].slot_schema
+                                    ],
+                                    "graph_build_hints": intents_by_code[match.intent_code].graph_build_hints.model_dump(
+                                        mode="json"
+                                    ),
                                 },
                             }
                             for match in matches
@@ -274,7 +364,7 @@ class LLMIntentGraphPlanner:
                 long_term_memory=long_term_memory,
             )
 
-        graph = self._to_graph(
+        graph = self.normalizer.normalize(
             payload=payload,
             message=message,
             matches=matches,
@@ -289,83 +379,6 @@ class LLMIntentGraphPlanner:
                 long_term_memory=long_term_memory,
             )
         return graph
-
-    def _to_graph(
-        self,
-        *,
-        payload: GraphPlanningPayload,
-        message: str,
-        matches: list[IntentMatch],
-        intents_by_code: dict[str, IntentDefinition],
-    ) -> ExecutionGraphState:
-        confidence_by_code: dict[str, float] = {}
-        for match in matches:
-            confidence_by_code[match.intent_code] = max(confidence_by_code.get(match.intent_code, 0.0), match.confidence)
-
-        allowed_intents = {match.intent_code for match in matches}
-        graph = ExecutionGraphState(
-            source_message=message,
-            summary=payload.summary,
-            status=GraphStatus.WAITING_CONFIRMATION if payload.needs_confirmation or len(payload.nodes) > 1 else GraphStatus.DRAFT,
-            actions=[] if not (payload.needs_confirmation or len(payload.nodes) > 1) else [
-                GraphAction(code="confirm_graph", label="开始执行"),
-                GraphAction(code="cancel_graph", label="取消"),
-            ],
-        )
-
-        for index, node_payload in enumerate(payload.nodes):
-            if node_payload.intent_code not in allowed_intents:
-                continue
-            intent = intents_by_code.get(node_payload.intent_code)
-            if intent is None:
-                continue
-            graph.nodes.append(
-                GraphNodeState(
-                    intent_code=node_payload.intent_code,
-                    title=node_payload.title or intent.name,
-                    confidence=node_payload.confidence if node_payload.confidence is not None else confidence_by_code.get(node_payload.intent_code, 0.0),
-                    position=index,
-                    source_fragment=node_payload.source_fragment or message,
-                    slot_memory=dict(node_payload.slot_memory),
-                )
-            )
-
-        for edge_payload in payload.edges:
-            if edge_payload.source_index >= len(graph.nodes) or edge_payload.target_index >= len(graph.nodes):
-                continue
-            source = graph.nodes[edge_payload.source_index]
-            target = graph.nodes[edge_payload.target_index]
-            if source.node_id not in target.depends_on:
-                target.depends_on.append(source.node_id)
-            target.relation_reason = edge_payload.label
-            graph.edges.append(
-                GraphEdge(
-                    source_node_id=source.node_id,
-                    target_node_id=target.node_id,
-                    relation_type=edge_payload.relation_type,
-                    label=edge_payload.label,
-                    condition=(
-                        GraphCondition(
-                            source_node_id=source.node_id,
-                            expected_statuses=edge_payload.condition.expected_statuses,
-                            left_key=edge_payload.condition.left_key,
-                            operator=edge_payload.condition.operator,
-                            right_value=edge_payload.condition.right_value,
-                        )
-                        if edge_payload.condition is not None
-                        else None
-                    ),
-                )
-            )
-
-        if not graph.summary:
-            graph.summary = (
-                f"识别到 {len(graph.nodes)} 个事项，已生成动态执行图"
-                if len(graph.nodes) > 1
-                else f"识别到事项：{graph.nodes[0].title}" if graph.nodes else "未识别到明确事项"
-            )
-        return graph
-
 
 class LLMGraphTurnInterpreter:
     def __init__(

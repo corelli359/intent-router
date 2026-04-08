@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -24,6 +25,23 @@ def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, 
         dispatch_priority=100,
         request_schema={"type": "object", "required": ["input"]},
         field_mapping={"input": "$message.current"},
+        slot_schema=[
+            {
+                "slot_key": "input",
+                "label": "输入",
+                "description": "必填输入参数",
+                "value_type": "string",
+                "required": True,
+                "aliases": ["输入"],
+                "examples": ["foo"],
+            }
+        ],
+        graph_build_hints={
+            "intent_scope_rule": "默认单节点执行。",
+            "planner_notes": "除非用户明确表达多个动作，否则不要拆图。",
+            "confirm_policy": "auto",
+            "max_nodes_per_message": 4,
+        },
         resume_policy="resume_same_task",
     )
 
@@ -41,3 +59,60 @@ def test_database_repository_persists_records_across_instances(tmp_path: Path) -
     assert [intent.intent_code for intent in all_intents] == ["query_order_status", "fallback_general"]
     assert [intent.intent_code for intent in active_intents] == ["query_order_status", "fallback_general"]
     assert reloaded.get_intent("fallback_general").is_fallback is True
+    assert reloaded.get_intent("query_order_status").slot_schema[0].slot_key == "input"
+    assert reloaded.get_intent("query_order_status").graph_build_hints.max_nodes_per_message == 4
+
+
+def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy-intent-router.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE intent_registry (
+                intent_code VARCHAR(128) PRIMARY KEY,
+                name VARCHAR(256) NOT NULL,
+                description TEXT NOT NULL,
+                examples_json TEXT NOT NULL DEFAULT '[]',
+                agent_url VARCHAR(2048) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                is_fallback BOOLEAN NOT NULL DEFAULT 0,
+                dispatch_priority INTEGER NOT NULL DEFAULT 100,
+                request_schema_json TEXT NOT NULL DEFAULT '{}',
+                field_mapping_json TEXT NOT NULL DEFAULT '{}',
+                resume_policy VARCHAR(128) NOT NULL DEFAULT 'resume_same_task',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO intent_registry (
+                intent_code, name, description, examples_json, agent_url, status, is_fallback,
+                dispatch_priority, request_schema_json, field_mapping_json, resume_policy, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                "transfer_money",
+                "transfer_money name",
+                "transfer_money description",
+                '["transfer example"]',
+                "https://agent.example.com/transfer_money",
+                "active",
+                0,
+                100,
+                '{"type":"object"}',
+                '{"input":"$message.current"}',
+                "resume_same_task",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    repository = DatabaseIntentRepository(f"sqlite:///{db_path}")
+    record = repository.get_intent("transfer_money")
+
+    assert record.slot_schema == []
+    assert record.graph_build_hints.confirm_policy.value == "auto"

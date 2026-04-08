@@ -6,6 +6,8 @@ from langchain_core.prompts import ChatPromptTemplate
 DEFAULT_RECOGNIZER_SYSTEM_PROMPT = (
     "你是一个多意图识别器。"
     "只能从已注册 intent 中选择，不能虚构新的 intent_code。"
+    "每个 intent 都会附带 slot_schema 和 graph_build_hints。"
+    "你必须严格利用这些注册约束，判断哪些内容只是该 intent 的槽位，哪些才是新的独立 intent。"
     "你可以返回多个意图，但必须保持谨慎。"
     "只有当用户在当前这条消息里明确表达了两个或以上彼此独立的业务目标时，才返回多个 intent。"
     "单一业务动作里附带的对象、金额、时间、地点、卡号、订单号等要素只是槽位，不是新的 intent。"
@@ -27,6 +29,7 @@ DEFAULT_RECOGNIZER_HUMAN_PROMPT = (
 DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "你是一个多意图执行图规划器。"
     "输入里已经给出了本轮已识别出的 intent 候选，你只能使用这些 intent_code。"
+    "每个 intent 定义里包含 slot_schema 和 graph_build_hints，你必须严格遵守。"
     "你的任务是把用户当前诉求规划为一个动态执行图。"
     "你必须输出 JSON，不能输出解释。"
     "如果同一个 intent 在一句话里出现多次，可以生成多个节点。"
@@ -50,6 +53,72 @@ DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT = (
     "{{\n"
     '  "summary": "string",\n'
     '  "needs_confirmation": true,\n'
+    '  "nodes": [\n'
+    "    {{\n"
+    '      "intent_code": "string",\n'
+    '      "title": "string",\n'
+    '      "confidence": 0.0,\n'
+    '      "source_fragment": "string | null",\n'
+    '      "slot_memory": {{}}\n'
+    "    }}\n"
+    "  ],\n"
+    '  "edges": [\n'
+    "    {{\n"
+    '      "source_index": 0,\n'
+    '      "target_index": 1,\n'
+    '      "relation_type": "sequential | conditional | parallel",\n'
+    '      "label": "string | null",\n'
+    '      "condition": {{\n'
+    '        "expected_statuses": ["completed"],\n'
+    '        "left_key": "string | null",\n'
+    '        "operator": "> | >= | == | < | <= | null",\n'
+    '        "right_value": 0\n'
+    "      }}\n"
+    "    }}\n"
+    "  ]\n"
+    "}}"
+)
+
+DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
+    "你是一个多意图识别与执行图构建器。"
+    "你必须在一次输出里同时完成两件事："
+    "第一，识别当前消息命中的 primary_intents 和 candidate_intents；"
+    "第二，把 primary_intents 直接构造成执行图。"
+    "你只能从已注册 intent 中选择，不能虚构新的 intent_code。"
+    "每个 intent 都会附带 slot_schema、request_schema、field_mapping 和 graph_build_hints。"
+    "slot_schema 是强约束：对象、金额、卡号、手机号后4位、订单号、时间等要素通常是槽位，不是新的 intent。"
+    "如果一句话只表达了一个完整业务动作，即使同时给了多个槽位，也只能输出一个 primary intent 和一个 graph node。"
+    "只有当用户明确表达多个独立目标、重复动作，或者存在明显的顺序/并行/条件关系时，才输出多个 primary intents 和多个 nodes。"
+    "如果某个 intent 只是缺少槽位，仍然应该保留一个节点，等待下游 agent 多轮补充，不得因为缺槽而拆成多个节点。"
+    "candidate_intents 只用于保留弱歧义，不得把同一业务动作的泛化解释塞进 candidate_intents。"
+    "needs_confirmation 只在明显多节点、条件分支复杂，或 graph_build_hints 明确要求确认时设为 true。"
+    "你必须输出 JSON，不能输出解释。"
+)
+
+DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT = (
+    "当前用户消息:\n{message}\n\n"
+    "最近对话(JSON):\n{recent_messages_json}\n\n"
+    "长期记忆(JSON):\n{long_term_memory_json}\n\n"
+    "已有识别提示(JSON，可为空):\n{recognition_hint_json}\n\n"
+    "已注册意图清单(JSON):\n{intents_json}\n\n"
+    "请输出 JSON:\n"
+    "{{\n"
+    '  "summary": "string",\n'
+    '  "needs_confirmation": false,\n'
+    '  "primary_intents": [\n'
+    "    {{\n"
+    '      "intent_code": "string",\n'
+    '      "confidence": 0.0,\n'
+    '      "reason": "string"\n'
+    "    }}\n"
+    "  ],\n"
+    '  "candidate_intents": [\n'
+    "    {{\n"
+    '      "intent_code": "string",\n'
+    '      "confidence": 0.0,\n'
+    '      "reason": "string"\n'
+    "    }}\n"
+    "  ],\n"
     '  "nodes": [\n'
     "    {{\n"
     '      "intent_code": "string",\n'
@@ -116,4 +185,8 @@ def build_v2_graph_planner_prompt(*, system_prompt: str, human_prompt: str) -> C
 
 
 def build_v2_turn_interpreter_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
+
+
+def build_v2_unified_graph_builder_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)

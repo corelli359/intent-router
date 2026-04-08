@@ -15,6 +15,7 @@ from router_core.llm_client import LangChainLLMClient
 from router_core.orchestrator import RouterOrchestrator, RouterOrchestratorConfig
 from router_core.prompt_templates import DEFAULT_RECOGNIZER_HUMAN_PROMPT, DEFAULT_RECOGNIZER_SYSTEM_PROMPT
 from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer
+from router_core.v2_graph_builder import LLMIntentGraphBuilder
 from router_core.v2_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
 from router_core.v2_planner import (
     BasicTurnInterpreter,
@@ -90,6 +91,16 @@ def build_router_runtime() -> RouterRuntime:
         publish_event=event_broker_v2.publish,
         intent_catalog=intent_catalog,
         recognizer=recognizer,
+        graph_builder=(
+            LLMIntentGraphBuilder(
+                llm_client,
+                model=settings.llm_model,
+                fallback_recognizer=recognizer,
+                fallback_planner=SequentialIntentGraphPlanner(),
+            )
+            if llm_client is not None and settings.router_v2_graph_build_mode == "unified"
+            else None
+        ),
         planner=(
             LLMIntentGraphPlanner(
                 llm_client,

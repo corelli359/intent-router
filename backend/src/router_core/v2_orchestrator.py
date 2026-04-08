@@ -29,6 +29,7 @@ from router_core.v2_domain import (
     GraphSessionState,
     GraphStatus,
 )
+from router_core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
 from router_core.v2_planner import (
     BasicTurnInterpreter,
     IntentGraphPlanner,
@@ -111,6 +112,7 @@ class GraphRouterOrchestrator:
         session_store: GraphSessionStore | None = None,
         intent_catalog: Any | None = None,
         recognizer: IntentRecognizer | None = None,
+        graph_builder: IntentGraphBuilder | None = None,
         planner: IntentGraphPlanner | None = None,
         turn_interpreter: TurnInterpreter | None = None,
         context_builder: ContextBuilder | None = None,
@@ -121,6 +123,7 @@ class GraphRouterOrchestrator:
         self.session_store = session_store or GraphSessionStore()
         self.intent_catalog = intent_catalog
         self.recognizer = recognizer or _NoopIntentRecognizer()
+        self.graph_builder = graph_builder
         self.planner = planner or SequentialIntentGraphPlanner()
         self.turn_interpreter = turn_interpreter or BasicTurnInterpreter()
         self.context_builder = context_builder or ContextBuilder()
@@ -205,20 +208,34 @@ class GraphRouterOrchestrator:
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
     ) -> None:
-        if recognition is None:
+        graph: ExecutionGraphState | None = None
+        if recognition is None and (recent_messages is None or long_term_memory is None):
             context = self._build_session_context(session)
+            recent_messages = context["recent_messages"]
+            long_term_memory = context["long_term_memory"]
+        else:
+            recent_messages = recent_messages or []
+            long_term_memory = long_term_memory or []
+
+        if self.graph_builder is not None:
+            build_result = await self._build_graph_from_message(
+                session,
+                content,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+                recognition=recognition,
+                emit_events=True,
+            )
+            recognition = build_result.recognition
+            graph = build_result.graph
+        elif recognition is None:
             recognition = await self._recognize_message(
                 session,
                 content,
-                recent_messages=context["recent_messages"],
-                long_term_memory=context["long_term_memory"],
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
                 emit_events=True,
             )
-        else:
-            if recent_messages is None:
-                recent_messages = []
-            if long_term_memory is None:
-                long_term_memory = []
         session.candidate_intents = recognition.candidates
         active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
         matches = [match for match in recognition.primary if match.intent_code in active_intents]
@@ -231,16 +248,18 @@ class GraphRouterOrchestrator:
             matches = [type("Match", (), {"intent_code": fallback_intent.intent_code, "confidence": 0.0})()]
             active_intents[fallback_intent.intent_code] = fallback_intent
 
-        graph = await self.planner.plan(
-            message=content,
-            matches=matches,
-            intents_by_code=active_intents,
-            recent_messages=recent_messages,
-            long_term_memory=long_term_memory,
-        )
-        if len(graph.nodes) > 1:
+        if graph is None:
+            graph = await self.planner.plan(
+                message=content,
+                matches=matches,
+                intents_by_code=active_intents,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+            )
+        if graph.status == GraphStatus.WAITING_CONFIRMATION:
             graph.touch(GraphStatus.WAITING_CONFIRMATION)
             session.pending_graph = graph
+            session.current_graph = None
             session.active_node_id = None
             await self._publish_pending_graph(session)
             return
@@ -317,6 +336,77 @@ class GraphRouterOrchestrator:
                 )
             )
         return recognition
+
+    async def _build_graph_from_message(
+        self,
+        session: GraphSessionState,
+        content: str,
+        *,
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        recognition: RecognitionResult | None,
+        emit_events: bool,
+    ) -> GraphBuildResult:
+        if emit_events:
+            await self._publish(
+                TaskEvent(
+                    event="graph_builder.started",
+                    task_id="graph_builder",
+                    session_id=session.session_id,
+                    intent_code="graph_builder",
+                    status=TaskStatus.RUNNING,
+                    message="开始统一识别与建图",
+                    payload={"cust_id": session.cust_id},
+                )
+            )
+
+        async def publish_graph_builder_delta(delta: str) -> None:
+            if not emit_events or not delta:
+                return
+            await self._publish(
+                TaskEvent(
+                    event="graph_builder.delta",
+                    task_id="graph_builder",
+                    session_id=session.session_id,
+                    intent_code="graph_builder",
+                    status=TaskStatus.RUNNING,
+                    message=delta,
+                    payload={"cust_id": session.cust_id},
+                )
+            )
+
+        if self.graph_builder is None:
+            raise RuntimeError("graph_builder is not configured")
+        result = await self.graph_builder.build(
+            message=content,
+            intents=self.intent_catalog.list_active(),
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+            recognition=recognition,
+            on_delta=publish_graph_builder_delta if emit_events else None,
+        )
+        if emit_events:
+            await self._publish(
+                TaskEvent(
+                    event="graph_builder.completed",
+                    task_id="graph_builder",
+                    session_id=session.session_id,
+                    intent_code="graph_builder",
+                    status=TaskStatus.COMPLETED,
+                    message="统一识别与建图完成",
+                    payload={
+                        "cust_id": session.cust_id,
+                        "primary": [match.model_dump() for match in result.recognition.primary],
+                        "candidates": [match.model_dump() for match in result.recognition.candidates],
+                        "graph": self._graph_payload(
+                            result.graph,
+                            include_actions=result.graph.status == GraphStatus.WAITING_CONFIRMATION,
+                            pending=result.graph.status == GraphStatus.WAITING_CONFIRMATION,
+                        ),
+                    },
+                )
+            )
+        return result
 
     def _activate_graph(self, graph: ExecutionGraphState) -> None:
         graph.actions = []

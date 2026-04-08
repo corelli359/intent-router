@@ -15,9 +15,12 @@ from router_core.prompt_templates import (  # noqa: E402
     DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT,
     DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT,
     DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT,
+    DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+    DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
     build_recognizer_prompt,
     build_v2_graph_planner_prompt,
     build_v2_turn_interpreter_prompt,
+    build_v2_unified_graph_builder_prompt,
 )
 
 
@@ -35,8 +38,9 @@ def test_recognizer_prompt_explicitly_prevents_single_action_over_split() -> Non
     )
 
     assert len(messages) == 2
-    assert "我要给我弟弟转500" in messages[0].content
     assert "只返回一个 intent" in messages[0].content
+    assert "我要给我弟弟转500" in messages[1].content
+    assert "已注册意图清单" in messages[1].content
 
 
 def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
@@ -53,10 +57,10 @@ def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
     )
 
     assert len(messages) == 2
+    assert "needs_confirmation=false" in messages[0].content
+    assert "slot_schema 和 graph_build_hints" in messages[0].content
     assert "summary" in messages[1].content
     assert '"slot_memory": {}' in messages[1].content
-    assert "我要给我弟弟转500" in messages[0].content
-    assert "needs_confirmation=false" in messages[0].content
 
 
 def test_v2_turn_interpreter_prompt_accepts_expected_variables() -> None:
@@ -78,3 +82,24 @@ def test_v2_turn_interpreter_prompt_accepts_expected_variables() -> None:
     assert len(messages) == 2
     assert "resume_current" in messages[1].content
     assert '"target_intent_code": "string | null"' in messages[1].content
+
+
+def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
+    prompt = build_v2_unified_graph_builder_prompt(
+        system_prompt=DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+    )
+
+    messages = prompt.format_messages(
+        message="帮我查一下余额，如果超过5000，就给我媳妇儿转1000",
+        recent_messages_json="[]",
+        long_term_memory_json='["历史上收款人常见为我媳妇儿"]',
+        recognition_hint_json="null",
+        intents_json="[]",
+    )
+
+    assert len(messages) == 2
+    assert "slot_schema 是强约束" in messages[0].content
+    assert '"primary_intents"' in messages[1].content
+    assert '"candidate_intents"' in messages[1].content
+    assert '"edges"' in messages[1].content
