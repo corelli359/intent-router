@@ -40,6 +40,8 @@ DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "需要用户确认时，把 needs_confirmation 设为 true。"
     "edge 的 relation_type 只能是 sequential、conditional、parallel。"
     "condition 必须用结构化字段表达：left_key、operator、right_value。"
+    "如果条件判断依赖的是余额、账单、汇率等状态，而当前条件源节点本身不直接产出该字段，"
+    "你必须先补出能够产出该字段的隐含节点，再把条件挂到那个节点上。"
     "source_fragment 应尽量截取与该节点最相关的原始片段，方便下游 agent 读取。"
     "slot_memory 只允许填明显来自当前用户消息的结构化提示，不允许凭空猜测。"
 )
@@ -90,6 +92,8 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
     "如果一句话只表达了一个完整业务动作，即使同时给了多个槽位，也只能输出一个 primary intent 和一个 graph node。"
     "只有当用户明确表达多个独立目标、重复动作，或者存在明显的顺序/并行/条件关系时，才输出多个 primary intents 和多个 nodes。"
     "如果某个 intent 只是缺少槽位，仍然应该保留一个节点，等待下游 agent 多轮补充，不得因为缺槽而拆成多个节点。"
+    "如果条件依赖判断的是余额、账单、汇率等状态，而当前条件源节点本身不直接产出该字段，"
+    "必须补出能够产出该字段的隐含节点，再把条件边挂到那个隐含节点。"
     "node.slot_memory 只允许填写当前这条用户消息里能够直接落地的结构化值，不允许把 recent_messages 或 long_term_memory 里的敏感槽位直接写进 slot_memory。"
     "如果你判断某个节点只有复用历史槽位才能直接执行，应把 needs_confirmation 设为 true，并在 summary 里明确提示存在历史信息复用。"
     "candidate_intents 只用于保留弱歧义，不得把同一业务动作的泛化解释塞进 candidate_intents。"

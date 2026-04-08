@@ -93,7 +93,11 @@ class GasBillPaymentAgentService:
             gas_account_number=self._normalize_account_number(request.gas.account_number),
             amount=normalize_amount(request.payment.amount),
         )
-        resolution = await self._resolve(request, seeded)
+        direct_resolution = self._finalize_resolution(seeded, GasBillPaymentResolution())
+        if not request.input.strip() and direct_resolution.has_enough_information:
+            resolution = direct_resolution
+        else:
+            resolution = await self._resolve(request, seeded)
         slot_memory = self._slot_memory(resolution)
         missing_fields = self._missing_fields(resolution)
 

@@ -311,3 +311,31 @@ def test_account_balance_http_app_returns_router_payload() -> None:
         assert payload["slot_memory"]["phone_last_four"] == "1234"
 
     asyncio.run(run())
+
+
+def test_account_balance_service_executes_directly_with_prefilled_slots_and_empty_input() -> None:
+    async def run() -> None:
+        service = AccountBalanceAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "card_number": None,
+                    "phone_last4": None,
+                    "has_enough_information": False,
+                    "ask_message": "不应调用 LLM 解析",
+                }
+            )
+        )
+        response = await service.handle(
+            AccountBalanceAgentRequest(
+                sessionId="session_balance_direct_001",
+                taskId="task_balance_direct_001",
+                input="",
+                account={"cardNumber": "6222021234567890", "phoneLast4": "1234"},
+                conversation={"recentMessages": [], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.payload["balance"] == 8000
+
+    asyncio.run(run())

@@ -175,6 +175,10 @@ class MockStreamingAgentClient:
         )
 
     def _handle_exchange_forex(self, task: Task, user_input: str) -> AgentStreamChunk:
+        if "source_currency" in task.slot_memory and "sell_currency" not in task.slot_memory:
+            task.slot_memory["sell_currency"] = str(task.slot_memory["source_currency"])
+        if "target_currency" in task.slot_memory and "buy_currency" not in task.slot_memory:
+            task.slot_memory["buy_currency"] = str(task.slot_memory["target_currency"])
         upper_text = user_input.upper()
         if "人民币" in user_input or "CNY" in upper_text:
             task.slot_memory.setdefault("sell_currency", "CNY")

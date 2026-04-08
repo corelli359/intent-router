@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from router_core.domain import ChatMessage, IntentMatch, SESSION_TTL, Task, utc_now
 
@@ -165,3 +165,18 @@ class GraphRouterSnapshot(BaseModel):
     pending_graph: ExecutionGraphState | None = None
     active_node_id: str | None = None
     expires_at: datetime
+
+
+class GuidedSelectionIntent(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    intent_code: str = Field(alias="intentCode")
+    title: str | None = None
+    source_fragment: str | None = Field(default=None, alias="sourceFragment")
+    slot_memory: dict[str, Any] = Field(default_factory=dict, alias="slotMemory")
+
+
+class GuidedSelectionPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    selected_intents: list[GuidedSelectionIntent] = Field(default_factory=list, alias="selectedIntents")

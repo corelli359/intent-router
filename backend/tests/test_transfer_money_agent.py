@@ -395,3 +395,39 @@ def test_transfer_money_http_app_returns_router_payload() -> None:
         assert payload["slot_memory"]["amount"] == "3000"
 
     asyncio.run(run())
+
+
+def test_transfer_money_service_executes_directly_with_prefilled_slots_and_empty_input() -> None:
+    async def run() -> None:
+        service = TransferMoneyAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "recipient_name": None,
+                    "recipient_card_number": None,
+                    "recipient_phone_last4": None,
+                    "amount": None,
+                    "has_enough_information": False,
+                    "ask_message": "不应调用 LLM 解析",
+                }
+            )
+        )
+        response = await service.handle(
+            TransferMoneyAgentRequest(
+                sessionId="session_transfer_direct_001",
+                taskId="task_transfer_direct_001",
+                input="",
+                recipient={
+                    "name": "李四",
+                    "cardNumber": "6222020100049999999",
+                    "phoneLast4": "1234",
+                },
+                transfer={"amount": "3000"},
+                conversation={"recentMessages": [], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.payload["business_status"] == "success"
+        assert response.payload["recipient_name"] == "李四"
+
+    asyncio.run(run())

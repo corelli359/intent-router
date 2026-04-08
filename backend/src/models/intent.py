@@ -62,6 +62,7 @@ class IntentGraphBuildHints(BaseModel):
     planner_notes: str = Field(default="", max_length=2000)
     single_node_examples: list[str] = Field(default_factory=list)
     multi_node_examples: list[str] = Field(default_factory=list)
+    provides_context_keys: list[str] = Field(default_factory=list)
     confirm_policy: GraphConfirmPolicy = GraphConfirmPolicy.AUTO
     max_nodes_per_message: int = Field(default=4, ge=1, le=32)
 

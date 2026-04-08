@@ -108,3 +108,30 @@ def apply_history_slot_values(
         merged[slot_def.slot_key] = value
         injected_slot_keys.append(slot_def.slot_key)
     return merged, injected_slot_keys
+
+
+def normalize_structured_slot_memory(
+    *,
+    slot_memory: dict[str, Any],
+    slot_schema: Iterable[IntentSlotDefinition],
+) -> dict[str, Any]:
+    if not slot_memory:
+        return {}
+
+    normalized: dict[str, Any] = {}
+    slot_schema_by_key = {slot.slot_key: slot for slot in slot_schema}
+    for slot_key, raw_value in slot_memory.items():
+        slot_def = slot_schema_by_key.get(slot_key)
+        if isinstance(raw_value, str):
+            cleaned = raw_value.strip()
+            if not cleaned:
+                continue
+            normalized[slot_key] = cleaned
+            continue
+        if raw_value is None:
+            continue
+        if slot_def is None:
+            normalized[slot_key] = raw_value
+            continue
+        normalized[slot_key] = raw_value
+    return normalized

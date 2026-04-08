@@ -25,6 +25,17 @@
 
 这 3 类不是同一次请求，也不是同一个 prompt。
 
+但当前 V2 还有一条容易被忽略的首轮入口：
+
+- 如果请求直接携带 `guidedSelection`
+- Router 会跳过 `recognizer` 和 `graph planner`
+- 直接按 selected intents 建图
+
+所以本文实际讨论的是两种首轮模式：
+
+- `free dialog`：会发生 Router 侧 LLM 调用
+- `guided selection`：首轮是 **0 次 Router 侧 LLM**
+
 最容易误解的一点是：
 
 - `graph planner` 不是“recognize 的一部分”
@@ -36,6 +47,7 @@
 
 `GraphRouterOrchestrator.handle_user_message()` 当前是按状态分流的：
 
+- 如果有 `guidedSelection`，先走 `guided_selection` 直达路径
 - 如果有 `pending_graph`，走 `pending_graph` 自然语言处理
 - 否则如果有 `waiting_node`，走 `waiting_node` 自然语言处理
 - 否则走“首轮新消息 / 新建图”处理
@@ -55,9 +67,14 @@
 flowchart TD
     A[用户输入进入 /api/router/v2] --> B{当前状态}
 
-    B -->|无 pending_graph\n无 waiting_node| C[新消息路径]
+    B -->|携带 guidedSelection| GS[guided_selection 路径]
+    B -->|无 pending_graph\n无 waiting_node| C[free dialog 新消息路径]
     B -->|有 waiting_node| D[waiting_node 路径]
     B -->|有 pending_graph| E[pending_graph 自然语言路径]
+
+    GS --> GS1[0 次 Router LLM]
+    GS1 --> GS2[直接创建 graph]
+    GS2 --> GS3[进入节点调度]
 
     C --> C1[LLM #1: IntentRecognizer]
     C1 --> C2[LLM #2: IntentGraphPlanner]
@@ -90,6 +107,7 @@ flowchart TD
 
 适用前提：
 
+- 当前没有 `guidedSelection`
 - 当前没有 `pending_graph`
 - 当前没有 `waiting_node`
 
@@ -117,6 +135,28 @@ flowchart TD
 
 - **首轮建图 = 2 次 Router 侧 LLM**
 - `recognizer` 和 `planner` 不是同一次
+
+### 4.1 Guided Selection 首轮路径
+
+如果请求体里直接带了：
+
+- `guidedSelection.selectedIntents[]`
+
+那么 Router 会直接：
+
+1. 校验 selected intents 是否存在
+2. 归一化每个 selected intent 的 `slotMemory`
+3. 按已选顺序生成 graph nodes / edges
+4. 立刻进入 graph runtime
+
+因此这条路径是：
+
+- **0 次 Router 侧 LLM**
+
+注意：
+
+- 这不等于整个系统 0 次 LLM
+- 如果某个节点槽位不完整，对应 agent 仍可能进入自己的多轮补充或 LLM 槽位解析
 
 ```mermaid
 sequenceDiagram

@@ -437,6 +437,138 @@ textarea {
   flex-wrap: wrap;
 }
 
+.guided-section {
+  gap: 14px;
+}
+
+.guided-copy {
+  max-width: 42ch;
+}
+
+.guided-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.guided-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+}
+
+.guided-card.is-selected {
+  border-color: rgba(227, 150, 83, 0.36);
+  box-shadow: inset 0 0 0 1px rgba(227, 150, 83, 0.12);
+}
+
+.guided-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.guided-card-head strong,
+.guided-selection-meta strong {
+  display: block;
+}
+
+.guided-card-head small {
+  color: var(--muted);
+}
+
+.guided-selection-meta {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.guided-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.guided-field,
+.guided-note {
+  display: grid;
+  gap: 8px;
+}
+
+.guided-field span,
+.guided-note span {
+  font-size: 0.82rem;
+  color: rgba(255, 236, 213, 0.84);
+}
+
+.guided-field input,
+.guided-note textarea {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(102, 121, 145, 0.34);
+  background: rgba(7, 12, 18, 0.72);
+  color: var(--ink);
+  padding: 12px 14px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.guided-note textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.guided-field input::placeholder,
+.guided-note textarea::placeholder {
+  color: rgba(149, 165, 184, 0.72);
+}
+
+.guided-field input:focus,
+.guided-note textarea:focus {
+  outline: none;
+  border-color: rgba(227, 150, 83, 0.5);
+  box-shadow: 0 0 0 4px rgba(227, 150, 83, 0.09);
+  background: rgba(10, 16, 24, 0.84);
+}
+
+.guided-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.guided-actions button:last-child {
+  border-radius: 999px;
+  min-width: 160px;
+  padding: 11px 16px;
+  border: 1px solid rgba(251, 210, 174, 0.62);
+  background: linear-gradient(180deg, rgba(233, 156, 89, 0.98), rgba(202, 116, 46, 0.98));
+  color: #1f1208;
+  font-weight: 700;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.guided-actions button:last-child:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.16);
+}
+
+.guided-actions button:last-child:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  transform: none;
+}
+
 .plan-actions button {
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -676,6 +808,8 @@ textarea {
 }
 
 .toggle-button:focus-visible,
+.guided-field input:focus-visible,
+.guided-note textarea:focus-visible,
 .composer textarea:focus-visible,
 .composer button:focus-visible {
   outline: 2px solid rgba(249, 205, 169, 0.72);
@@ -791,11 +925,24 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .guided-field-grid {
+    grid-template-columns: 1fr;
+  }
+
   .message-list {
     min-height: 320px;
   }
 
   .message {
+    width: 100%;
+  }
+
+  .guided-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .guided-actions button {
     width: 100%;
   }
 

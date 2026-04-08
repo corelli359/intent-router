@@ -21,18 +21,26 @@ from router_core.domain import (
 from router_core.llm_client import llm_exception_is_retryable
 from router_core.memory_store import LongTermMemoryStore
 from router_core.recognizer import IntentRecognizer, RecognitionResult
-from router_core.slot_grounding import apply_history_slot_values, normalize_slot_memory
+from router_core.slot_grounding import (
+    apply_history_slot_values,
+    normalize_slot_memory,
+    normalize_structured_slot_memory,
+)
 from router_core.v2_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
+    GraphEdge,
+    GraphEdgeType,
     GraphNodeState,
     GraphNodeSkipReason,
     GraphNodeStatus,
     GraphRouterSnapshot,
     GraphSessionState,
     GraphStatus,
+    GuidedSelectionPayload,
 )
+from router_core.v2_graph_semantics import repair_unexecutable_condition_edges, resolve_output_value
 from router_core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
 from router_core.v2_planner import (
     BasicTurnInterpreter,
@@ -165,22 +173,36 @@ class GraphRouterOrchestrator:
             expires_at=session.expires_at,
         )
 
-    async def handle_user_message(self, session_id: str, cust_id: str, content: str) -> GraphRouterSnapshot:
+    async def handle_user_message(
+        self,
+        session_id: str,
+        cust_id: str,
+        content: str,
+        *,
+        guided_selection: GuidedSelectionPayload | None = None,
+    ) -> GraphRouterSnapshot:
         session = self.session_store.get_or_create(session_id, cust_id)
-        session.messages.append(ChatMessage(role="user", content=content))
+        message_content = content.strip()
+        display_content = message_content or self._guided_selection_display_content(guided_selection)
+        if display_content:
+            session.messages.append(ChatMessage(role="user", content=display_content))
         session.touch()
 
         try:
+            if guided_selection is not None:
+                await self._handle_guided_selection_turn(session, content=message_content, guided_selection=guided_selection)
+                return self.snapshot(session.session_id)
+
             if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
-                await self._handle_pending_graph_turn(session, content)
+                await self._handle_pending_graph_turn(session, message_content)
                 return self.snapshot(session.session_id)
 
             waiting_node = self._get_waiting_node(session)
             if waiting_node is not None:
-                await self._handle_waiting_node_turn(session, waiting_node, content)
+                await self._handle_waiting_node_turn(session, waiting_node, message_content)
                 return self.snapshot(session.session_id)
 
-            await self._route_new_message(session, content)
+            await self._route_new_message(session, message_content)
         except Exception as exc:
             if not llm_exception_is_retryable(exc):
                 raise
@@ -194,6 +216,21 @@ class GraphRouterOrchestrator:
             )
             session.touch()
         return self.snapshot(session.session_id)
+
+    async def _handle_guided_selection_turn(
+        self,
+        session: GraphSessionState,
+        *,
+        content: str,
+        guided_selection: GuidedSelectionPayload,
+    ) -> None:
+        if not guided_selection.selected_intents:
+            raise ValueError("guided_selection.selected_intents is required")
+        if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
+            await self._cancel_pending_graph(session, graph_id=None, confirm_token=None)
+        if session.current_graph is not None and session.current_graph.status not in TERMINAL_GRAPH_STATUSES:
+            await self._cancel_current_graph(session, reason="用户切换为引导式已选意图执行")
+        await self._route_guided_selection(session, content=content, guided_selection=guided_selection)
 
     async def handle_action(
         self,
@@ -279,6 +316,7 @@ class GraphRouterOrchestrator:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
+        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
         self._apply_history_prefill_policy(
             session,
             graph,
@@ -299,6 +337,62 @@ class GraphRouterOrchestrator:
         session.current_graph = graph
         self._activate_graph(graph)
         await self._publish_graph_state(session, "graph.created", "已创建执行图")
+        await self._drain_graph(session, graph.source_message)
+
+    async def _route_guided_selection(
+        self,
+        session: GraphSessionState,
+        *,
+        content: str,
+        guided_selection: GuidedSelectionPayload,
+    ) -> None:
+        active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
+        graph = ExecutionGraphState(
+            source_message=content,
+            summary=self._guided_selection_summary(guided_selection),
+            status=GraphStatus.DRAFT,
+            actions=[],
+        )
+        session.candidate_intents = []
+
+        for index, selected in enumerate(guided_selection.selected_intents):
+            intent = active_intents.get(selected.intent_code)
+            if intent is None:
+                raise ValueError(f"Selected intent is not active: {selected.intent_code}")
+            slot_memory = normalize_structured_slot_memory(
+                slot_memory=selected.slot_memory,
+                slot_schema=intent.slot_schema,
+            )
+            graph.nodes.append(
+                GraphNodeState(
+                    intent_code=intent.intent_code,
+                    title=selected.title or intent.name,
+                    confidence=1.0,
+                    position=index,
+                    source_fragment=content or selected.source_fragment or "",
+                    slot_memory=slot_memory,
+                )
+            )
+
+        for index in range(1, len(graph.nodes)):
+            previous = graph.nodes[index - 1]
+            current = graph.nodes[index]
+            current.depends_on.append(previous.node_id)
+            current.relation_reason = "按已选顺序执行"
+            graph.edges.append(
+                GraphEdge(
+                    source_node_id=previous.node_id,
+                    target_node_id=current.node_id,
+                    relation_type=GraphEdgeType.SEQUENTIAL,
+                    label="按已选顺序执行",
+                )
+            )
+
+        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
+        session.pending_graph = None
+        session.current_graph = graph
+        self._activate_graph(graph)
+        await self._publish_graph_state(session, "graph.created", "已根据所选意图创建执行图")
         await self._drain_graph(session, graph.source_message)
 
     async def _recognize_message(
@@ -1107,7 +1201,7 @@ class GraphRouterOrchestrator:
     def _condition_matches_from_condition(self, source: GraphNodeState, condition: GraphCondition | None) -> bool:
         if condition is None or condition.left_key is None or condition.operator is None:
             return False
-        current_value = source.output_payload.get(condition.left_key)
+        current_value = resolve_output_value(source.output_payload, condition.left_key)
         if current_value is None:
             return False
         threshold = condition.right_value
@@ -1411,6 +1505,20 @@ class GraphRouterOrchestrator:
         return all(
             node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value
             for node in skipped_nodes
+        )
+
+    def _guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:
+        if guided_selection is None or not guided_selection.selected_intents:
+            return ""
+        titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]
+        return f"已选择推荐事项：{'、'.join(titles)}"
+
+    def _guided_selection_summary(self, guided_selection: GuidedSelectionPayload) -> str:
+        titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]
+        return (
+            f"已按用户选择生成执行图：{'、'.join(titles)}"
+            if titles
+            else "已按用户选择生成执行图"
         )
 
     def _should_append_graph_terminal_message(

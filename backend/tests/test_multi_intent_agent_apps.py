@@ -163,3 +163,62 @@ def test_forex_exchange_app_accepts_forex_request() -> None:
         assert payload["payload"]["agent"] == "exchange_forex"
 
     asyncio.run(run())
+
+
+def test_credit_card_repayment_service_executes_directly_with_prefilled_slots_and_empty_input() -> None:
+    async def run() -> None:
+        service = CreditCardRepaymentAgentService()
+        response = await service.handle(
+            CreditCardRepaymentAgentRequest(
+                sessionId="session_cc_direct_001",
+                taskId="task_cc_direct_001",
+                input="",
+                creditCard={"cardNumber": "6222021234567890", "phoneLast4": "1234"},
+                conversation={"recentMessages": [], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.payload["agent"] == "query_credit_card_repayment"
+
+    asyncio.run(run())
+
+
+def test_gas_bill_payment_service_executes_directly_with_prefilled_slots_and_empty_input() -> None:
+    async def run() -> None:
+        service = GasBillPaymentAgentService()
+        response = await service.handle(
+            GasBillPaymentAgentRequest(
+                sessionId="session_gas_direct_001",
+                taskId="task_gas_direct_001",
+                input="",
+                gas={"accountNumber": "88001234"},
+                payment={"amount": "88"},
+                conversation={"recentMessages": [], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.payload["agent"] == "pay_gas_bill"
+
+    asyncio.run(run())
+
+
+def test_forex_exchange_service_executes_directly_with_prefilled_slots_and_empty_input() -> None:
+    async def run() -> None:
+        service = ForexExchangeAgentService()
+        response = await service.handle(
+            ForexExchangeAgentRequest(
+                sessionId="session_fx_direct_001",
+                taskId="task_fx_direct_001",
+                input="",
+                account={"cardNumber": "6222021234567890", "phoneLast4": "1234"},
+                exchange={"sourceCurrency": "CNY", "targetCurrency": "USD", "amount": "1000"},
+                conversation={"recentMessages": [], "longTermMemory": []},
+            )
+        )
+
+        assert response.status == "completed"
+        assert response.payload["agent"] == "exchange_forex"
+
+    asyncio.run(run())

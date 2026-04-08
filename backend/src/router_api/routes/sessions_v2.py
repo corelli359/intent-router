@@ -11,6 +11,7 @@ from starlette.responses import StreamingResponse
 from router_api.dependencies import get_event_broker_v2, get_orchestrator_v2
 from router_api.sse.broker import EventBroker
 from router_core.domain import TaskEvent, TaskStatus
+from router_core.v2_domain import GuidedSelectionPayload
 from router_core.v2_orchestrator import GraphRouterOrchestrator
 
 
@@ -30,13 +31,14 @@ class CreateSessionRequest(BaseModel):
 class MessageRequest(BaseModel):
     content: str | None = None
     message: str | None = None
+    guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
     cust_id: str | None = None
 
     @model_validator(mode="after")
     def normalize(self) -> "MessageRequest":
-        if self.content is None and self.message is None:
-            raise ValueError("content or message is required")
-        self.content = self.content or self.message
+        self.content = self.content or self.message or ""
+        if not self.content and (self.guided_selection is None or not self.guided_selection.selected_intents):
+            raise ValueError("content/message or guided_selection is required")
         return self
 
 
@@ -121,11 +123,15 @@ async def post_message(
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator_v2),
 ):
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
-    snapshot = await orchestrator.handle_user_message(
-        session_id=session_id,
-        cust_id=resolved_cust_id,
-        content=request.content or "",
-    )
+    try:
+        snapshot = await orchestrator.handle_user_message(
+            session_id=session_id,
+            cust_id=resolved_cust_id,
+            content=request.content or "",
+            guided_selection=request.guided_selection,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
 
 
@@ -221,6 +227,7 @@ async def post_message_stream(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
+                guided_selection=request.guided_selection,
             )
         )
         try:

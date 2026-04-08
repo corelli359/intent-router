@@ -102,7 +102,11 @@ class AccountBalanceAgentService:
             card_number=self._normalize_card_number(request.account.card_number),
             phone_last4=self._normalize_phone_last4(request.account.phone_last4),
         )
-        resolution = await self._resolve(request, seeded)
+        direct_resolution = self._finalize_resolution(seeded, AccountBalanceResolution())
+        if not request.input.strip() and direct_resolution.has_enough_information:
+            resolution = direct_resolution
+        else:
+            resolution = await self._resolve(request, seeded)
         slot_memory = self._slot_memory(resolution)
 
         if resolution.has_enough_information:

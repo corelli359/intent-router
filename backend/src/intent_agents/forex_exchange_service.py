@@ -137,7 +137,11 @@ class ForexExchangeAgentService:
             target_currency=self._normalize_currency(request.exchange.target_currency),
             amount=self._normalize_amount(request.exchange.amount),
         )
-        resolution = await self._resolve(request, seeded)
+        direct_resolution = self._finalize_resolution(seeded, ForexExchangeResolution())
+        if not request.input.strip() and direct_resolution.has_enough_information:
+            resolution = direct_resolution
+        else:
+            resolution = await self._resolve(request, seeded)
         slot_memory = self._slot_memory(resolution)
         missing_fields = self._missing_fields(resolution)
 

@@ -90,7 +90,11 @@ class CreditCardRepaymentAgentService:
             card_number=self._normalize_card_number(request.credit_card.card_number),
             phone_last4=self._normalize_phone_last4(request.credit_card.phone_last4),
         )
-        resolution = await self._resolve(request, seeded)
+        direct_resolution = self._finalize_resolution(seeded, CreditCardRepaymentResolution())
+        if not request.input.strip() and direct_resolution.has_enough_information:
+            resolution = direct_resolution
+        else:
+            resolution = await self._resolve(request, seeded)
         slot_memory = self._slot_memory(resolution)
 
         if not resolution.has_enough_information:

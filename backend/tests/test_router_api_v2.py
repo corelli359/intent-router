@@ -73,6 +73,7 @@ def _mock_intents() -> list[IntentDefinition]:
                     "allow_from_history": True,
                 },
             ],
+            graph_build_hints={"provides_context_keys": ["balance"]},
         ),
         IntentDefinition(
             intent_code="transfer_money",
@@ -116,6 +117,42 @@ def _mock_intents() -> list[IntentDefinition]:
                     "allow_from_history": False,
                 },
             ],
+            graph_build_hints={"provides_context_keys": ["amount", "business_status"]},
+        ),
+        IntentDefinition(
+            intent_code="exchange_forex",
+            name="换外汇",
+            description="执行换汇，需要币种和金额。",
+            examples=["把100人民币换成美元", "换100美元"],
+            keywords=["换汇", "购汇", "外汇"],
+            agent_url="http://test-agent/exchange_forex",
+            dispatch_priority=90,
+            primary_threshold=0.72,
+            candidate_threshold=0.5,
+            slot_schema=[
+                {
+                    "slot_key": "source_currency",
+                    "label": "卖出币种",
+                    "description": "卖出币种",
+                    "value_type": "string",
+                    "required": True,
+                },
+                {
+                    "slot_key": "target_currency",
+                    "label": "买入币种",
+                    "description": "买入币种",
+                    "value_type": "string",
+                    "required": True,
+                },
+                {
+                    "slot_key": "amount",
+                    "label": "金额",
+                    "description": "换汇金额",
+                    "value_type": "currency",
+                    "required": True,
+                },
+            ],
+            graph_build_hints={"provides_context_keys": ["exchanged_amount", "source_currency", "target_currency"]},
         ),
     ]
 
@@ -211,6 +248,71 @@ class _ConditionalPlanner:
             GraphAction(code="cancel_graph", label="取消"),
         ]
         return graph
+
+
+class _ImplicitBalanceAfterTransferGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="识别到转账和条件换汇，条件依赖暂挂在转账节点上",
+            status=GraphStatus.WAITING_CONFIRMATION,
+            actions=[
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ],
+        )
+        transfer = GraphNodeState(
+            intent_code="transfer_money",
+            title="给小明转账1000元",
+            confidence=0.96,
+            position=0,
+            source_fragment="给小明转账1000元",
+            slot_memory={"recipient_name": "小明", "amount": "1000"},
+        )
+        forex = GraphNodeState(
+            intent_code="exchange_forex",
+            title="条件满足时换100美元",
+            confidence=0.94,
+            position=1,
+            source_fragment="把100人民币换成美元",
+            slot_memory={"source_currency": "CNY", "target_currency": "USD", "amount": "100"},
+        )
+        forex.depends_on.append(transfer.node_id)
+        forex.relation_reason = "转账后若卡里余额剩余超过2000则换汇"
+        graph.nodes.extend([transfer, forex])
+        graph.edges.append(
+            GraphEdge(
+                source_node_id=transfer.node_id,
+                target_node_id=forex.node_id,
+                relation_type=GraphEdgeType.CONDITIONAL,
+                label="转账后若卡里余额剩余超过2000则换汇",
+                condition=GraphCondition(
+                    source_node_id=transfer.node_id,
+                    left_key="balance",
+                    operator=">",
+                    right_value=2000,
+                ),
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": RecognitionResult(
+                    primary=[
+                        IntentMatch(intent_code="transfer_money", confidence=0.96, reason="fixed"),
+                        IntentMatch(intent_code="exchange_forex", confidence=0.94, reason="fixed"),
+                    ],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
+
+
+class _ExplodingRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        raise AssertionError("guided selection should bypass recognizer")
 
 
 def _test_v2_app(
@@ -1048,5 +1150,117 @@ def test_v2_single_conditional_skip_marks_graph_completed_with_skip_reason() -> 
             assert current_graph["nodes"][1]["blocking_reason"] == "余额大于8000时转账"
             assert current_graph["nodes"][1]["skip_reason_code"] == "condition_not_met"
             assert "因条件未满足未执行" in snapshot["messages"][-1]["content"]
+
+    asyncio.run(run())
+
+
+def test_v2_implicit_balance_condition_inserts_hidden_node_instead_of_skipping() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            graph_builder=_ImplicitBalanceAfterTransferGraphBuilder(),
+            turn_interpreter=BasicTurnInterpreter(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "我想给小明转账1000元，如果卡里余额还剩超过2000，我就换100美元"},
+            )
+            assert first_turn.status_code == 200
+            pending_graph = first_turn.json()["snapshot"]["pending_graph"]
+            assert [node["intent_code"] for node in pending_graph["nodes"]] == [
+                "transfer_money",
+                "query_account_balance",
+                "exchange_forex",
+            ]
+            conditional_edge = next(
+                edge for edge in pending_graph["edges"] if edge["relation_type"] == "conditional"
+            )
+            assert conditional_edge["condition"]["left_key"] == "balance"
+
+            confirm_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/actions",
+                json={
+                    "task_id": pending_graph["graph_id"],
+                    "source": "router",
+                    "action_code": "confirm_graph",
+                    "confirm_token": pending_graph["confirm_token"],
+                },
+            )
+            assert confirm_turn.status_code == 200
+
+            resume_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "收款卡号 6222020100049999999，手机号后四位1234；我的卡号 6222021234567890，尾号1234"},
+            )
+            assert resume_turn.status_code == 200
+            snapshot = resume_turn.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert [node["intent_code"] for node in current_graph["nodes"]] == [
+                "transfer_money",
+                "query_account_balance",
+                "exchange_forex",
+            ]
+            assert [node["status"] for node in current_graph["nodes"]] == [
+                "completed",
+                "completed",
+                "completed",
+            ]
+            assert all(node["skip_reason_code"] is None for node in current_graph["nodes"])
+            assert "因条件未满足未执行" not in snapshot["messages"][-1]["content"]
+
+    asyncio.run(run())
+
+
+def test_v2_guided_selection_bypasses_recognizer_and_executes_selected_items() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(recognizer=_ExplodingRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "guidedSelection": {
+                        "selectedIntents": [
+                            {
+                                "intentCode": "transfer_money",
+                                "title": "给小明转账1000元",
+                                "slotMemory": {
+                                    "recipient_name": "小明",
+                                    "recipient_card_number": "6222020100049999999",
+                                    "recipient_phone_last_four": "1234",
+                                    "amount": "1000",
+                                },
+                            },
+                            {
+                                "intentCode": "exchange_forex",
+                                "title": "换100美元",
+                                "slotMemory": {
+                                    "source_currency": "CNY",
+                                    "target_currency": "USD",
+                                    "amount": "100",
+                                },
+                            },
+                        ]
+                    }
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert [node["intent_code"] for node in current_graph["nodes"]] == [
+                "transfer_money",
+                "exchange_forex",
+            ]
+            assert [node["status"] for node in current_graph["nodes"]] == ["completed", "completed"]
+            assert snapshot["messages"][0]["content"] == "已选择推荐事项：给小明转账1000元、换100美元"
 
     asyncio.run(run())

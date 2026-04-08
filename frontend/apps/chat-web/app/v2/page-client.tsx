@@ -98,6 +98,27 @@ type TimelineEntry = {
   created_at: string;
 };
 
+type GuidedFieldTemplate = {
+  key: string;
+  label: string;
+  placeholder: string;
+  inputMode?: "text" | "numeric" | "decimal";
+  transform?: "uppercase";
+};
+
+type GuidedIntentTemplate = {
+  intentCode: string;
+  title: string;
+  description: string;
+  sourceFragment: string;
+  fields: GuidedFieldTemplate[];
+};
+
+type GuidedIntentDraft = GuidedIntentTemplate & {
+  selected: boolean;
+  slotMemory: Record<string, string>;
+};
+
 const API_BASE = "/api/router/v2";
 const DEFAULT_CUST_ID = "cust_demo";
 const BOOT_MESSAGE: BackendMessage = {
@@ -105,6 +126,49 @@ const BOOT_MESSAGE: BackendMessage = {
   content: "V2 已就绪。你可以一次输入多个事项、条件依赖，或在执行中补充、修改、取消当前诉求。",
   created_at: "",
 };
+
+const GUIDED_INTENT_TEMPLATES: GuidedIntentTemplate[] = [
+  {
+    intentCode: "query_account_balance",
+    title: "查账户余额",
+    description: "已知卡号与手机号后4位时，可直接发起余额查询。",
+    sourceFragment: "查询账户余额",
+    fields: [
+      { key: "card_number", label: "卡号", placeholder: "例如 6222020100049999999", inputMode: "numeric" },
+      { key: "phone_last_four", label: "手机号后4位", placeholder: "例如 1234", inputMode: "numeric" },
+    ],
+  },
+  {
+    intentCode: "transfer_money",
+    title: "转账",
+    description: "已知收款信息时可直接执行；不全时仍会进入多轮补充。",
+    sourceFragment: "转账",
+    fields: [
+      { key: "recipient_name", label: "收款人", placeholder: "例如 小明 / 弟弟" },
+      { key: "amount", label: "金额", placeholder: "例如 1000", inputMode: "decimal" },
+    ],
+  },
+  {
+    intentCode: "query_credit_card_repayment",
+    title: "查信用卡还款",
+    description: "用于查询应还金额、最低还款额和到期日。",
+    sourceFragment: "查询信用卡还款信息",
+    fields: [
+      { key: "card_number", label: "信用卡卡号", placeholder: "例如 4333333333333333", inputMode: "numeric" },
+      { key: "phone_last_four", label: "手机号后4位", placeholder: "例如 5678", inputMode: "numeric" },
+    ],
+  },
+  {
+    intentCode: "pay_gas_bill",
+    title: "缴纳天然气费",
+    description: "适合已知燃气户号与缴费金额的快速执行场景。",
+    sourceFragment: "缴纳天然气费",
+    fields: [
+      { key: "gas_account_number", label: "燃气户号", placeholder: "例如 88001234", inputMode: "numeric" },
+      { key: "amount", label: "缴费金额", placeholder: "例如 88", inputMode: "decimal" },
+    ],
+  },
+];
 
 const STREAM_STATE_LABELS: Record<StreamState, string> = {
   booting: "启动中",
@@ -245,6 +309,31 @@ function formatSlotValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function createGuidedIntentDrafts(): GuidedIntentDraft[] {
+  return GUIDED_INTENT_TEMPLATES.map((template) => ({
+    ...template,
+    selected: false,
+    slotMemory: Object.fromEntries(template.fields.map((field) => [field.key, ""])),
+  }));
+}
+
+function filterGuidedSlotMemory(slotMemory: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(slotMemory)
+      .map(([key, value]) => [key, value.trim()])
+      .filter((entry): entry is [string, string] => Boolean(entry[1])),
+  );
+}
+
+function guidedSelectionDisplayContent(items: Array<{ title: string; intentCode: string }>): string {
+  const labels = items.map((item) => item.title || item.intentCode);
+  return `已选择推荐事项：${labels.join("、")}`;
+}
+
+function normalizeGuidedFieldValue(field: GuidedFieldTemplate, value: string): string {
+  return field.transform === "uppercase" ? value.toUpperCase() : value;
+}
+
 function mergeSnapshotFromEvent(
   previous: BackendSnapshot | null,
   eventName: string,
@@ -307,7 +396,9 @@ export default function ChatV2PageClient() {
   const [messages, setMessages] = useState<BackendMessage[]>([BOOT_MESSAGE]);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [composer, setComposer] = useState("");
+  const [guidedIntents, setGuidedIntents] = useState<GuidedIntentDraft[]>(() => createGuidedIntentDrafts());
   const [isSending, setIsSending] = useState(false);
+  const [isSubmittingGuidedSelection, setIsSubmittingGuidedSelection] = useState(false);
   const [isSubmittingGraphAction, setIsSubmittingGraphAction] = useState(false);
   const [isCancellingNode, setIsCancellingNode] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -451,10 +542,12 @@ export default function ChatV2PageClient() {
       return;
     }
     const frameId = window.requestAnimationFrame(() => {
-      scrollMessagesToLatest(isSending || isSubmittingGraphAction || isCancellingNode ? "auto" : "smooth");
+      scrollMessagesToLatest(
+        isSending || isSubmittingGuidedSelection || isSubmittingGraphAction || isCancellingNode ? "auto" : "smooth",
+      );
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [messages, snapshot, isSending, isSubmittingGraphAction, isCancellingNode]);
+  }, [messages, snapshot, isSending, isSubmittingGuidedSelection, isSubmittingGraphAction, isCancellingNode]);
 
   async function onSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -494,6 +587,97 @@ export default function ChatV2PageClient() {
       setMessages((previous) => previous.filter((message) => message !== localMessage));
     } finally {
       setIsSending(false);
+    }
+  }
+
+  function toggleGuidedIntent(intentCode: string) {
+    setGuidedIntents((previous) =>
+      previous.map((item) => (item.intentCode === intentCode ? { ...item, selected: !item.selected } : item)),
+    );
+  }
+
+  function updateGuidedSlot(intentCode: string, field: GuidedFieldTemplate, value: string) {
+    setGuidedIntents((previous) =>
+      previous.map((item) =>
+        item.intentCode === intentCode
+          ? {
+              ...item,
+              selected: true,
+              slotMemory: {
+                ...item.slotMemory,
+                [field.key]: normalizeGuidedFieldValue(field, value),
+              },
+            }
+          : item,
+      ),
+    );
+  }
+
+  function resetGuidedSelection() {
+    setGuidedIntents(createGuidedIntentDrafts());
+  }
+
+  async function submitGuidedSelection() {
+    if (!sessionId) {
+      return;
+    }
+
+    const selectedIntents = guidedIntents
+      .filter((item) => item.selected)
+      .map((item) => ({
+        intentCode: item.intentCode,
+        title: item.title,
+        sourceFragment: item.sourceFragment,
+        slotMemory: filterGuidedSlotMemory(item.slotMemory),
+      }));
+
+    if (selectedIntents.length === 0) {
+      return;
+    }
+
+    const content = composer.trim();
+    const displayContent = content || guidedSelectionDisplayContent(selectedIntents);
+    const localMessage: BackendMessage = {
+      role: "user",
+      content: displayContent,
+      created_at: new Date().toISOString(),
+    };
+
+    setIsSubmittingGuidedSelection(true);
+    setErrorMessage(null);
+    shouldAutoScrollRef.current = true;
+    if (content) {
+      setComposer("");
+    }
+
+    startTransition(() => {
+      setMessages((previous) => [...previous, localMessage]);
+    });
+
+    try {
+      const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content,
+          cust_id: custId,
+          guidedSelection: { selectedIntents },
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const payload = (await response.json()) as { snapshot: BackendSnapshot };
+      applySnapshot(payload.snapshot);
+      resetGuidedSelection();
+    } catch (error: unknown) {
+      setErrorMessage(error instanceof Error ? error.message : "提交引导式选择失败");
+      if (content) {
+        setComposer(content);
+      }
+      setMessages((previous) => previous.filter((message) => message !== localMessage));
+    } finally {
+      setIsSubmittingGuidedSelection(false);
     }
   }
 
@@ -566,7 +750,12 @@ export default function ChatV2PageClient() {
     null;
   const candidateIntents = snapshot?.candidate_intents ?? [];
   const nodeTitleById = new Map(displayedGraph?.nodes.map((node) => [node.node_id, node.title]) ?? []);
-  const canSend = Boolean(sessionId && composer.trim() && !isSending);
+  const selectedGuidedIntents = guidedIntents.filter((item) => item.selected);
+  const canSubmitGuidedSelection = Boolean(sessionId && selectedGuidedIntents.length > 0 && !isSending && !isSubmittingGuidedSelection);
+  const readyGuidedSelectionCount = selectedGuidedIntents.filter((item) =>
+    item.fields.every((field) => Boolean(item.slotMemory[field.key]?.trim())),
+  ).length;
+  const canSend = Boolean(sessionId && composer.trim() && !isSending && !isSubmittingGuidedSelection);
 
   return (
     <div className="shell">
@@ -648,7 +837,7 @@ export default function ChatV2PageClient() {
             />
             <div className="composer-foot">
               <small className="hint-text">
-                支持直接补充、修改或取消当前事项。待确认图阶段也可以继续发消息，系统会重新判断是否沿用、取消或重规划。
+                支持直接补充、修改或取消当前事项。如果右侧选了推荐事项并点击“按所选事项发起”，这里的文字会作为补充说明和 guided selection 一起发送。
               </small>
               <button type="submit" disabled={!canSend || isSubmittingGraphAction || isCancellingNode}>
                 {isSending ? "发送中..." : "发送消息"}
@@ -658,6 +847,81 @@ export default function ChatV2PageClient() {
         </section>
 
         <aside className="context-rail">
+          <section className="rail-section guided-section">
+            <div className="section-head">
+              <p className="section-label">可选引导式选择</p>
+              <Badge
+                label={selectedGuidedIntents.length > 0 ? `已选 ${selectedGuidedIntents.length}` : "未选择"}
+                tone={selectedGuidedIntents.length > 0 ? "emphasis" : "default"}
+              />
+            </div>
+            <h3>推荐事项</h3>
+            <p className="status-copy guided-copy">
+              这只是 V2 的一条可选入口。自由对话仍然保留；当你已经明确事项和关键要素时，可以直接把结构化意图送进执行图。会话区输入框仍然是主入口，若里面有补充说明，会和本面板选择一起提交。
+            </p>
+            <div className="guided-grid">
+              {guidedIntents.map((item) => {
+                const filledFields = item.fields.filter((field) => Boolean(item.slotMemory[field.key]?.trim())).length;
+                const isReady = item.fields.length > 0 && filledFields === item.fields.length;
+                return (
+                  <article
+                    key={item.intentCode}
+                    className={`guided-card ${item.selected ? "is-selected" : ""}`.trim()}
+                  >
+                    <div className="guided-card-head">
+                      <div>
+                        <strong>{item.title}</strong>
+                        <small>{item.intentCode}</small>
+                      </div>
+                      <button className="toggle-button" onClick={() => toggleGuidedIntent(item.intentCode)} type="button">
+                        {item.selected ? "取消" : "选择"}
+                      </button>
+                    </div>
+                    <p className="status-copy">{item.description}</p>
+                    <div className="guided-selection-meta">
+                      <Badge label={isReady ? "要素已齐" : `已填 ${filledFields}/${item.fields.length}`} tone={isReady ? "success" : "default"} />
+                    </div>
+                    <div className="guided-field-grid">
+                      {item.fields.map((field) => (
+                        <label key={`${item.intentCode}-${field.key}`} className="guided-field">
+                          <span>{field.label}</span>
+                          <input
+                            placeholder={field.placeholder}
+                            type="text"
+                            inputMode={field.inputMode}
+                            value={item.slotMemory[field.key] ?? ""}
+                            onChange={(event) => updateGuidedSlot(item.intentCode, field, event.target.value)}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="composer-foot">
+              <small className="hint-text">
+                当前已选 {selectedGuidedIntents.length} 项，其中 {readyGuidedSelectionCount} 项关键槽位已齐。主输入框留空时，接口会只发送
+                <span className="mono"> guidedSelection </span>
+                以及空的
+                <span className="mono"> content </span>
+                ；若主输入框有文字，则两者一起发送。
+              </small>
+              <div className="guided-actions">
+                <button className="toggle-button" onClick={resetGuidedSelection} type="button">
+                  重置推荐项
+                </button>
+                <button
+                  type="button"
+                  disabled={!canSubmitGuidedSelection || isSubmittingGraphAction || isCancellingNode}
+                  onClick={() => void submitGuidedSelection()}
+                >
+                  {isSubmittingGuidedSelection ? "提交中..." : "按所选事项发起"}
+                </button>
+              </div>
+            </div>
+          </section>
+
           {pendingGraph ? (
             <section className="rail-section plan-section">
               <div className="section-head">
