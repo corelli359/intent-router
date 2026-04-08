@@ -39,6 +39,7 @@ from router_core.v2_domain import (
     GraphSessionState,
     GraphStatus,
     GuidedSelectionPayload,
+    RecommendationContextPayload,
 )
 from router_core.v2_graph_semantics import repair_unexecutable_condition_edges, resolve_output_value
 from router_core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
@@ -180,6 +181,7 @@ class GraphRouterOrchestrator:
         content: str,
         *,
         guided_selection: GuidedSelectionPayload | None = None,
+        recommendation_context: RecommendationContextPayload | None = None,
     ) -> GraphRouterSnapshot:
         session = self.session_store.get_or_create(session_id, cust_id)
         message_content = content.strip()
@@ -202,7 +204,11 @@ class GraphRouterOrchestrator:
                 await self._handle_waiting_node_turn(session, waiting_node, message_content)
                 return self.snapshot(session.session_id)
 
-            await self._route_new_message(session, message_content)
+            await self._route_new_message(
+                session,
+                message_content,
+                recommendation_context=recommendation_context,
+            )
         except Exception as exc:
             if not llm_exception_is_retryable(exc):
                 raise
@@ -267,6 +273,7 @@ class GraphRouterOrchestrator:
         recognition: Any | None = None,
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
+        recommendation_context: RecommendationContextPayload | None = None,
     ) -> None:
         graph: ExecutionGraphState | None = None
         if recognition is None and (recent_messages is None or long_term_memory is None):
@@ -276,6 +283,10 @@ class GraphRouterOrchestrator:
         else:
             recent_messages = recent_messages or []
             long_term_memory = long_term_memory or []
+        recent_messages = self._augment_recent_messages_with_recommendations(
+            recent_messages,
+            recommendation_context=recommendation_context,
+        )
 
         if self.graph_builder is not None:
             build_result = await self._build_graph_from_message(
@@ -1512,6 +1523,35 @@ class GraphRouterOrchestrator:
             return ""
         titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]
         return f"已选择推荐事项：{'、'.join(titles)}"
+
+    def _augment_recent_messages_with_recommendations(
+        self,
+        recent_messages: list[str],
+        *,
+        recommendation_context: RecommendationContextPayload | None,
+    ) -> list[str]:
+        if recommendation_context is None or not recommendation_context.intents:
+            return recent_messages
+        return [
+            *recent_messages,
+            self._recommendation_context_summary(recommendation_context),
+        ]
+
+    def _recommendation_context_summary(self, recommendation_context: RecommendationContextPayload) -> str:
+        lines = [
+            "[FRONTEND_RECOMMENDATION_CONTEXT] 以下是前端刚展示给用户的推荐候选事项；它们只是候选，不代表用户已经选择。",
+        ]
+        for index, item in enumerate(recommendation_context.intents, start=1):
+            example = item.examples[0] if item.examples else ""
+            lines.append(
+                f"{index}. {item.title or item.intent_code} ({item.intent_code})"
+                f" - {item.description or ''}".rstrip()
+            )
+            if example:
+                lines.append(f"   例如：{example}")
+        if recommendation_context.recommendation_id:
+            lines.append(f"recommendation_id={recommendation_context.recommendation_id}")
+        return "\n".join(lines)
 
     def _guided_selection_summary(self, guided_selection: GuidedSelectionPayload) -> str:
         titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]

@@ -315,6 +315,26 @@ class _ExplodingRecognizer:
         raise AssertionError("guided selection should bypass recognizer")
 
 
+class _RecommendationAwareRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del intents, long_term_memory, on_delta
+        assert message == "第一个和第三个都要"
+        recommendation_context = next(
+            (entry for entry in recent_messages if entry.startswith("[FRONTEND_RECOMMENDATION_CONTEXT]")),
+            None,
+        )
+        assert recommendation_context is not None
+        assert "查询账户余额" in recommendation_context
+        assert "换外汇" in recommendation_context
+        return RecognitionResult(
+            primary=[
+                IntentMatch(intent_code="query_account_balance", confidence=0.96, reason="picked from recommendation"),
+                IntentMatch(intent_code="exchange_forex", confidence=0.93, reason="picked from recommendation"),
+            ],
+            candidates=[],
+        )
+
+
 def _test_v2_app(
     *,
     recognizer=None,
@@ -1262,5 +1282,55 @@ def test_v2_guided_selection_bypasses_recognizer_and_executes_selected_items() -
             ]
             assert [node["status"] for node in current_graph["nodes"]] == ["completed", "completed"]
             assert snapshot["messages"][0]["content"] == "已选择推荐事项：给小明转账1000元、换100美元"
+
+    asyncio.run(run())
+
+
+def test_v2_recommendation_context_still_routes_via_llm_recognition() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(recognizer=_RecommendationAwareRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "第一个和第三个都要",
+                    "recommendationContext": {
+                        "recommendationId": "rec_demo",
+                        "intents": [
+                            {
+                                "intentCode": "query_account_balance",
+                                "title": "查询账户余额",
+                                "description": "查账户余额",
+                                "examples": ["帮我查一下账户余额"],
+                            },
+                            {
+                                "intentCode": "transfer_money",
+                                "title": "转账",
+                                "description": "执行转账",
+                                "examples": ["给小明转1000"],
+                            },
+                            {
+                                "intentCode": "exchange_forex",
+                                "title": "换外汇",
+                                "description": "执行换汇",
+                                "examples": ["换100美元"],
+                            },
+                        ],
+                    },
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            pending_graph = snapshot["pending_graph"]
+            assert pending_graph["status"] == "waiting_confirmation"
+            assert [node["intent_code"] for node in pending_graph["nodes"]] == [
+                "query_account_balance",
+                "exchange_forex",
+            ]
+            assert snapshot["messages"][-1]["content"] == "第一个和第三个都要"
 
     asyncio.run(run())

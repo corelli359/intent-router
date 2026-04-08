@@ -17,6 +17,10 @@ DEFAULT_RECOGNIZER_SYSTEM_PROMPT = (
     "confidence 必须在 0 到 1 之间。"
     "如果当前消息与某个已注册意图明显匹配，不要返回空列表。"
     "优先依据每个 intent 的 description、examples 和关键词边界来判断，而不是只看字面重合。"
+    "最近对话里可能出现一条以 [FRONTEND_RECOMMENDATION_CONTEXT] 开头的推荐候选摘要。"
+    "那只是前端刚展示给用户的候选事项，不代表用户已经选中。"
+    "如果用户当前消息说“第一个/第二个/都要/把第三个改成……”，你可以结合这条摘要理解用户在引用哪几个候选事项，"
+    "但最终仍然必须基于当前用户消息做意图识别，不能把推荐列表直接当成识别结果。"
 )
 
 DEFAULT_RECOGNIZER_HUMAN_PROMPT = (
@@ -42,6 +46,9 @@ DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "condition 必须用结构化字段表达：left_key、operator、right_value。"
     "如果条件判断依赖的是余额、账单、汇率等状态，而当前条件源节点本身不直接产出该字段，"
     "你必须先补出能够产出该字段的隐含节点，再把条件挂到那个节点上。"
+    "最近对话里可能出现一条以 [FRONTEND_RECOMMENDATION_CONTEXT] 开头的推荐候选摘要。"
+    "如果当前用户消息是在引用“第一个/第二个/都要/第三个改一下”这类推荐项，你可以结合这条摘要解析真正的用户目标，"
+    "但不能把推荐候选本身直接当成已确认节点。"
     "source_fragment 应尽量截取与该节点最相关的原始片段，方便下游 agent 读取。"
     "slot_memory 只允许填明显来自当前用户消息的结构化提示，不允许凭空猜测。"
 )
@@ -94,6 +101,10 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
     "如果某个 intent 只是缺少槽位，仍然应该保留一个节点，等待下游 agent 多轮补充，不得因为缺槽而拆成多个节点。"
     "如果条件依赖判断的是余额、账单、汇率等状态，而当前条件源节点本身不直接产出该字段，"
     "必须补出能够产出该字段的隐含节点，再把条件边挂到那个隐含节点。"
+    "最近对话里可能出现一条以 [FRONTEND_RECOMMENDATION_CONTEXT] 开头的推荐候选摘要。"
+    "如果当前用户消息是在引用这些候选项，例如“第一个和第三个都要”“第二个改成给弟弟转500”，"
+    "你可以结合该摘要解析用户真正选中了哪些意图以及如何修改槽位，"
+    "但绝不能把推荐候选直接当成 primary_intents 或 graph nodes。"
     "node.slot_memory 只允许填写当前这条用户消息里能够直接落地的结构化值，不允许把 recent_messages 或 long_term_memory 里的敏感槽位直接写进 slot_memory。"
     "如果你判断某个节点只有复用历史槽位才能直接执行，应把 needs_confirmation 设为 true，并在 summary 里明确提示存在历史信息复用。"
     "candidate_intents 只用于保留弱歧义，不得把同一业务动作的泛化解释塞进 candidate_intents。"

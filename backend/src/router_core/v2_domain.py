@@ -180,3 +180,19 @@ class GuidedSelectionPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     selected_intents: list[GuidedSelectionIntent] = Field(default_factory=list, alias="selectedIntents")
+
+
+class RecommendationIntent(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    intent_code: str = Field(alias="intentCode")
+    title: str | None = None
+    description: str | None = None
+    examples: list[str] = Field(default_factory=list)
+
+
+class RecommendationContextPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    recommendation_id: str | None = Field(default=None, alias="recommendationId")
+    intents: list[RecommendationIntent] = Field(default_factory=list, alias="intents")

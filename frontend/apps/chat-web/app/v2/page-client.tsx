@@ -98,26 +98,36 @@ type TimelineEntry = {
   created_at: string;
 };
 
-type GuidedFieldTemplate = {
-  key: string;
-  label: string;
-  placeholder: string;
-  inputMode?: "text" | "numeric" | "decimal";
-  transform?: "uppercase";
-};
-
-type GuidedIntentTemplate = {
+type RecommendationIntentTemplate = {
   intentCode: string;
   title: string;
   description: string;
-  sourceFragment: string;
-  fields: GuidedFieldTemplate[];
+  examples: string[];
 };
 
-type GuidedIntentDraft = GuidedIntentTemplate & {
-  selected: boolean;
-  slotMemory: Record<string, string>;
+type RecommendationBundle = {
+  id: string;
+  created_at: string;
+  intents: RecommendationIntentTemplate[];
 };
+
+type DisplayEntry =
+  | {
+      kind: "text";
+      id: string;
+      created_at: string;
+      sort_index: number;
+      role: MessageRole;
+      content: string;
+    }
+  | {
+      kind: "recommendation";
+      id: string;
+      created_at: string;
+      sort_index: number;
+      active: boolean;
+      intents: RecommendationIntentTemplate[];
+    };
 
 const API_BASE = "/api/router/v2";
 const DEFAULT_CUST_ID = "cust_demo";
@@ -127,46 +137,36 @@ const BOOT_MESSAGE: BackendMessage = {
   created_at: "",
 };
 
-const GUIDED_INTENT_TEMPLATES: GuidedIntentTemplate[] = [
+const RECOMMENDATION_TEMPLATES: RecommendationIntentTemplate[] = [
   {
     intentCode: "query_account_balance",
-    title: "查账户余额",
-    description: "已知卡号与手机号后4位时，可直接发起余额查询。",
-    sourceFragment: "查询账户余额",
-    fields: [
-      { key: "card_number", label: "卡号", placeholder: "例如 6222020100049999999", inputMode: "numeric" },
-      { key: "phone_last_four", label: "手机号后4位", placeholder: "例如 1234", inputMode: "numeric" },
-    ],
+    title: "查询账户余额",
+    description: "适合查卡里还有多少钱，通常需要卡号和手机号后4位。",
+    examples: ["帮我查一下账户余额", "看下我这张卡还剩多少钱"],
   },
   {
     intentCode: "transfer_money",
     title: "转账",
-    description: "已知收款信息时可直接执行；不全时仍会进入多轮补充。",
-    sourceFragment: "转账",
-    fields: [
-      { key: "recipient_name", label: "收款人", placeholder: "例如 小明 / 弟弟" },
-      { key: "amount", label: "金额", placeholder: "例如 1000", inputMode: "decimal" },
-    ],
+    description: "适合给家人或朋友转账，通常要收款人、金额等信息。",
+    examples: ["给小明转1000", "帮我给我弟弟转500"],
   },
   {
     intentCode: "query_credit_card_repayment",
-    title: "查信用卡还款",
-    description: "用于查询应还金额、最低还款额和到期日。",
-    sourceFragment: "查询信用卡还款信息",
-    fields: [
-      { key: "card_number", label: "信用卡卡号", placeholder: "例如 4333333333333333", inputMode: "numeric" },
-      { key: "phone_last_four", label: "手机号后4位", placeholder: "例如 5678", inputMode: "numeric" },
-    ],
+    title: "查询信用卡还款信息",
+    description: "适合查本期应还金额、最低还款额和到期日。",
+    examples: ["查一下我的信用卡还款信息", "我这期信用卡要还多少钱"],
   },
   {
     intentCode: "pay_gas_bill",
     title: "缴纳天然气费",
-    description: "适合已知燃气户号与缴费金额的快速执行场景。",
-    sourceFragment: "缴纳天然气费",
-    fields: [
-      { key: "gas_account_number", label: "燃气户号", placeholder: "例如 88001234", inputMode: "numeric" },
-      { key: "amount", label: "缴费金额", placeholder: "例如 88", inputMode: "decimal" },
-    ],
+    description: "适合给燃气户号缴费，通常需要户号和金额。",
+    examples: ["给燃气户号88001234交88元", "帮我缴一下天然气费"],
+  },
+  {
+    intentCode: "exchange_forex",
+    title: "换外汇",
+    description: "适合购汇或结汇，通常要币种和金额。",
+    examples: ["把1000人民币换成美元", "我想换100美元"],
   },
 ];
 
@@ -309,29 +309,58 @@ function formatSlotValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function createGuidedIntentDrafts(): GuidedIntentDraft[] {
-  return GUIDED_INTENT_TEMPLATES.map((template) => ({
-    ...template,
-    selected: false,
-    slotMemory: Object.fromEntries(template.fields.map((field) => [field.key, ""])),
+function createLocalId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function shuffleTemplates(items: RecommendationIntentTemplate[]): RecommendationIntentTemplate[] {
+  const next = [...items];
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+  return next;
+}
+
+function createRecommendationBundle(): RecommendationBundle {
+  return {
+    id: createLocalId("recommendation"),
+    created_at: new Date().toISOString(),
+    intents: shuffleTemplates(RECOMMENDATION_TEMPLATES).slice(0, 4),
+  };
+}
+
+function messageSortValue(value: string): number {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+}
+
+function buildDisplayEntries(
+  messages: BackendMessage[],
+  recommendationBundles: RecommendationBundle[],
+  activeRecommendationId: string | null,
+): DisplayEntry[] {
+  const textEntries: DisplayEntry[] = messages.map((message, index) => ({
+    kind: "text",
+    id: `text-${message.role}-${message.created_at || "boot"}-${index}`,
+    created_at: message.created_at,
+    sort_index: messageSortValue(message.created_at) * 10 + index,
+    role: message.role,
+    content: message.content,
   }));
-}
+  const recommendationEntries: DisplayEntry[] = recommendationBundles.map((bundle, index) => ({
+    kind: "recommendation",
+    id: bundle.id,
+    created_at: bundle.created_at,
+    sort_index: messageSortValue(bundle.created_at) * 10 + index + 5,
+    active: bundle.id === activeRecommendationId,
+    intents: bundle.intents,
+  }));
 
-function filterGuidedSlotMemory(slotMemory: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(slotMemory)
-      .map(([key, value]) => [key, value.trim()])
-      .filter((entry): entry is [string, string] => Boolean(entry[1])),
-  );
-}
-
-function guidedSelectionDisplayContent(items: Array<{ title: string; intentCode: string }>): string {
-  const labels = items.map((item) => item.title || item.intentCode);
-  return `已选择推荐事项：${labels.join("、")}`;
-}
-
-function normalizeGuidedFieldValue(field: GuidedFieldTemplate, value: string): string {
-  return field.transform === "uppercase" ? value.toUpperCase() : value;
+  return [...textEntries, ...recommendationEntries].sort((left, right) => left.sort_index - right.sort_index);
 }
 
 function mergeSnapshotFromEvent(
@@ -394,11 +423,11 @@ export default function ChatV2PageClient() {
   const [custId, setCustId] = useState<string>(DEFAULT_CUST_ID);
   const [snapshot, setSnapshot] = useState<BackendSnapshot | null>(null);
   const [messages, setMessages] = useState<BackendMessage[]>([BOOT_MESSAGE]);
+  const [recommendationBundles, setRecommendationBundles] = useState<RecommendationBundle[]>([]);
+  const [activeRecommendationId, setActiveRecommendationId] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [composer, setComposer] = useState("");
-  const [guidedIntents, setGuidedIntents] = useState<GuidedIntentDraft[]>(() => createGuidedIntentDrafts());
   const [isSending, setIsSending] = useState(false);
-  const [isSubmittingGuidedSelection, setIsSubmittingGuidedSelection] = useState(false);
   const [isSubmittingGraphAction, setIsSubmittingGraphAction] = useState(false);
   const [isCancellingNode, setIsCancellingNode] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -542,12 +571,18 @@ export default function ChatV2PageClient() {
       return;
     }
     const frameId = window.requestAnimationFrame(() => {
-      scrollMessagesToLatest(
-        isSending || isSubmittingGuidedSelection || isSubmittingGraphAction || isCancellingNode ? "auto" : "smooth",
-      );
+      scrollMessagesToLatest(isSending || isSubmittingGraphAction || isCancellingNode ? "auto" : "smooth");
     });
     return () => window.cancelAnimationFrame(frameId);
-  }, [messages, snapshot, isSending, isSubmittingGuidedSelection, isSubmittingGraphAction, isCancellingNode]);
+  }, [messages, recommendationBundles, snapshot, isSending, isSubmittingGraphAction, isCancellingNode]);
+
+  function triggerRecommendations() {
+    const bundle = createRecommendationBundle();
+    setRecommendationBundles((previous) => [...previous, bundle]);
+    setActiveRecommendationId(bundle.id);
+    setErrorMessage(null);
+    shouldAutoScrollRef.current = true;
+  }
 
   async function onSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -556,6 +591,8 @@ export default function ChatV2PageClient() {
     }
 
     const content = composer.trim();
+    const activeRecommendationBundle =
+      recommendationBundles.find((bundle) => bundle.id === activeRecommendationId) ?? null;
     setComposer("");
     setIsSending(true);
     setErrorMessage(null);
@@ -575,93 +612,20 @@ export default function ChatV2PageClient() {
       const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, cust_id: custId }),
-      });
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-      const payload = (await response.json()) as { snapshot: BackendSnapshot };
-      applySnapshot(payload.snapshot);
-    } catch (error: unknown) {
-      setErrorMessage(error instanceof Error ? error.message : "发送消息失败");
-      setMessages((previous) => previous.filter((message) => message !== localMessage));
-    } finally {
-      setIsSending(false);
-    }
-  }
-
-  function toggleGuidedIntent(intentCode: string) {
-    setGuidedIntents((previous) =>
-      previous.map((item) => (item.intentCode === intentCode ? { ...item, selected: !item.selected } : item)),
-    );
-  }
-
-  function updateGuidedSlot(intentCode: string, field: GuidedFieldTemplate, value: string) {
-    setGuidedIntents((previous) =>
-      previous.map((item) =>
-        item.intentCode === intentCode
-          ? {
-              ...item,
-              selected: true,
-              slotMemory: {
-                ...item.slotMemory,
-                [field.key]: normalizeGuidedFieldValue(field, value),
-              },
-            }
-          : item,
-      ),
-    );
-  }
-
-  function resetGuidedSelection() {
-    setGuidedIntents(createGuidedIntentDrafts());
-  }
-
-  async function submitGuidedSelection() {
-    if (!sessionId) {
-      return;
-    }
-
-    const selectedIntents = guidedIntents
-      .filter((item) => item.selected)
-      .map((item) => ({
-        intentCode: item.intentCode,
-        title: item.title,
-        sourceFragment: item.sourceFragment,
-        slotMemory: filterGuidedSlotMemory(item.slotMemory),
-      }));
-
-    if (selectedIntents.length === 0) {
-      return;
-    }
-
-    const content = composer.trim();
-    const displayContent = content || guidedSelectionDisplayContent(selectedIntents);
-    const localMessage: BackendMessage = {
-      role: "user",
-      content: displayContent,
-      created_at: new Date().toISOString(),
-    };
-
-    setIsSubmittingGuidedSelection(true);
-    setErrorMessage(null);
-    shouldAutoScrollRef.current = true;
-    if (content) {
-      setComposer("");
-    }
-
-    startTransition(() => {
-      setMessages((previous) => [...previous, localMessage]);
-    });
-
-    try {
-      const response = await fetch(`${API_BASE}/sessions/${sessionId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content,
           cust_id: custId,
-          guidedSelection: { selectedIntents },
+          recommendationContext: activeRecommendationBundle
+            ? {
+                recommendationId: activeRecommendationBundle.id,
+                intents: activeRecommendationBundle.intents.map((item) => ({
+                  intentCode: item.intentCode,
+                  title: item.title,
+                  description: item.description,
+                  examples: item.examples,
+                })),
+              }
+            : undefined,
         }),
       });
       if (!response.ok) {
@@ -669,15 +633,13 @@ export default function ChatV2PageClient() {
       }
       const payload = (await response.json()) as { snapshot: BackendSnapshot };
       applySnapshot(payload.snapshot);
-      resetGuidedSelection();
+      setActiveRecommendationId(null);
     } catch (error: unknown) {
-      setErrorMessage(error instanceof Error ? error.message : "提交引导式选择失败");
-      if (content) {
-        setComposer(content);
-      }
+      setErrorMessage(error instanceof Error ? error.message : "发送消息失败");
+      setComposer(content);
       setMessages((previous) => previous.filter((message) => message !== localMessage));
     } finally {
-      setIsSubmittingGuidedSelection(false);
+      setIsSending(false);
     }
   }
 
@@ -750,12 +712,9 @@ export default function ChatV2PageClient() {
     null;
   const candidateIntents = snapshot?.candidate_intents ?? [];
   const nodeTitleById = new Map(displayedGraph?.nodes.map((node) => [node.node_id, node.title]) ?? []);
-  const selectedGuidedIntents = guidedIntents.filter((item) => item.selected);
-  const canSubmitGuidedSelection = Boolean(sessionId && selectedGuidedIntents.length > 0 && !isSending && !isSubmittingGuidedSelection);
-  const readyGuidedSelectionCount = selectedGuidedIntents.filter((item) =>
-    item.fields.every((field) => Boolean(item.slotMemory[field.key]?.trim())),
-  ).length;
-  const canSend = Boolean(sessionId && composer.trim() && !isSending && !isSubmittingGuidedSelection);
+  const displayEntries = buildDisplayEntries(messages, recommendationBundles, activeRecommendationId);
+  const hasActiveRecommendations = activeRecommendationId !== null;
+  const canSend = Boolean(sessionId && composer.trim() && !isSending);
 
   return (
     <div className="shell">
@@ -808,15 +767,55 @@ export default function ChatV2PageClient() {
             aria-relevant="additions text"
             onScroll={handleMessageListScroll}
           >
-            {messages.map((message, index) => (
-              <article key={`${message.role}-${message.created_at}-${index}`} className={`message ${message.role === "user" ? "user" : ""}`.trim()}>
-                <div className="meta">
-                  {message.role === "user" ? "你" : message.role === "assistant" ? "助手" : "系统"}
-                  {formatTime(message.created_at) ? ` · ${formatTime(message.created_at)}` : ""}
-                </div>
-                <p>{message.content}</p>
-              </article>
-            ))}
+            {displayEntries.map((entry) => {
+              if (entry.kind === "recommendation") {
+                return (
+                  <article
+                    key={entry.id}
+                    className={`message recommendation-message ${entry.active ? "is-active" : ""}`.trim()}
+                  >
+                    <div className="meta">
+                      助手
+                      {formatTime(entry.created_at) ? ` · ${formatTime(entry.created_at)}` : ""}
+                    </div>
+                    <p>这里有一组可参考的推荐事项。你可以直接用自然语言回复选择、组合或修改，系统仍然会走意图识别，而不是直接执行这些卡片。</p>
+                    <div className="recommendation-grid">
+                      {entry.intents.map((item, index) => (
+                        <div key={`${entry.id}-${item.intentCode}`} className="recommendation-card">
+                          <div className="recommendation-card-head">
+                            <span className="recommendation-index">{String(index + 1).padStart(2, "0")}</span>
+                            <div>
+                              <strong>{item.title}</strong>
+                              <small>{item.intentCode}</small>
+                            </div>
+                          </div>
+                          <p>{item.description}</p>
+                          <small>例如：{item.examples[0] ?? "请用自然语言描述你的诉求"}</small>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="recommendation-hint">
+                      例如你可以回复：“第一个和第三个都要”“帮我按第二个来，但金额改成500”“我不选这些，还是想换100美元”。
+                    </p>
+                    {entry.active ? (
+                      <div className="recommendation-state">
+                        <Badge label="本轮推荐上下文已激活" tone="emphasis" />
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              }
+
+              return (
+                <article key={entry.id} className={`message ${entry.role === "user" ? "user" : ""}`.trim()}>
+                  <div className="meta">
+                    {entry.role === "user" ? "你" : entry.role === "assistant" ? "助手" : "系统"}
+                    {formatTime(entry.created_at) ? ` · ${formatTime(entry.created_at)}` : ""}
+                  </div>
+                  <p>{entry.content}</p>
+                </article>
+              );
+            })}
           </div>
 
           {errorMessage ? (
@@ -837,91 +836,22 @@ export default function ChatV2PageClient() {
             />
             <div className="composer-foot">
               <small className="hint-text">
-                支持直接补充、修改或取消当前事项。如果右侧选了推荐事项并点击“按所选事项发起”，这里的文字会作为补充说明和 guided selection 一起发送。
+                支持直接补充、修改或取消当前事项。
+                {hasActiveRecommendations ? " 当前已有一组推荐上下文处于激活状态，你的这条消息会带着该上下文一起进入意图识别。" : " 你也可以先点“推荐事项”，再用自然语言表达想要其中哪些事项。"}
               </small>
-              <button type="submit" disabled={!canSend || isSubmittingGraphAction || isCancellingNode}>
-                {isSending ? "发送中..." : "发送消息"}
-              </button>
+              <div className="composer-actions">
+                <button className="toggle-button recommendation-trigger" onClick={triggerRecommendations} type="button">
+                  推荐事项
+                </button>
+                <button type="submit" disabled={!canSend || isSubmittingGraphAction || isCancellingNode}>
+                  {isSending ? "发送中..." : "发送消息"}
+                </button>
+              </div>
             </div>
           </form>
         </section>
 
         <aside className="context-rail">
-          <section className="rail-section guided-section">
-            <div className="section-head">
-              <p className="section-label">可选引导式选择</p>
-              <Badge
-                label={selectedGuidedIntents.length > 0 ? `已选 ${selectedGuidedIntents.length}` : "未选择"}
-                tone={selectedGuidedIntents.length > 0 ? "emphasis" : "default"}
-              />
-            </div>
-            <h3>推荐事项</h3>
-            <p className="status-copy guided-copy">
-              这只是 V2 的一条可选入口。自由对话仍然保留；当你已经明确事项和关键要素时，可以直接把结构化意图送进执行图。会话区输入框仍然是主入口，若里面有补充说明，会和本面板选择一起提交。
-            </p>
-            <div className="guided-grid">
-              {guidedIntents.map((item) => {
-                const filledFields = item.fields.filter((field) => Boolean(item.slotMemory[field.key]?.trim())).length;
-                const isReady = item.fields.length > 0 && filledFields === item.fields.length;
-                return (
-                  <article
-                    key={item.intentCode}
-                    className={`guided-card ${item.selected ? "is-selected" : ""}`.trim()}
-                  >
-                    <div className="guided-card-head">
-                      <div>
-                        <strong>{item.title}</strong>
-                        <small>{item.intentCode}</small>
-                      </div>
-                      <button className="toggle-button" onClick={() => toggleGuidedIntent(item.intentCode)} type="button">
-                        {item.selected ? "取消" : "选择"}
-                      </button>
-                    </div>
-                    <p className="status-copy">{item.description}</p>
-                    <div className="guided-selection-meta">
-                      <Badge label={isReady ? "要素已齐" : `已填 ${filledFields}/${item.fields.length}`} tone={isReady ? "success" : "default"} />
-                    </div>
-                    <div className="guided-field-grid">
-                      {item.fields.map((field) => (
-                        <label key={`${item.intentCode}-${field.key}`} className="guided-field">
-                          <span>{field.label}</span>
-                          <input
-                            placeholder={field.placeholder}
-                            type="text"
-                            inputMode={field.inputMode}
-                            value={item.slotMemory[field.key] ?? ""}
-                            onChange={(event) => updateGuidedSlot(item.intentCode, field, event.target.value)}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-            <div className="composer-foot">
-              <small className="hint-text">
-                当前已选 {selectedGuidedIntents.length} 项，其中 {readyGuidedSelectionCount} 项关键槽位已齐。主输入框留空时，接口会只发送
-                <span className="mono"> guidedSelection </span>
-                以及空的
-                <span className="mono"> content </span>
-                ；若主输入框有文字，则两者一起发送。
-              </small>
-              <div className="guided-actions">
-                <button className="toggle-button" onClick={resetGuidedSelection} type="button">
-                  重置推荐项
-                </button>
-                <button
-                  type="button"
-                  disabled={!canSubmitGuidedSelection || isSubmittingGraphAction || isCancellingNode}
-                  onClick={() => void submitGuidedSelection()}
-                >
-                  {isSubmittingGuidedSelection ? "提交中..." : "按所选事项发起"}
-                </button>
-              </div>
-            </div>
-          </section>
-
           {pendingGraph ? (
             <section className="rail-section plan-section">
               <div className="section-head">

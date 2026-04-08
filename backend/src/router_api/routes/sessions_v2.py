@@ -11,7 +11,7 @@ from starlette.responses import StreamingResponse
 from router_api.dependencies import get_event_broker_v2, get_orchestrator_v2
 from router_api.sse.broker import EventBroker
 from router_core.domain import TaskEvent, TaskStatus
-from router_core.v2_domain import GuidedSelectionPayload
+from router_core.v2_domain import GuidedSelectionPayload, RecommendationContextPayload
 from router_core.v2_orchestrator import GraphRouterOrchestrator
 
 
@@ -32,6 +32,7 @@ class MessageRequest(BaseModel):
     content: str | None = None
     message: str | None = None
     guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
+    recommendation_context: RecommendationContextPayload | None = Field(default=None, alias="recommendationContext")
     cust_id: str | None = None
 
     @model_validator(mode="after")
@@ -129,6 +130,7 @@ async def post_message(
             cust_id=resolved_cust_id,
             content=request.content or "",
             guided_selection=request.guided_selection,
+            recommendation_context=request.recommendation_context,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -228,6 +230,7 @@ async def post_message_stream(
                 cust_id=resolved_cust_id,
                 content=request.content or "",
                 guided_selection=request.guided_selection,
+                recommendation_context=request.recommendation_context,
             )
         )
         try:
