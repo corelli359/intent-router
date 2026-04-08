@@ -1,201 +1,393 @@
-# V2 当前 LLM 调用流程图
+# V2 当前 Router 侧 LLM 调用流程
 
-本文描述的是当前 `/api/router/v2` 运行时的真实调用链，不是目标态设计图。
+本文只讨论当前 `/api/router/v2` 的 **Router 侧** 真实执行逻辑。
 
-关注点只有两个：
+不讨论：
 
-- 一条用户输入进来后，当前 V2 会调用几次大模型
-- 不同状态下，这几次大模型分别承担什么职责
+- V1
+- 前端
+- 下游 business agent 自己内部可能发生的 LLM 调用
 
-## 1. 总览
+也就是说，本文只回答一个问题：
 
-当前 V2 把三个问题拆成了三层：
+- **V2 Router 在什么分支下，会调用 `recognizer`、`graph planner`、`turn interpreter` 这三类 LLM？**
+
+## 1. 结论先说
+
+当前 V2 Router 侧有 3 类独立的 LLM 角色：
 
 1. `IntentRecognizer`
    负责识别当前消息命中了哪些 intent
 2. `IntentGraphPlanner`
-   负责把识别结果组织成 graph
+   负责把识别结果转成 graph
 3. `TurnInterpreter`
-   负责在 waiting / pending_graph 状态下判断当前新消息是补充、取消、确认还是重规划
+   负责在 `waiting_node` / `pending_graph` 场景下，判断这条新消息是在补充、取消、确认，还是要求重规划
 
-业务 agent 自己如果是 LLM agent，还会再额外调用一次大模型做槽位提取。
+这 3 类不是同一次请求，也不是同一个 prompt。
 
-## 2. 首轮新消息
+最容易误解的一点是：
 
-适用场景：
+- `graph planner` 不是“recognize 的一部分”
+- 它是一次独立的 LLM 调用
+- 但它 **只会在建图或重规划时触发**
+- 普通补槽不会调用 `graph planner`
+
+## 2. 当前 V2 的入口分流
+
+`GraphRouterOrchestrator.handle_user_message()` 当前是按状态分流的：
+
+- 如果有 `pending_graph`，走 `pending_graph` 自然语言处理
+- 否则如果有 `waiting_node`，走 `waiting_node` 自然语言处理
+- 否则走“首轮新消息 / 新建图”处理
+
+对应代码入口：
+
+- [v2_orchestrator.py:155](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L155)
+- [v2_orchestrator.py:160](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L160)
+- [v2_orchestrator.py:164](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L164)
+- [v2_orchestrator.py:169](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L169)
+
+## 3. 一张总图
+
+下面这张图只画 **Router 侧** LLM，不把下游 agent 混进去。
+
+```mermaid
+flowchart TD
+    A[用户输入进入 /api/router/v2] --> B{当前状态}
+
+    B -->|无 pending_graph\n无 waiting_node| C[新消息路径]
+    B -->|有 waiting_node| D[waiting_node 路径]
+    B -->|有 pending_graph| E[pending_graph 自然语言路径]
+
+    C --> C1[LLM #1: IntentRecognizer]
+    C1 --> C2[LLM #2: IntentGraphPlanner]
+    C2 --> C3{graph 节点数}
+    C3 -->|1 个节点| C4[current_graph]
+    C3 -->|>1 个节点| C5[pending_graph]
+
+    D --> D1[LLM #1: IntentRecognizer]
+    D1 --> D2[LLM #2: TurnInterpreter]
+    D2 --> D3{decision.action}
+    D3 -->|resume_current| D4[恢复当前节点]
+    D3 -->|cancel_current| D5[取消当前节点]
+    D3 -->|wait| D6[保持 waiting]
+    D3 -->|replan| D7[复用本轮 recognition]
+    D7 --> D8[LLM #3: IntentGraphPlanner]
+    D8 --> D9[重建 graph]
+
+    E --> E1[LLM #1: IntentRecognizer]
+    E1 --> E2[LLM #2: TurnInterpreter]
+    E2 --> E3{decision.action}
+    E3 -->|confirm_pending_graph| E4[确认 pending_graph]
+    E3 -->|cancel_pending_graph| E5[取消 pending_graph]
+    E3 -->|wait| E6[继续等待]
+    E3 -->|replan| E7[复用本轮 recognition]
+    E7 --> E8[LLM #3: IntentGraphPlanner]
+    E8 --> E9[重建 graph]
+```
+
+## 4. 首轮新消息
+
+适用前提：
 
 - 当前没有 `pending_graph`
 - 当前没有 `waiting_node`
-- 用户发来一条新的自然语言消息
+
+这条路径的逻辑最简单：
+
+1. 先做一次 `recognize`
+2. 再做一次 `graph planner`
+
+代码链路：
+
+- [v2_orchestrator.py:199](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L199)
+- [v2_orchestrator.py:208](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L208)
+- [v2_orchestrator.py:234](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L234)
+
+其中：
+
+- `recognize` 发生在 [v2_orchestrator.py:210](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L210)
+- `graph planner` 发生在 [v2_orchestrator.py:234](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L234)
+
+而 `graph planner` 内部确实是一次独立 LLM 调用：
+
+- [v2_planner.py:239](/root/intent-router/backend/src/router_core/v2_planner.py#L239)
+
+因此：
+
+- **首轮建图 = 2 次 Router 侧 LLM**
+- `recognizer` 和 `planner` 不是同一次
 
 ```mermaid
 sequenceDiagram
     participant User as 用户
-    participant API as /api/router/v2/messages
-    participant Orchestrator as GraphRouterOrchestrator
+    participant Router as GraphRouterOrchestrator
     participant Recognizer as IntentRecognizer
     participant Planner as IntentGraphPlanner
-    participant Agent as Intent Agent
     participant LLM as 大模型
 
-    User->>API: 新消息
-    API->>Orchestrator: handle_user_message()
-    Orchestrator->>Recognizer: recognize(message, history, memory)
-    Recognizer->>LLM: 第1次 LLM 调用\n意图识别
-    Recognizer-->>Orchestrator: primary/candidates
-    Orchestrator->>Planner: plan(message, matches, history, memory)
-    Planner->>LLM: 第2次 LLM 调用\n图规划
-    Planner-->>Orchestrator: ExecutionGraphState
-
-    alt graph 有多个节点
-        Orchestrator-->>API: pending_graph\n等待用户确认
-    else graph 只有一个节点
-        Orchestrator->>Agent: dispatch node
-        opt 该 agent 本身是 LLM agent
-            Agent->>LLM: 第3次 LLM 调用\n槽位提取/业务解释
-        end
-        Agent-->>Orchestrator: waiting/completed/failed
-        Orchestrator-->>API: current_graph 更新
-    end
+    User->>Router: 新消息
+    Router->>Recognizer: recognize(...)
+    Recognizer->>LLM: 第1次 LLM\n意图识别
+    Recognizer-->>Router: primary/candidates
+    Router->>Planner: plan(...)
+    Planner->>LLM: 第2次 LLM\ngraph 规划
+    Planner-->>Router: ExecutionGraphState
 ```
 
-结论：
+## 5. Waiting Node 自然语言补充
 
-- 首轮新消息通常至少会有 `2` 次 LLM 调用
-- 如果命中的节点 agent 也是 LLM agent，通常会变成 `3` 次
+适用前提：
 
-## 3. Waiting Node 状态
+- 当前 `current_graph` 中有一个 `waiting_node`
+- 用户继续发自然语言
 
-适用场景：
+代码链路：
 
-- 当前 `current_graph` 里有一个节点处于 `waiting_user_input`
-- 用户继续发来补充消息
+- [v2_orchestrator.py:618](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L618)
+
+这条路径固定先做两步：
+
+1. `recognize`
+2. `turn interpreter`
+
+对应代码：
+
+- [v2_orchestrator.py:624](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L624)
+- [v2_orchestrator.py:634](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L634)
+
+而 `turn interpreter` 内部也是一次独立 LLM 调用：
+
+- [v2_planner.py:443](/root/intent-router/backend/src/router_core/v2_planner.py#L443)
+
+### 5.1 普通补槽
+
+如果 `decision.action == resume_current`：
+
+- 只会恢复当前 node
+- **不会再调用 graph planner**
+
+代码：
+
+- [v2_orchestrator.py:640](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L640)
+
+因此这条分支是：
+
+- **2 次 Router 侧 LLM**
+- `recognizer + turn interpreter`
+
+### 5.2 用户要求重规划
+
+如果 `decision.action == replan`：
+
+- 先取消当前 graph
+- 然后调用 `_route_new_message(...)`
+- 但这里会把刚才那次 `recognition` 直接传进去
+
+代码：
+
+- [v2_orchestrator.py:647](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L647)
+- [v2_orchestrator.py:649](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L649)
+
+这意味着：
+
+- **不会再做第二次 `recognize`**
+- 只会额外再做一次 `graph planner`
+
+所以这条分支总共是：
+
+- `recognizer`
+- `turn interpreter`
+- `graph planner`
+
+也就是：
+
+- **3 次 Router 侧 LLM**
 
 ```mermaid
 flowchart TD
-    A[用户补充消息] --> B[GraphRouterOrchestrator._handle_waiting_node_turn]
-    B --> C[IntentRecognizer]
-    C --> C1[第1次 LLM 调用\n识别这条消息像不像新意图]
-    C --> D[TurnInterpreter]
-    D --> D1[第2次 LLM 调用\n判断 resume/cancel/replan/wait]
-
+    A[waiting_node 下用户发自然语言] --> B[LLM #1: IntentRecognizer]
+    B --> C[LLM #2: TurnInterpreter]
+    C --> D{decision.action}
     D -->|resume_current| E[恢复当前节点]
-    E --> F[dispatch 当前 agent]
-    F --> G{agent 是否为 LLM agent}
-    G -->|是| H[第3次 LLM 调用\n槽位提取]
-    G -->|否| I[直接业务执行]
-
-    D -->|cancel_current| J[取消当前节点]
-    D -->|wait| K[保持 waiting]
-    D -->|replan| L[取消当前 graph]
-    L --> M[复用本轮 recognition 结果]
-    M --> N[IntentGraphPlanner]
-    N --> N1[第3次 LLM 调用\n重规划 graph]
+    D -->|cancel_current| F[取消当前节点]
+    D -->|wait| G[保持 waiting]
+    D -->|replan| H[取消当前 graph]
+    H --> I[复用刚才的 recognition]
+    I --> J[LLM #3: IntentGraphPlanner]
+    J --> K[重建 graph]
 ```
 
-这里最关键的一点是：
+## 6. Pending Graph 的两种入口
 
-- waiting node 下的补充消息，当前实现不是直接送给 agent
-- 它会先经过一次 `recognizer`
-- 再经过一次 `turn interpreter`
-- 只有决定 `resume_current` 之后，才真正把消息送给当前 agent
+这里一定要分开看，因为“按钮动作”和“自然语言消息”完全不是同一条链路。
 
-所以 waiting node 的自然语言补充，当前通常是：
+### 6.1 `/actions` 按钮确认 / 取消
 
-- `2` 次核心 LLM 调用
-- 如果当前 agent 自己也用 LLM，再额外 `+1`
+适用前提：
 
-## 4. Pending Graph 状态
+- 当前有 `pending_graph`
+- 用户点击 `confirm_graph` / `cancel_graph`
 
-适用场景：
+这条路径 **不经过 `handle_user_message()`**，而是走：
 
-- 当前已经有 `pending_graph`
-- 用户还没确认执行
+- [v2_orchestrator.py:172](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L172)
 
-这里有两条完全不同的入口。
+对应代码：
 
-### 4.1 用户点按钮 `confirm_graph` / `cancel_graph`
+- [v2_orchestrator.py:187](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L187)
+- [v2_orchestrator.py:190](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L190)
+
+这条路径：
+
+- 不会做 `recognize`
+- 不会做 `turn interpreter`
+- 不会做 `graph planner`
+
+因此：
+
+- **0 次 Router 侧 LLM**
 
 ```mermaid
 flowchart TD
-    A[用户点击按钮] --> B[/api/router/v2/actions]
+    A[用户点击 confirm_graph/cancel_graph] --> B[/api/router/v2/actions]
     B --> C[GraphRouterOrchestrator.handle_action]
     C -->|confirm_graph| D[_confirm_pending_graph]
-    D --> E[_drain_graph]
-    E --> F[dispatch node agent]
-    F --> G{agent 是否为 LLM agent}
-    G -->|是| H[agent 自己调用 LLM]
-    G -->|否| I[直接业务执行]
-
-    C -->|cancel_graph| J[_cancel_pending_graph]
+    C -->|cancel_graph| E[_cancel_pending_graph]
 ```
 
-这条按钮路径本身不会再走 `recognizer`，也不会走 `turn interpreter`。
+### 6.2 `pending_graph` 下用户发自然语言
 
-结论：
+适用前提：
 
-- 按钮确认/取消图，本身 `0` 次核心 LLM 调用
-- 后续只有 node agent 可能再调 LLM
+- 当前有 `pending_graph`
+- 用户不是点按钮，而是继续发自然语言
 
-### 4.2 用户在 `pending_graph` 时发自然语言
+代码链路：
+
+- [v2_orchestrator.py:584](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L584)
+
+这条路径先固定做两步：
+
+1. `recognize`
+2. `turn interpreter`
+
+对应代码：
+
+- [v2_orchestrator.py:588](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L588)
+- [v2_orchestrator.py:595](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L595)
+
+#### 6.2.1 自然语言确认 / 取消 / 等待
+
+如果 `decision.action` 是：
+
+- `confirm_pending_graph`
+- `cancel_pending_graph`
+- `wait`
+
+那么都 **不会** 再调用 `graph planner`。
+
+代码：
+
+- [v2_orchestrator.py:600](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L600)
+- [v2_orchestrator.py:603](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L603)
+- [v2_orchestrator.py:616](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L616)
+
+因此这几条分支都是：
+
+- **2 次 Router 侧 LLM**
+
+#### 6.2.2 自然语言要求重规划
+
+如果 `decision.action == replan`：
+
+- 会清掉当前 `pending_graph`
+- 调 `_route_new_message(...)`
+- 同样复用这次已经拿到的 `recognition`
+
+代码：
+
+- [v2_orchestrator.py:606](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L606)
+- [v2_orchestrator.py:608](/root/intent-router/backend/src/router_core/v2_orchestrator.py#L608)
+
+因此这条分支也是：
+
+- `recognizer`
+- `turn interpreter`
+- `graph planner`
+
+也就是：
+
+- **3 次 Router 侧 LLM**
 
 ```mermaid
 flowchart TD
-    A[用户发自然语言] --> B[_handle_pending_graph_turn]
-    B --> C[IntentRecognizer]
-    C --> C1[第1次 LLM 调用\n意图识别]
-    C --> D[TurnInterpreter]
-    D --> D1[第2次 LLM 调用\n判断 confirm/cancel/replan/wait]
-
-    D -->|confirm_pending_graph| E[_confirm_pending_graph]
-    D -->|cancel_pending_graph| F[_cancel_pending_graph]
+    A[pending_graph 下用户发自然语言] --> B[LLM #1: IntentRecognizer]
+    B --> C[LLM #2: TurnInterpreter]
+    C --> D{decision.action}
+    D -->|confirm_pending_graph| E[确认 graph]
+    D -->|cancel_pending_graph| F[取消 graph]
     D -->|wait| G[继续等待]
-    D -->|replan| H[_route_new_message with existing recognition]
-    H --> I[IntentGraphPlanner]
-    I --> I1[第3次 LLM 调用\n重规划 graph]
+    D -->|replan| H[清理 pending_graph]
+    H --> I[复用刚才的 recognition]
+    I --> J[LLM #3: IntentGraphPlanner]
+    J --> K[重建 graph]
 ```
 
-注意这里的 `replan` 路径：
+## 7. 当前 Router 侧 LLM 次数表
 
-- 会复用刚才那次 `recognition`
-- 不会再重复做第二次 intent recognition
-- 但会再调用一次 graph planner
+下面这张表 **只统计 Router 侧**，不把下游 agent 算进去。
 
-## 5. 当前调用次数一览
+| 场景 | Router 侧会经过哪些 LLM | 次数 |
+| --- | --- | --- |
+| 首轮新消息建图 | `recognizer + graph planner` | 2 |
+| waiting_node 普通补槽 | `recognizer + turn interpreter` | 2 |
+| waiting_node 重规划 | `recognizer + turn interpreter + graph planner` | 3 |
+| pending_graph 按钮确认/取消 | 无 | 0 |
+| pending_graph 自然语言确认/取消/继续等待 | `recognizer + turn interpreter` | 2 |
+| pending_graph 自然语言重规划 | `recognizer + turn interpreter + graph planner` | 3 |
 
-| 场景 | 核心 LLM 调用 | 可能的 agent LLM | 合计常见次数 |
-| --- | --- | --- | --- |
-| 首轮新消息 | recognizer + graph planner | 可能有 | 2 或 3 |
-| waiting node 补充消息 | recognizer + turn interpreter | 可能有 | 2 或 3 |
-| pending graph 按钮确认 | 无 | 可能有 | 0 或 1 |
-| pending graph 自然语言确认/取消 | recognizer + turn interpreter | 通常无 | 2 |
-| pending graph 自然语言 replan | recognizer + turn interpreter + graph planner | 后续可能有 | 3 或 4 |
+## 8. 最容易混淆的 3 个点
 
-## 6. 当前设计的直接含义
+### 8.1 `recognizer` 和 `graph planner` 不是一回事
 
-当前 V2 的大模型不是“一次做完所有事”，而是拆成了多层：
+它们当前是两次独立的 LLM 请求：
 
-- 先识别
-- 再规划
-- 再解释 waiting/pending_graph 状态下的新消息
-- 最后交给具体业务 agent
+- `recognizer` 只负责“命中了哪些 intent”
+- `graph planner` 只负责“怎么把这些 intent 组织成 graph”
 
-这种拆法的好处是职责清晰，但代价也很直接：
+### 8.2 普通补槽不会经过 `graph planner`
 
-- 调用次数偏多
-- 延迟会叠加
-- 某些 waiting 场景下，补充消息会先被上层判定，再进入 agent
+`waiting_node` 下如果只是 `resume_current`，不会重建 graph。
 
-## 7. 当前最值得继续优化的点
+所以普通补槽路径只有：
 
-如果后续要降调用次数，最直接的两个收敛方向是：
+- `recognizer`
+- `turn interpreter`
 
-1. 把“意图识别 + 图规划”合成一次 LLM 调用
-2. 把 waiting / pending_graph 下的“意图识别 + turn interpreter”合成一次 LLM 调用
+### 8.3 `replan` 不会重复做第二次 `recognize`
 
-这样可以把当前多段式链路收敛成：
+无论是 `waiting_node` 还是 `pending_graph`，只要走 `replan`：
 
-- 首轮新消息：`1 次 graph LLM + 1 次 agent LLM`
-- waiting node：`1 次 turn-decision LLM + 1 次 agent LLM`
+- 都会复用本轮已经拿到的 `recognition`
+- 然后只额外补一次 `graph planner`
 
-这会更接近你想要的动态 graph runtime。
+所以 `replan` 不是“重新走一整遍全部流程”，而是：
+
+- 先做 `recognize`
+- 再做 `turn interpreter`
+- 最后补一次 `graph planner`
+
+## 9. 这张图对后续优化意味着什么
+
+如果后面要压缩 Router 侧 LLM 次数，最直接的两条路是：
+
+1. 把“首轮建图”的 `recognizer + graph planner` 合成一次
+2. 把“waiting / pending_graph”的 `recognizer + turn interpreter` 合成一次
+
+这样当前最常见的两类路径就能收敛成：
+
+- 新消息建图：1 次 Router LLM
+- waiting/pending_graph 决策：1 次 Router LLM
+
+这会比当前拆层式调用更接近你要的动态 graph runtime。
