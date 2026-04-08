@@ -579,7 +579,7 @@ class GraphRouterOrchestrator:
             )
         )
         await self._run_node(session, graph, node, content)
-        await self._drain_graph(session, graph.source_message)
+        await self._drain_graph(session, content)
 
     async def _handle_pending_graph_turn(self, session: GraphSessionState, content: str) -> None:
         pending_graph = session.pending_graph
@@ -642,7 +642,7 @@ class GraphRouterOrchestrator:
             return
         if decision.action == "cancel_current":
             await self._cancel_current_node(session, reason=decision.reason or "用户取消当前节点")
-            await self._drain_graph(session, graph.source_message)
+            await self._drain_graph(session, content)
             return
         if decision.action == "replan":
             await self._cancel_current_graph(session, reason=decision.reason or "检测到用户修改了目标，准备重规划")
@@ -928,9 +928,7 @@ class GraphRouterOrchestrator:
                     else [GraphNodeStatus.COMPLETED.value]
                 )
                 if source.status.value in expected_statuses:
-                    if edge.condition is not None and (
-                        edge.condition.left_key is not None or edge.condition.expression is not None
-                    ):
+                    if edge.condition is not None and edge.condition.left_key is not None:
                         if self._condition_matches_from_condition(source, edge.condition):
                             continue
                         should_skip = True
@@ -991,7 +989,11 @@ class GraphRouterOrchestrator:
         if all(status in {GraphNodeStatus.CANCELLED, GraphNodeStatus.SKIPPED} for status in statuses):
             return GraphStatus.CANCELLED
         if all(status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.SKIPPED} for status in statuses):
-            return GraphStatus.COMPLETED
+            return (
+                GraphStatus.PARTIALLY_COMPLETED
+                if any(status == GraphNodeStatus.SKIPPED for status in statuses)
+                else GraphStatus.COMPLETED
+            )
         if any(status == GraphNodeStatus.FAILED for status in statuses):
             completed = any(status == GraphNodeStatus.COMPLETED for status in statuses)
             return GraphStatus.PARTIALLY_COMPLETED if completed else GraphStatus.FAILED
@@ -1071,6 +1073,8 @@ class GraphRouterOrchestrator:
     def _graph_event_name(self, status: GraphStatus) -> str:
         if status == GraphStatus.COMPLETED:
             return "graph.completed"
+        if status == GraphStatus.PARTIALLY_COMPLETED:
+            return "graph.partially_completed"
         if status == GraphStatus.FAILED:
             return "graph.failed"
         if status == GraphStatus.CANCELLED:
@@ -1080,6 +1084,8 @@ class GraphRouterOrchestrator:
     def _graph_message(self, status: GraphStatus) -> str:
         if status == GraphStatus.COMPLETED:
             return "执行图已完成"
+        if status == GraphStatus.PARTIALLY_COMPLETED:
+            return "执行图部分完成，部分节点因条件未满足被跳过"
         if status == GraphStatus.FAILED:
             return "执行图执行失败"
         if status == GraphStatus.CANCELLED:

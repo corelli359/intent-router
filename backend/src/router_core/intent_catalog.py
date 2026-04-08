@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
-from typing import Callable
 
 from models.intent import IntentRecord, IntentStatus
 from persistence.intent_repository import IntentRepository
 from router_core.domain import IntentDefinition
-from router_core.rule_recognizer import extract_patterns
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,40 +12,20 @@ class CatalogSnapshot:
     active: tuple[IntentDefinition, ...] = ()
     fallback: IntentDefinition | None = None
     priorities: dict[str, int] = field(default_factory=dict)
-    patterns: dict[str, set[str]] = field(default_factory=dict)
 
 
 class RepositoryIntentCatalog:
-    def __init__(
-        self,
-        repository: IntentRepository,
-        *,
-        refresh_interval_seconds: float = 5.0,
-        clock: Callable[[], float] | None = None,
-    ) -> None:
+    def __init__(self, repository: IntentRepository) -> None:
         self.repository = repository
-        self.refresh_interval_seconds = refresh_interval_seconds
-        self.clock = clock or time.monotonic
         self._snapshot = CatalogSnapshot()
-        self._last_refresh_at: float | None = None
 
     def list_active(self) -> list[IntentDefinition]:
-        self._refresh_if_needed()
         return list(self._snapshot.active)
 
     def priorities(self) -> dict[str, int]:
-        self._refresh_if_needed()
         return dict(self._snapshot.priorities)
 
-    def patterns(self) -> dict[str, set[str]]:
-        self._refresh_if_needed()
-        return {
-            intent_code: set(patterns)
-            for intent_code, patterns in self._snapshot.patterns.items()
-        }
-
     def get_fallback_intent(self) -> IntentDefinition | None:
-        self._refresh_if_needed()
         if self._snapshot.fallback is None:
             return None
         return self._snapshot.fallback.model_copy(deep=True)
@@ -70,25 +47,12 @@ class RepositoryIntentCatalog:
             intent.intent_code: intent.dispatch_priority
             for intent in [*routable_intents, *fallback_intents]
         }
-        patterns = {
-            intent.intent_code: extract_patterns(intent)
-            for intent in routable_intents
-        }
         self._snapshot = CatalogSnapshot(
             active=tuple(routable_intents),
             fallback=fallback_intent,
             priorities=priorities,
-            patterns=patterns,
         )
-        self._last_refresh_at = self.clock()
         return list(self._snapshot.active)
-
-    def _refresh_if_needed(self) -> None:
-        should_refresh = self._last_refresh_at is None or (
-            self.clock() - self._last_refresh_at >= self.refresh_interval_seconds
-        )
-        if should_refresh:
-            self.refresh_now()
 
     def _to_definition(self, record: IntentRecord) -> IntentDefinition:
         return IntentDefinition(

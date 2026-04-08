@@ -126,7 +126,7 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
             }
         )
         agent_http_client = httpx.AsyncClient(transport=agent_transport)
-        catalog = RepositoryIntentCatalog(repository, refresh_interval_seconds=0.01)
+        catalog = RepositoryIntentCatalog(repository)
         orchestrator = RouterOrchestrator(
             publish_event=lambda event: None,
             intent_catalog=catalog,
@@ -202,6 +202,7 @@ def test_register_activate_and_route_via_database_repository(tmp_path: Path, mon
                 activate_fallback = await client.post("/api/admin/intents/fallback_general/activate")
                 assert activate_order.status_code == 200
                 assert activate_fallback.status_code == 200
+                catalog.refresh_now()
 
                 persisted = DatabaseIntentRepository(database_url)
                 assert [item.intent_code for item in persisted.list_intents()] == [

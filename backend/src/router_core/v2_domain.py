@@ -52,7 +52,6 @@ class GraphCondition(BaseModel):
     left_key: str | None = None
     operator: str | None = None
     right_value: float | int | str | bool | None = None
-    expression: str | None = None
 
 
 class GraphEdge(BaseModel):

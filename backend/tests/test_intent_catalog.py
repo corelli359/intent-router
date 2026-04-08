@@ -28,15 +28,10 @@ def _payload(*, intent_code: str, status: IntentStatus) -> IntentPayload:
     )
 
 
-def test_catalog_only_exposes_active_intents_after_refresh_interval() -> None:
-    now = [100.0]
-
-    def clock() -> float:
-        return now[0]
-
+def test_catalog_keeps_cached_snapshot_until_refresh_now() -> None:
     repository = InMemoryIntentRepository()
     repository.create_intent(_payload(intent_code="query_order_status", status=IntentStatus.INACTIVE))
-    catalog = RepositoryIntentCatalog(repository, refresh_interval_seconds=5.0, clock=clock)
+    catalog = RepositoryIntentCatalog(repository)
 
     assert catalog.list_active() == []
 
@@ -45,12 +40,22 @@ def test_catalog_only_exposes_active_intents_after_refresh_interval() -> None:
         _payload(intent_code="query_order_status", status=IntentStatus.ACTIVE),
     )
 
-    assert catalog.list_active() == []
+    catalog.refresh_now()
+    assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
 
-    now[0] += 5.1
-    active_intents = catalog.list_active()
-    assert [intent.intent_code for intent in active_intents] == ["query_order_status"]
+    repository.update_intent(
+        "query_order_status",
+        _payload(intent_code="query_order_status", status=IntentStatus.INACTIVE),
+    )
+
+    assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
     assert catalog.priorities() == {"query_order_status": 100}
+
+    assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
+
+    catalog.refresh_now()
+    assert catalog.list_active() == []
+    assert catalog.priorities() == {}
 
 
 def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_dispatch() -> None:
@@ -62,7 +67,8 @@ def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_d
         )
     )
 
-    catalog = RepositoryIntentCatalog(repository, refresh_interval_seconds=5.0)
+    catalog = RepositoryIntentCatalog(repository)
+    catalog.refresh_now()
 
     assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
     assert catalog.get_fallback_intent() is not None
@@ -70,13 +76,17 @@ def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_d
     assert catalog.priorities()["fallback_general"] == 1
 
 
-def test_catalog_precomputes_simple_recognizer_patterns() -> None:
+def test_catalog_reads_cached_snapshot_without_sync_refresh() -> None:
     repository = InMemoryIntentRepository()
     repository.create_intent(_payload(intent_code="transfer_money", status=IntentStatus.ACTIVE))
-    catalog = RepositoryIntentCatalog(repository, refresh_interval_seconds=5.0)
+    catalog = RepositoryIntentCatalog(repository)
+    catalog.refresh_now()
 
-    patterns = catalog.patterns()
+    repository.update_intent(
+        "transfer_money",
+        _payload(intent_code="transfer_money", status=IntentStatus.INACTIVE),
+    )
 
-    assert "transfer_money" in patterns
-    assert "transfer_money" in patterns["transfer_money"]
-    assert "description" in patterns["transfer_money"]
+    assert [intent.intent_code for intent in catalog.list_active()] == ["transfer_money"]
+    catalog.refresh_now()
+    assert catalog.list_active() == []

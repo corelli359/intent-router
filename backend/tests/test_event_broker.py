@@ -37,3 +37,36 @@ def test_event_broker_emits_heartbeat_before_real_event() -> None:
         await stream.aclose()
 
     asyncio.run(run())
+
+
+def test_event_broker_drops_oldest_event_when_queue_is_full() -> None:
+    async def run() -> None:
+        broker = EventBroker(max_queue_size=1)
+        queue = broker.register("session_overflow")
+
+        await broker.publish(
+            TaskEvent(
+                event="task.created",
+                task_id="task_001",
+                session_id="session_overflow",
+                intent_code="query_account_balance",
+                status=TaskStatus.CREATED,
+                message="created",
+            )
+        )
+        await broker.publish(
+            TaskEvent(
+                event="task.completed",
+                task_id="task_001",
+                session_id="session_overflow",
+                intent_code="query_account_balance",
+                status=TaskStatus.COMPLETED,
+                message="completed",
+            )
+        )
+
+        event = queue.get_nowait()
+        assert event.event == "task.completed"
+        broker.unregister("session_overflow", queue)
+
+    asyncio.run(run())

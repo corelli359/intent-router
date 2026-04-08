@@ -60,8 +60,7 @@ DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT = (
     '        "expected_statuses": ["completed"],\n'
     '        "left_key": "string | null",\n'
     '        "operator": "> | >= | == | < | <= | null",\n'
-    '        "right_value": 0,\n'
-    '        "expression": "string | null"\n'
+    '        "right_value": 0\n'
     "      }}\n"
     "    }}\n"
     "  ]\n"

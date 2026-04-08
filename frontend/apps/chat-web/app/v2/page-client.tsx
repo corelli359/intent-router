@@ -41,7 +41,6 @@ type BackendGraphEdge = {
   relation_type: string;
   label?: string | null;
   condition?: {
-    expression?: string | null;
     left_key?: string | null;
     operator?: string | null;
     right_value?: string | number | boolean | null;
@@ -148,6 +147,7 @@ const EVENT_LABELS: Record<string, string> = {
   "graph.confirmed": "执行图已确认",
   "graph.created": "执行图已创建",
   "graph.updated": "执行图更新",
+  "graph.partially_completed": "执行图部分完成",
   "graph.completed": "执行图完成",
   "graph.failed": "执行图失败",
   "graph.cancelled": "执行图取消",
@@ -229,9 +229,6 @@ function relationTypeLabel(type: string): string {
 }
 
 function edgeDescription(edge: BackendGraphEdge): string {
-  if (edge.condition?.expression) {
-    return edge.condition.expression;
-  }
   if (edge.condition?.left_key && edge.condition.operator) {
     return `${edge.condition.left_key} ${edge.condition.operator} ${String(edge.condition.right_value ?? "")}`.trim();
   }

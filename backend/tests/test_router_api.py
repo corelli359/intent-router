@@ -5,11 +5,20 @@ import json
 from datetime import timedelta
 
 import httpx
+import sys
+from pathlib import Path
 
 from router_api.dependencies import get_orchestrator
 from router_api.app import create_router_app
 from router_api.sse.broker import EventBroker
-from router_core.agent_client import MockStreamingAgentClient, StreamingAgentClient
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from tests.support.mock_agent_client import MockStreamingAgentClient
+from router_core.agent_client import StreamingAgentClient
 
 from router_core.domain import IntentDefinition, IntentMatch, TaskEvent, TaskStatus, utc_now
 from router_core.orchestrator import RouterOrchestrator
@@ -57,7 +66,7 @@ def _mock_intents() -> list[IntentDefinition]:
             description="查询账户余额，需要卡号和手机号后4位。",
             examples=["帮我查一下账户余额", "查余额"],
             keywords=["余额", "账户", "银行卡"],
-            agent_url="mock://query_account_balance",
+            agent_url="http://test-agent/query_account_balance",
             dispatch_priority=100,
             primary_threshold=0.68,
             candidate_threshold=0.45,
@@ -68,7 +77,7 @@ def _mock_intents() -> list[IntentDefinition]:
             description="执行转账，需要收款人姓名、收款卡号、手机号后4位和金额。",
             examples=["给张三转 200 元"],
             keywords=["转账", "付款", "汇款"],
-            agent_url="mock://transfer_money",
+            agent_url="http://test-agent/transfer_money",
             dispatch_priority=95,
             primary_threshold=0.72,
             candidate_threshold=0.5,
@@ -83,7 +92,7 @@ def _registered_style_intents() -> list[IntentDefinition]:
             name="查询账户余额",
             description="查询用户账户余额。需要收集卡号和手机号后4位，信息齐全后返回余额结果。",
             examples=["帮我查一下账户余额", "查余额", "查询银行卡余额"],
-            agent_url="mock://query_account_balance",
+            agent_url="http://test-agent/query_account_balance",
             dispatch_priority=100,
         ),
         IntentDefinition(
@@ -91,7 +100,7 @@ def _registered_style_intents() -> list[IntentDefinition]:
             name="转账",
             description="执行转账。需要收集收款人姓名、收款卡号、收款人手机号后4位和转账金额。金额大于8000时返回账户余额不足。",
             examples=["给张三转 200 元", "帮我给李四转账", "转账到对方银行卡"],
-            agent_url="mock://transfer_money",
+            agent_url="http://test-agent/transfer_money",
             dispatch_priority=95,
         ),
     ]
@@ -337,6 +346,55 @@ def test_router_health_supports_ingress_prefix() -> None:
             response = await client.get("/api/router/health")
             assert response.status_code == 200
             assert response.json() == {"status": "ok"}
+
+    asyncio.run(run())
+
+
+def test_router_runtime_fails_closed_for_mock_scheme_agent_url() -> None:
+    class UnsupportedSchemeCatalog:
+        def list_active(self) -> list[IntentDefinition]:
+            return [
+                IntentDefinition(
+                    intent_code="query_account_balance",
+                    name="查询账户余额",
+                    description="查询账户余额",
+                    examples=["帮我查一下余额"],
+                    agent_url="mock://query_account_balance",
+                    dispatch_priority=100,
+                )
+            ]
+
+        def priorities(self) -> dict[str, int]:
+            return {"query_account_balance": 100}
+
+    async def run() -> None:
+        broker = EventBroker()
+        orchestrator = RouterOrchestrator(
+            publish_event=broker.publish,
+            intent_catalog=UnsupportedSchemeCatalog(),
+            recognizer=_MessageRecognizer(),
+            agent_client=StreamingAgentClient(),
+        )
+        app = create_router_app()
+        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+        from router_api.dependencies import get_event_broker
+
+        app.dependency_overrides[get_event_broker] = lambda: broker
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "帮我查余额"},
+            )
+
+        snapshot = response.json()["snapshot"]
+        assert response.status_code == 200
+        assert snapshot["tasks"][0]["status"] == "failed"
+        assert "Unsupported agent_url scheme" in snapshot["messages"][-1]["content"]
 
     asyncio.run(run())
 
@@ -871,7 +929,7 @@ def test_intent_switch_cancels_waiting_and_queued_tasks_before_dispatching_new_i
                     description="查询账户余额",
                     examples=["帮我查一下账户余额"],
                     keywords=["余额", "账户"],
-                    agent_url="mock://query_account_balance",
+                    agent_url="http://test-agent/query_account_balance",
                     dispatch_priority=100,
                     primary_threshold=0.68,
                     candidate_threshold=0.45,
@@ -882,7 +940,7 @@ def test_intent_switch_cancels_waiting_and_queued_tasks_before_dispatching_new_i
                     description="执行转账",
                     examples=["给张三转 200 元"],
                     keywords=["转账", "张三", "元"],
-                    agent_url="mock://transfer_money",
+                    agent_url="http://test-agent/transfer_money",
                     dispatch_priority=95,
                     primary_threshold=0.62,
                     candidate_threshold=0.42,
@@ -893,7 +951,7 @@ def test_intent_switch_cancels_waiting_and_queued_tasks_before_dispatching_new_i
                     description="处理生活缴费",
                     examples=["帮我缴费"],
                     keywords=["缴费", "电费"],
-                    agent_url="mock://pay_bill",
+                    agent_url="http://test-agent/pay_bill",
                     dispatch_priority=90,
                     primary_threshold=0.68,
                     candidate_threshold=0.45,

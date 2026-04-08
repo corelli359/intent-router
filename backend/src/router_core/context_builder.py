@@ -1,18 +1,26 @@
 from __future__ import annotations
 
-from router_core.domain import SessionState, Task
+from typing import Protocol
+
+from router_core.domain import ChatMessage, Task
+
+
+class SessionLike(Protocol):
+    session_id: str
+    cust_id: str
+    messages: list[ChatMessage]
 
 
 class ContextBuilder:
     """Builds context windows for recognition and task resumption."""
 
-    def build_recent_messages(self, session: SessionState, limit: int = 15) -> list[str]:
+    def build_recent_messages(self, session: SessionLike, limit: int = 15) -> list[str]:
         recent = session.messages[-limit:]
         return [f"{message.role}: {message.content}" for message in recent]
 
     def build_task_context(
         self,
-        session: SessionState,
+        session: SessionLike,
         task: Task | None,
         long_term_memory: list[str],
     ) -> dict[str, object]:

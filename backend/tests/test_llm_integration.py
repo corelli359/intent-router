@@ -226,6 +226,49 @@ def test_streaming_agent_client_posts_cancel_requests_to_agent_endpoint() -> Non
     asyncio.run(run())
 
 
+def test_streaming_agent_client_rejects_mock_scheme_in_stream() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_unsupported",
+            intent_code="query_account_balance",
+            agent_url="mock://query_account_balance",
+            intent_name="查询账户余额",
+            confidence=0.88,
+        )
+
+        client = StreamingAgentClient()
+        try:
+            chunks = [chunk async for chunk in client.stream(task, "帮我查余额")]
+        finally:
+            await client.close()
+
+        assert len(chunks) == 1
+        assert chunks[0].status == TaskStatus.FAILED
+        assert "Unsupported agent_url scheme" in chunks[0].content
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_rejects_mock_scheme_in_cancel() -> None:
+    async def run() -> None:
+        client = StreamingAgentClient()
+        try:
+            try:
+                await client.cancel(
+                    session_id="session_unsupported",
+                    task_id="task_unsupported",
+                    agent_url="mock://query_account_balance",
+                )
+            except RuntimeError as exc:
+                assert "Unsupported agent_url scheme" in str(exc)
+            else:
+                raise AssertionError("cancel() should reject mock schemes")
+        finally:
+            await client.close()
+
+    asyncio.run(run())
+
+
 def test_streaming_agent_client_closes_owned_http_pool() -> None:
     async def run() -> None:
         client = StreamingAgentClient()

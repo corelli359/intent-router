@@ -32,7 +32,6 @@ class GraphPlanConditionPayload(BaseModel):
     left_key: str | None = None
     operator: Literal[">", ">=", "==", "<", "<="] | None = None
     right_value: float | int | str | bool | None = None
-    expression: str | None = None
 
 
 class GraphPlanNodePayload(BaseModel):
@@ -352,7 +351,6 @@ class LLMIntentGraphPlanner:
                             left_key=edge_payload.condition.left_key,
                             operator=edge_payload.condition.operator,
                             right_value=edge_payload.condition.right_value,
-                            expression=edge_payload.condition.expression,
                         )
                         if edge_payload.condition is not None
                         else None

@@ -6,14 +6,17 @@ from pathlib import Path
 
 
 BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_SRC) not in sys.path:
     sys.path.insert(0, str(BACKEND_SRC))
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from router_core.orchestrator import RouterOrchestrator  # noqa: E402
-from router_core.agent_client import MockStreamingAgentClient  # noqa: E402
 from router_core.domain import IntentDefinition, IntentMatch, TaskStatus  # noqa: E402
 from router_core.orchestrator import RouterOrchestratorConfig  # noqa: E402
 from router_core.recognizer import RecognitionResult  # noqa: E402
+from tests.support.mock_agent_client import MockStreamingAgentClient  # noqa: E402
 
 
 class StaticCatalog:
@@ -25,7 +28,7 @@ class StaticCatalog:
                 description="查询账户余额",
                 examples=["帮我查一下余额"],
                 keywords=["余额", "账户"],
-                agent_url="mock://query_account_balance",
+                agent_url="http://test-agent/query_account_balance",
                 dispatch_priority=100,
                 primary_threshold=0.68,
                 candidate_threshold=0.45,
@@ -48,7 +51,7 @@ class TransferCatalog:
                 description="转账",
                 examples=["帮我转账"],
                 keywords=["转账"],
-                agent_url="mock://transfer_money",
+                agent_url="http://test-agent/transfer_money",
                 dispatch_priority=100,
                 primary_threshold=0.68,
                 candidate_threshold=0.45,

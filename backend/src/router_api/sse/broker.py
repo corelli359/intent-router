@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 
 from router_core.domain import TaskEvent, TaskStatus
+
+logger = logging.getLogger(__name__)
 
 
 class EventBroker:
@@ -13,13 +16,15 @@ class EventBroker:
         *,
         heartbeat_interval_seconds: float = 15.0,
         max_idle_seconds: float = 300.0,
+        max_queue_size: int = 500,
     ) -> None:
         self._queues: dict[str, list[asyncio.Queue[TaskEvent]]] = defaultdict(list)
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.max_idle_seconds = max_idle_seconds
+        self._max_queue_size = max_queue_size
 
     def register(self, session_id: str) -> asyncio.Queue[TaskEvent]:
-        queue: asyncio.Queue[TaskEvent] = asyncio.Queue()
+        queue = self._new_queue()
         self._queues[session_id].append(queue)
         return queue
 
@@ -34,7 +39,7 @@ class EventBroker:
 
     async def publish(self, event: TaskEvent) -> None:
         for queue in list(self._queues[event.session_id]):
-            await queue.put(event)
+            await self._push_event(queue, event)
 
     async def subscribe(self, session_id: str) -> AsyncGenerator[TaskEvent, None]:
         queue = self.register(session_id)
@@ -61,3 +66,22 @@ class EventBroker:
                 yield event
         finally:
             self.unregister(session_id, queue)
+
+    def _new_queue(self) -> asyncio.Queue[TaskEvent]:
+        if self._max_queue_size <= 0:
+            return asyncio.Queue()
+        return asyncio.Queue(maxsize=self._max_queue_size)
+
+    async def _push_event(self, queue: asyncio.Queue[TaskEvent], event: TaskEvent) -> None:
+        if self._max_queue_size > 0 and queue.full():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                logger.debug("event queue already drained")
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.warning(
+                "dropping event for session %s because subscriber queue is full",
+                event.session_id,
+            )

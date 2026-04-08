@@ -49,17 +49,6 @@ def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> Nu
     return NullIntentRecognizer()
 
 
-def _warn_v2_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
-    logger.warning(
-        "Router V2 requires LLM-based intent recognition "
-        "(backend=%s, llm_available=%s). Falling back to NullIntentRecognizer "
-        "instead of regex/rules.",
-        recognizer_backend,
-        llm_available,
-    )
-    return NullIntentRecognizer()
-
-
 def build_router_runtime() -> RouterRuntime:
     settings = get_settings()
     event_broker = EventBroker(
@@ -71,10 +60,7 @@ def build_router_runtime() -> RouterRuntime:
         max_idle_seconds=settings.router_sse_max_idle_seconds,
     )
     llm_client = _build_llm_client()
-    intent_catalog = RepositoryIntentCatalog(
-        get_intent_repository(),
-        refresh_interval_seconds=settings.router_intent_refresh_interval_seconds,
-    )
+    intent_catalog = RepositoryIntentCatalog(get_intent_repository())
     recognizer = (
         LLMIntentRecognizer(
             llm_client,
@@ -103,20 +89,7 @@ def build_router_runtime() -> RouterRuntime:
     orchestrator_v2 = GraphRouterOrchestrator(
         publish_event=event_broker_v2.publish,
         intent_catalog=intent_catalog,
-        recognizer=(
-            LLMIntentRecognizer(
-                llm_client,
-                model=settings.llm_recognizer_model or settings.llm_model,
-                fallback=NullIntentRecognizer(),
-                system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
-                human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
-            )
-            if llm_client is not None
-            else _warn_v2_null_recognizer(
-                recognizer_backend=settings.recognizer_backend,
-                llm_available=False,
-            )
-        ),
+        recognizer=recognizer,
         planner=(
             LLMIntentGraphPlanner(
                 llm_client,

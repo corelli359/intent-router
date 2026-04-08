@@ -23,11 +23,3 @@ def next_runnable_task(session: SessionState, priorities: dict[str, int]) -> Tas
     if not queued:
         return None
     return sort_tasks(queued, priorities)[0]
-
-
-def waiting_task(session: SessionState) -> Task | None:
-    for task in session.tasks:
-        if task.status == TaskStatus.WAITING_USER_INPUT:
-            return task
-    return None
-

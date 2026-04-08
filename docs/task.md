@@ -16,6 +16,24 @@
 设计：V2 是版本化入口，不是简单 demo。文档必须明确它与 LLMCompiler/LangGraph 的关系、与 V1 的边界、以及部署时的内存策略。
 实现：新增 `docs/dynamic-intent-graph-v2-design.md`，并更新 `README.md`、`docs/llmcompiler-intent-routing-report.md`、`k8s/intent/README.md`。当前结论是 V2 先以内嵌在现有 chat-web/router-api 的方式发布，使用 `/chat/v2` 与 `/api/router/v2` 暴露能力，以最小化额外常驻内存。
 
+## 2026-04-08 Runtime Cleanup
+
+### [x] T24 · 运行时 `mock://` 清理
+设计：`MockStreamingAgentClient` 只能存在于测试支撑层，生产 `StreamingAgentClient` 必须严格限制为 `http://` / `https://`，对非法 scheme fail-closed，而不是偷偷执行 mock。
+实现：`router_core/agent_client.py` 已移除内置 `MockStreamingAgentClient` 和 `mock://` 分流；测试专用 mock client 已迁移到 `backend/tests/support/mock_agent_client.py`；补充了 runtime fail-closed 回归测试，覆盖 V1、V2 和 `StreamingAgentClient` 本身。
+
+### [x] T25 · intent_catalog 收敛为只读快照
+设计：catalog 刷新只能发生在应用启动和后台 refresh task，读路径只读当前 snapshot，不能再在请求链路同步打仓储；同时既然生产已不再使用规则识别，就不应继续维护 `patterns` 这类死数据。
+实现：删除 `rule_recognizer.py`、`CatalogSnapshot.patterns` 和相关测试；`RepositoryIntentCatalog` 现在只持有 `active/fallback/priorities` 三类快照，`list_active()/priorities()/get_fallback_intent()` 都只读取当前缓存。
+
+### [x] T26 · Runtime 装配与 SSE 限流优化
+设计：V1/V2 runtime 组装应共享一份 recognizer，避免重复构造；SSE broker 必须使用有界队列，慢订阅不能无限堆积事件占内存。
+实现：`router_api/dependencies.py` 已收敛为单一 recognizer 构造路径，V1/V2 共用同一实例；`router_api/sse/broker.py` 改为有界队列并在满载时丢弃最旧事件，避免发布路径被慢消费者拖垮；新增对应回归测试。
+
+### [x] T27 · V2 条件与多轮 seed_input 收敛
+设计：执行图条件只能暴露后端真正可执行的结构化字段，不能再保留 `expression` 这类“模型能写、运行时不执行”的伪能力；同时多轮恢复节点后，后续节点不能继续吃首轮原始消息。
+实现：删除 `GraphCondition.expression`、相关 prompt 字段和前端展示分支；V2 在 waiting node 恢复或取消后继续 drain graph 时，改为传递本轮最新用户输入，避免后续节点误用过时 `graph.source_message`。
+
 ### [x] T13 · 管理面与运行面部署解耦
 设计：`admin-api` 负责意图治理与配置发布，`router-api` 负责识别、状态机与分发，二者必须独立 Deployment，不能继续共用一个 `backend` 部署。
 实现：新增 `k8s/intent/admin-api.yaml` 与 `k8s/intent/router-api.yaml`，删除 `k8s/intent/backend.yaml`；统一入口固定为 `/admin`、`/chat`、`/api/admin/*`、`/api/router/*`；相关约束已补充到 `docs/intent-router-prd.md` 与 `docs/deerflow-inspired-architecture.md`。
@@ -56,8 +74,8 @@
 实现：在 `RouterOrchestrator` 增加 `RouterOrchestratorConfig(intent_switch_threshold=0.80)`；`handle_user_message()` 在存在 waiting task 时先做一次切换识别；命中“取消/算了/不需要了”等快速语义或识别到高置信度异意图时，调用 `_cancel_waiting_and_queued_tasks()`，推送 `task.cancelled`，再对新消息继续分发；恢复原任务时通过 `_prepare_resuming_task()` 清理 `recipient_* / card_* / phone_* / amount` 等易变槽位，避免旧收款人和新输入混用。
 
 ### [x] T02 · SimpleIntentRecognizer 重新定位为最终降级兜底
-设计：生产默认走 LLM 识别，Simple 只保留为“最后兜底”。这样即使 LLM 暂时不可用，也还能保底路由，但不会把规则识别误当作正式生产方案。
-实现：`Settings.recognizer_backend` 默认值改为 `llm`；`build_router_runtime()` 中优先构造 `LLMIntentRecognizer`，失败或显式配置非 llm 时打印 warning 并回退到 `SimpleIntentRecognizer`；`LLMIntentRecognizer.recognize()` 在异常时记录降级日志；`SimpleIntentRecognizer` 的类注释更新为“last-resort fallback only”。
+设计：生产默认走 LLM 语义识别；当 LLM 不可用时，识别层应该 fail-closed 到 `NullIntentRecognizer`，由 fallback intent/agent 兜底，而不是回到规则/正则识别。
+实现：runtime 现在只会装配 `LLMIntentRecognizer` 或 `NullIntentRecognizer`；规则识别链路已从生产代码删除，避免再出现“正则也算正式识别能力”的歧义。
 
 ### [x] T03 · intent_catalog 刷新阻塞事件循环
 设计：catalog 刷新是同步仓储读取，不应该卡住 asyncio 主循环；把刷新动作放到线程池，主 loop 只负责调度和睡眠。
@@ -96,8 +114,8 @@
 实现：`StreamingAgentClient.__init__()` 默认创建带 `Limits` 和 `Timeout` 的共享 `AsyncClient`；去掉 `_stream_via_http()` 里“临时创建再关闭”的逻辑；新增 `close()`，由 router app lifespan 调用。
 
 ### [x] T12 · `extract_patterns` 改为 refresh 时预计算
-设计：把 Simple 识别器里反复执行的 pattern 提取挪到 catalog refresh 阶段，运行时只读 snapshot，降低降级路径的每次识别开销。
-实现：`CatalogSnapshot` 增加 `patterns` 字段，`RepositoryIntentCatalog.refresh_now()` 预计算每个 active intent 的 patterns；`SimpleIntentRecognizer` 支持从 catalog 读取预计算结果，拿不到时才回退到现场 `extract_patterns()`。
+设计：既然运行时已经不再保留规则识别，就不应该继续为不存在的识别器维护 `patterns` 快照。
+实现：`rule_recognizer.py`、`CatalogSnapshot.patterns` 和对应测试已删除；catalog 当前只保留生产运行时实际会消费的快照数据。
 
 ## 待执行
 
@@ -110,5 +128,6 @@
 ### [ ] T14 · 测试 lru_cache 污染
 说明：router_api 侧 `lru_cache` 已经去掉，这一项需要重新定义为“多 app / 多 loop 生命周期回归测试”。
 
-### [ ] T15 · MockStreamingAgentClient 移出
+### [x] T15 · MockStreamingAgentClient 移出
+说明：已在 2026-04-08 完成，测试 mock client 现位于 `backend/tests/support/mock_agent_client.py`，生产运行时不再内置。
 ### [ ] T16 · demo_intents 懒加载

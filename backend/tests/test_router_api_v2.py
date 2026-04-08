@@ -3,11 +3,20 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import sys
+from pathlib import Path
 
 from router_api.app import create_router_app
 from router_api.dependencies import get_event_broker_v2, get_orchestrator_v2
 from router_api.sse.broker import EventBroker
-from router_core.agent_client import MockStreamingAgentClient
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from tests.support.mock_agent_client import MockStreamingAgentClient
+from router_core.agent_client import StreamingAgentClient
 from router_core.domain import IntentDefinition, IntentMatch
 from router_core.recognizer import RecognitionResult
 from router_core.v2_domain import (
@@ -42,7 +51,7 @@ def _mock_intents() -> list[IntentDefinition]:
             description="查询账户余额，需要卡号和手机号后4位。",
             examples=["帮我查一下账户余额", "查余额"],
             keywords=["余额", "账户", "银行卡"],
-            agent_url="mock://query_account_balance",
+            agent_url="http://test-agent/query_account_balance",
             dispatch_priority=100,
             primary_threshold=0.68,
             candidate_threshold=0.45,
@@ -53,7 +62,7 @@ def _mock_intents() -> list[IntentDefinition]:
             description="执行转账，需要收款人姓名、收款卡号、手机号后4位和金额。",
             examples=["给张三转 200 元", "帮我转账"],
             keywords=["转账", "付款", "汇款"],
-            agent_url="mock://transfer_money",
+            agent_url="http://test-agent/transfer_money",
             dispatch_priority=95,
             primary_threshold=0.72,
             candidate_threshold=0.5,
@@ -131,7 +140,6 @@ class _ConditionalPlanner:
                         left_key="balance",
                         operator=">",
                         right_value=8000,
-                        expression="balance > 8000",
                     ),
                 ),
                 GraphEdge(
@@ -144,7 +152,6 @@ class _ConditionalPlanner:
                         left_key="balance",
                         operator=">",
                         right_value=5000,
-                        expression="balance > 5000",
                     ),
                 ),
             ]
@@ -279,6 +286,55 @@ def test_v2_cancel_node_action_cancels_current_graph_node() -> None:
     asyncio.run(run())
 
 
+def test_v2_runtime_fails_closed_for_mock_scheme_agent_url() -> None:
+    class UnsupportedSchemeCatalog:
+        def list_active(self) -> list[IntentDefinition]:
+            return [
+                IntentDefinition(
+                    intent_code="query_account_balance",
+                    name="查询账户余额",
+                    description="查询账户余额",
+                    examples=["帮我查一下余额"],
+                    agent_url="mock://query_account_balance",
+                    dispatch_priority=100,
+                )
+            ]
+
+        def get_fallback_intent(self) -> IntentDefinition | None:
+            return None
+
+    async def run() -> None:
+        broker = EventBroker()
+        orchestrator = GraphRouterOrchestrator(
+            publish_event=broker.publish,
+            intent_catalog=UnsupportedSchemeCatalog(),
+            recognizer=_MessageRecognizer(),
+            planner=SequentialIntentGraphPlanner(),
+            turn_interpreter=BasicTurnInterpreter(),
+            agent_client=StreamingAgentClient(),
+        )
+        app = create_router_app()
+        app.dependency_overrides[get_orchestrator_v2] = lambda: orchestrator
+        app.dependency_overrides[get_event_broker_v2] = lambda: broker
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查余额"},
+            )
+
+        snapshot = response.json()["snapshot"]
+        assert response.status_code == 200
+        assert snapshot["current_graph"]["nodes"][0]["status"] == "failed"
+        assert "Unsupported agent_url scheme" in snapshot["messages"][-1]["content"]
+
+    asyncio.run(run())
+
+
 def test_v2_expands_multi_transfer_conditions_and_skips_unsatisfied_branch() -> None:
     async def run() -> None:
         app, _ = _test_v2_app(
@@ -306,9 +362,16 @@ def test_v2_expands_multi_transfer_conditions_and_skips_unsatisfied_branch() -> 
                 "transfer_money",
                 "transfer_money",
             ]
-            assert [edge["condition"]["expression"] for edge in pending_graph["edges"]] == [
-                "balance > 8000",
-                "balance > 5000",
+            assert [
+                (
+                    edge["condition"]["left_key"],
+                    edge["condition"]["operator"],
+                    edge["condition"]["right_value"],
+                )
+                for edge in pending_graph["edges"]
+            ] == [
+                ("balance", ">", 8000),
+                ("balance", ">", 5000),
             ]
             assert pending_graph["nodes"][1]["slot_memory"]["recipient_name"] == "我媳妇儿"
             assert pending_graph["nodes"][2]["slot_memory"]["recipient_name"] == "我弟弟"
@@ -339,5 +402,91 @@ def test_v2_expands_multi_transfer_conditions_and_skips_unsatisfied_branch() -> 
             assert current_graph["nodes"][1]["blocking_reason"] == "当余额 > 8000 时执行"
             assert current_graph["nodes"][2]["slot_memory"]["recipient_name"] == "我弟弟"
             assert current_graph["nodes"][2]["slot_memory"]["amount"] == "1000"
+
+    asyncio.run(run())
+
+
+def test_v2_single_conditional_skip_marks_graph_partially_completed() -> None:
+    class _SingleConditionalPlanner:
+        async def plan(self, *, message, matches, intents_by_code, recent_messages=None, long_term_memory=None):
+            graph = ExecutionGraphState(
+                source_message=message,
+                summary="先查余额，若余额大于8000则给媳妇儿转500元",
+                status=GraphStatus.WAITING_CONFIRMATION,
+            )
+            balance = GraphNodeState(
+                intent_code="query_account_balance",
+                title="查询账户余额",
+                confidence=0.98,
+                position=0,
+                source_fragment="帮我查一下余额",
+            )
+            transfer = GraphNodeState(
+                intent_code="transfer_money",
+                title="给媳妇儿转账500元",
+                confidence=0.91,
+                position=1,
+                source_fragment="如果超过8000，就给我媳妇儿转账500",
+                slot_memory={"recipient_name": "我媳妇儿", "amount": "500"},
+            )
+            transfer.depends_on.append(balance.node_id)
+            transfer.relation_reason = "余额大于8000时转账"
+            graph.nodes.extend([balance, transfer])
+            graph.edges.append(
+                GraphEdge(
+                    source_node_id=balance.node_id,
+                    target_node_id=transfer.node_id,
+                    relation_type=GraphEdgeType.CONDITIONAL,
+                    label="余额大于8000时转账",
+                    condition=GraphCondition(
+                        source_node_id=balance.node_id,
+                        left_key="balance",
+                        operator=">",
+                        right_value=8000,
+                    ),
+                )
+            )
+            graph.actions = [
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ]
+            return graph
+
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_MessageRecognizer(),
+            planner=_SingleConditionalPlanner(),
+            turn_interpreter=BasicTurnInterpreter(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额，如果超过8000，就给我媳妇儿转账500"},
+            )
+            pending_graph = first_turn.json()["snapshot"]["pending_graph"]
+            confirm_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/actions",
+                json={
+                    "task_id": pending_graph["graph_id"],
+                    "source": "router",
+                    "action_code": "confirm_graph",
+                    "confirm_token": pending_graph["confirm_token"],
+                },
+            )
+            assert confirm_turn.status_code == 200
+
+            resume_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "6222020100049999999，尾号1234"},
+            )
+            assert resume_turn.status_code == 200
+            current_graph = resume_turn.json()["snapshot"]["current_graph"]
+            assert current_graph["status"] == "partially_completed"
+            assert [node["status"] for node in current_graph["nodes"]] == ["completed", "skipped"]
+            assert current_graph["nodes"][1]["blocking_reason"] == "余额大于8000时转账"
 
     asyncio.run(run())
