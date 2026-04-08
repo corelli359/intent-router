@@ -66,6 +66,8 @@ class Settings(BaseModel):
         default="json_mode"
     )
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
+    llm_rate_limit_max_retries: int = Field(default=2, ge=0)
+    llm_rate_limit_retry_delay_seconds: float = Field(default=2.0, gt=0)
     agent_http_timeout_seconds: float = Field(default=60.0, gt=0)
     llm_headers: dict[str, str] = Field(default_factory=dict)
 
@@ -102,6 +104,10 @@ class Settings(BaseModel):
             llm_recognizer_human_prompt_template=os.getenv("ROUTER_LLM_RECOGNIZER_HUMAN_PROMPT_TEMPLATE"),
             llm_structured_output_method=os.getenv("ROUTER_LLM_STRUCTURED_OUTPUT_METHOD", "json_mode"),
             llm_timeout_seconds=float(os.getenv("ROUTER_LLM_TIMEOUT_SECONDS", "30")),
+            llm_rate_limit_max_retries=int(os.getenv("ROUTER_LLM_RATE_LIMIT_MAX_RETRIES", "2")),
+            llm_rate_limit_retry_delay_seconds=float(
+                os.getenv("ROUTER_LLM_RATE_LIMIT_RETRY_DELAY_SECONDS", "2")
+            ),
             agent_http_timeout_seconds=float(os.getenv("ROUTER_AGENT_HTTP_TIMEOUT_SECONDS", "60")),
             llm_headers=_env_headers("ROUTER_LLM_HEADERS_JSON"),
         )

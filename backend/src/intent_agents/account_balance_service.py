@@ -13,6 +13,8 @@ from intent_agents.common import (
     JsonObjectRunner,
     dump_json,
 )
+from models.intent import IntentSlotDefinition, SlotValueType
+from router_core.slot_grounding import slot_value_grounded
 
 
 class BalanceAccount(BaseModel):
@@ -41,6 +43,10 @@ class AccountBalanceResolution(BaseModel):
     ask_message: str = "请提供卡号和手机号后4位"
 
 
+_CARD_NUMBER_SLOT = IntentSlotDefinition(slot_key="card_number", value_type=SlotValueType.ACCOUNT_NUMBER)
+_PHONE_LAST4_SLOT = IntentSlotDefinition(slot_key="phone_last4", value_type=SlotValueType.PHONE_LAST4)
+
+
 ACCOUNT_BALANCE_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
@@ -55,6 +61,8 @@ ACCOUNT_BALANCE_PROMPT = ChatPromptTemplate.from_messages(
                 "1. 优先保留 current_slots 里已经确认的值；当前输入只补充缺失槽位时，不能清空已有槽位。"
                 "2. 用户可能一次性提供两个值，例如“6000000000,6666”，也可能分多轮补充。"
                 "3. 不要猜测，不要从无关意图历史里补全敏感信息。"
+                "3.1 recent_messages 和 long_term_memory 只能帮助你理解用户是不是在补充当前任务，"
+                "不能把其中出现过的卡号或手机号后4位直接当成当前轮确认输入。"
                 "4. 如果信息不足，has_enough_information 必须为 false，并给出简洁的 ask_message。"
                 "5. 输出的 card_number 只保留卡号本身，输出的 phone_last4 只保留 4 位尾号。"
                 "示例："
@@ -144,12 +152,34 @@ class AccountBalanceAgentService:
         except Exception:
             resolved = AccountBalanceResolution()
 
+        self._drop_unconfirmed_history_values(request, seeded, resolved)
         if heuristic.card_number and not resolved.card_number:
             resolved.card_number = heuristic.card_number
         if heuristic.phone_last4 and not resolved.phone_last4:
             resolved.phone_last4 = heuristic.phone_last4
 
         return self._finalize_resolution(seeded, resolved)
+
+    def _drop_unconfirmed_history_values(
+        self,
+        request: AccountBalanceAgentRequest,
+        seeded: AccountBalanceResolution,
+        resolved: AccountBalanceResolution,
+    ) -> None:
+        if resolved.card_number and resolved.card_number != seeded.card_number:
+            if not slot_value_grounded(
+                slot_def=_CARD_NUMBER_SLOT,
+                value=resolved.card_number,
+                grounding_text=request.input,
+            ):
+                resolved.card_number = None
+        if resolved.phone_last4 and resolved.phone_last4 != seeded.phone_last4:
+            if not slot_value_grounded(
+                slot_def=_PHONE_LAST4_SLOT,
+                value=resolved.phone_last4,
+                grounding_text=request.input,
+            ):
+                resolved.phone_last4 = None
 
     def _finalize_resolution(
         self,
@@ -225,15 +255,12 @@ class AccountBalanceAgentService:
         card_number: str | None,
     ) -> str | None:
         explicit_phone_markers = ("尾号", "后4位", "后四位", "手机", "手机号")
-        phone_candidates = [
-            run[-4:]
-            for run in digit_runs
-            if run != card_number and 4 <= len(run) < 12
-        ]
+        phone_candidates = [run[-4:] for run in digit_runs if run != card_number and 4 <= len(run) < 12]
         if any(marker in text for marker in explicit_phone_markers):
             return phone_candidates[-1] if phone_candidates else None
-        if phone_candidates:
-            return phone_candidates[-1]
+        exact_four_candidates = [run for run in digit_runs if run != card_number and len(run) == 4]
+        if exact_four_candidates:
+            return exact_four_candidates[-1]
         if len(digit_runs) == 1 and len(digit_runs[0]) == 4:
             return digit_runs[0]
         return None

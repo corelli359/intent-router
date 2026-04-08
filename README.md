@@ -61,7 +61,7 @@ Connection secrets must stay in local env files or shell env vars. This repo ign
 Router and agents support OpenAI-compatible model access via `langchain`:
 
 - Router recognizer: `router_core`
-- Built-in agents: `intent_agents.order_status_app`, `intent_agents.cancel_appointment_app`, `intent_agents.fallback_app`
+- Built-in agents: `intent_agents.account_balance_app`, `intent_agents.transfer_money_app`, `intent_agents.credit_card_repayment_app`, `intent_agents.gas_bill_payment_app`, `intent_agents.forex_exchange_app`, `intent_agents.fallback_app`
 
 Minimum runtime env:
 
@@ -72,7 +72,7 @@ Minimum runtime env:
    - `ROUTER_LLM_MODEL`
    - `ADMIN_REPOSITORY_BACKEND=database`
    - `ADMIN_DATABASE_URL` (SQLite or MySQL DSN)
-3. Set recognizer backend with `ROUTER_RECOGNIZER_BACKEND=llm` (or `rules`).
+3. Set recognizer backend with `ROUTER_RECOGNIZER_BACKEND=llm`.
 
 Supported `agent_url`:
 
@@ -116,9 +116,12 @@ uvicorn router_entry:app --app-dir backend/src --reload --port 8012
 Run built-in agents:
 
 ```bash
-uvicorn intent_agents.order_status_app:app --app-dir backend/src --reload --port 8101
-uvicorn intent_agents.cancel_appointment_app:app --app-dir backend/src --reload --port 8102
-uvicorn intent_agents.fallback_app:app --app-dir backend/src --reload --port 8103
+uvicorn intent_agents.account_balance_app:app --app-dir backend/src --reload --port 8101
+uvicorn intent_agents.transfer_money_app:app --app-dir backend/src --reload --port 8102
+uvicorn intent_agents.credit_card_repayment_app:app --app-dir backend/src --reload --port 8103
+uvicorn intent_agents.gas_bill_payment_app:app --app-dir backend/src --reload --port 8104
+uvicorn intent_agents.forex_exchange_app:app --app-dir backend/src --reload --port 8105
+uvicorn intent_agents.fallback_app:app --app-dir backend/src --reload --port 8106
 ```
 
 Run tests:

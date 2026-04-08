@@ -7,7 +7,7 @@ import json
 from typing import Awaitable, Callable, Protocol
 
 from router_core.domain import IntentDefinition, IntentMatch
-from router_core.llm_client import IntentRecognitionPayload, JsonLLMClient
+from router_core.llm_client import IntentRecognitionPayload, JsonLLMClient, llm_exception_is_retryable
 from router_core.prompt_templates import (
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
@@ -111,7 +111,9 @@ class LLMIntentRecognizer:
                 on_delta=on_delta,
             )
             response = IntentRecognitionPayload.model_validate(raw_response)
-        except Exception:
+        except Exception as exc:
+            if llm_exception_is_retryable(exc):
+                raise
             logger.warning(
                 "LLM intent recognition failed, degrading to fallback recognizer (%s)",
                 type(self.fallback).__name__,

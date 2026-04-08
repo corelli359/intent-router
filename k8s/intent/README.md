@@ -14,6 +14,14 @@ Control plane and runtime plane are deployed separately:
 - `intent-admin-web`
 - `intent-router` ingress
 
+Current agent split:
+
+- `intent-order-agent` handles `query_account_balance`
+- `intent-appointment-agent` handles `transfer_money`
+- `intent-credit-card-agent` handles `query_credit_card_repayment`
+- `intent-gas-bill-agent` handles `pay_gas_bill`
+- `intent-forex-agent` handles `exchange_forex`
+
 Key boundary:
 
 - Router performs intent recognition, task orchestration, and dispatch only.
@@ -56,6 +64,9 @@ Reason:
 ## Operational Notes
 
 - Source is mounted into Minikube node at `/mnt/intent-router`.
-- Pods install dependencies on startup because source is mounted, not image-baked.
+- Pods still install runtime dependencies on startup with `pip install /workspace`, but they now delete `/workspace/build` and `/workspace/backend/src/intent_router.egg-info` first.
+- This avoids concurrent wheel builds writing stale artifacts into the shared mounted source tree during rollout.
+- New financial agents are deployed one by one instead of piggybacking on the legacy two-agent topology.
+- If cluster resources become tight later, the deployment script is the place to stop after the last healthy standalone rollout.
 - Router reads active intent registry from admin-owned storage and refreshes cache periodically.
 - Ingress should keep sticky affinity for SSE sessions when router is scaled.

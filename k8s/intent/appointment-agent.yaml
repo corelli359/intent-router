@@ -29,15 +29,17 @@ spec:
             - -lc
           args:
             - |
-              pip install --no-cache-dir /workspace && \
-              python -m uvicorn intent_agents.cancel_appointment_app:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
+              set -e
+              rm -rf /workspace/build /workspace/backend/src/intent_router.egg-info
+              python -m pip install --no-cache-dir /workspace
+              python -m uvicorn intent_agents.transfer_money_app:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
               name: http
           resources:
             requests:
-              cpu: 200m
-              memory: 320Mi
+              cpu: 150m
+              memory: 256Mi
           startupProbe:
             httpGet:
               path: /health

@@ -6,6 +6,9 @@ resources:
   - admin-api.yaml
   - order-agent.yaml
   - appointment-agent.yaml
+  - credit-card-repayment-agent.yaml
+  - gas-bill-agent.yaml
+  - forex-agent.yaml
   - chat-web.yaml
   - admin-web.yaml
   - ingress.yaml

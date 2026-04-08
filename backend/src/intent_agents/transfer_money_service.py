@@ -14,6 +14,8 @@ from intent_agents.common import (
     JsonObjectRunner,
     dump_json,
 )
+from models.intent import IntentSlotDefinition, SlotValueType
+from router_core.slot_grounding import slot_value_grounded
 
 
 class TransferRecipient(BaseModel):
@@ -52,6 +54,15 @@ class TransferMoneyResolution(BaseModel):
     ask_message: str = "请提供收款人姓名、收款卡号、收款人手机号后4位、转账金额"
 
 
+_RECIPIENT_NAME_SLOT = IntentSlotDefinition(slot_key="recipient_name", value_type=SlotValueType.PERSON_NAME)
+_RECIPIENT_CARD_SLOT = IntentSlotDefinition(slot_key="recipient_card_number", value_type=SlotValueType.ACCOUNT_NUMBER)
+_RECIPIENT_PHONE_SLOT = IntentSlotDefinition(
+    slot_key="recipient_phone_last4",
+    value_type=SlotValueType.PHONE_LAST4,
+)
+_AMOUNT_SLOT = IntentSlotDefinition(slot_key="amount", value_type=SlotValueType.CURRENCY)
+
+
 TRANSFER_MONEY_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
@@ -70,7 +81,8 @@ TRANSFER_MONEY_PROMPT = ChatPromptTemplate.from_messages(
                 "如果当前消息里已经明确包含收款人和金额，必须提取 recipient_name 与 amount。"
                 "5. 金额不一定带“元”字；“转500”“转账500”“500块”都可以识别为 amount='500'。"
                 "6. 不要从余额查询或其他无关意图历史中推断收款卡号、收款人手机号后4位或金额。"
-                "7. 可以利用同一笔转账任务的最近对话来补齐语义，例如首轮里提到的收款人姓名或金额。"
+                "7. recent_messages 和 long_term_memory 只能帮助你理解用户是不是在补充当前转账任务，"
+                "不能把历史里出现过但当前轮没有再次明确提供的新槽位直接当成当前确认输入。"
                 "8. 当前输入可能一次补充多个槽位；如果用户明确写了“卡号...，后四位....”，必须同时补齐 recipient_card_number 和 recipient_phone_last4。"
                 "9. 如果当前输入是独立的 4 位数字，且 recipient_phone_last4 和 amount 都缺失，不要擅自判定它属于哪一个槽位，而是保持这两个槽位为空并追问澄清。"
                 "10. 如果当前只缺 amount，那么独立数字可以识别为 amount；如果当前只缺 recipient_phone_last4，那么独立 4 位数字可以识别为 recipient_phone_last4。"
@@ -191,7 +203,43 @@ class TransferMoneyAgentService:
         except Exception:
             resolved = TransferMoneyResolution()
 
+        self._drop_unconfirmed_history_values(request, seeded, resolved)
         return self._finalize_resolution(seeded, resolved)
+
+    def _drop_unconfirmed_history_values(
+        self,
+        request: TransferMoneyAgentRequest,
+        seeded: TransferMoneyResolution,
+        resolved: TransferMoneyResolution,
+    ) -> None:
+        if resolved.recipient_name and resolved.recipient_name != seeded.recipient_name:
+            if not slot_value_grounded(
+                slot_def=_RECIPIENT_NAME_SLOT,
+                value=resolved.recipient_name,
+                grounding_text=request.input,
+            ):
+                resolved.recipient_name = None
+        if resolved.recipient_card_number and resolved.recipient_card_number != seeded.recipient_card_number:
+            if not slot_value_grounded(
+                slot_def=_RECIPIENT_CARD_SLOT,
+                value=resolved.recipient_card_number,
+                grounding_text=request.input,
+            ):
+                resolved.recipient_card_number = None
+        if resolved.recipient_phone_last4 and resolved.recipient_phone_last4 != seeded.recipient_phone_last4:
+            if not slot_value_grounded(
+                slot_def=_RECIPIENT_PHONE_SLOT,
+                value=resolved.recipient_phone_last4,
+                grounding_text=request.input,
+            ):
+                resolved.recipient_phone_last4 = None
+        if resolved.amount and resolved.amount != seeded.amount:
+            if not slot_value_grounded(
+                slot_def=_AMOUNT_SLOT,
+                value=resolved.amount,
+                grounding_text=request.input,
+            ):
+                resolved.amount = None
 
     def _finalize_resolution(
         self,

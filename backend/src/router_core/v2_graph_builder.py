@@ -9,13 +9,14 @@ from pydantic import BaseModel, Field
 
 from models.intent import GraphConfirmPolicy
 from router_core.domain import IntentDefinition, IntentMatch
-from router_core.llm_client import AsyncDeltaCallback, JsonLLMClient
+from router_core.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
 from router_core.prompt_templates import (
     DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
     DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
     build_v2_unified_graph_builder_prompt,
 )
 from router_core.recognizer import IntentRecognizer, NullIntentRecognizer, RecognitionResult, recognition_intent_payload
+from router_core.slot_grounding import normalize_slot_memory
 from router_core.v2_domain import (
     ExecutionGraphState,
     GraphAction,
@@ -95,6 +96,8 @@ class GraphDraftNormalizer:
         payload: UnifiedGraphDraftPayload,
         message: str,
         intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str] | None = None,
+        long_term_memory: list[str] | None = None,
     ) -> GraphBuildResult:
         recognition = self._normalize_recognition(payload=payload, intents_by_code=intents_by_code)
         graph = self._normalize_graph(
@@ -102,6 +105,8 @@ class GraphDraftNormalizer:
             message=message,
             recognition=recognition,
             intents_by_code=intents_by_code,
+            recent_messages=recent_messages or [],
+            long_term_memory=long_term_memory or [],
         )
         return GraphBuildResult(recognition=recognition, graph=graph)
 
@@ -159,6 +164,8 @@ class GraphDraftNormalizer:
         message: str,
         recognition: RecognitionResult,
         intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
     ) -> ExecutionGraphState:
         confidence_by_code = {match.intent_code: match.confidence for match in recognition.primary}
         allowed_intents = set(confidence_by_code)
@@ -169,12 +176,19 @@ class GraphDraftNormalizer:
             status=GraphStatus.DRAFT,
             actions=[],
         )
+        history_slot_usage: list[tuple[str, list[str]]] = []
         for index, node_payload in enumerate(payload.nodes):
             if node_payload.intent_code not in allowed_intents:
                 continue
             intent = intents_by_code.get(node_payload.intent_code)
             if intent is None:
                 continue
+            slot_memory, history_slots = normalize_slot_memory(
+                slot_memory=node_payload.slot_memory,
+                slot_schema=intent.slot_schema,
+                grounding_text=f"{message}\n{node_payload.source_fragment or ''}",
+                history_texts=[*recent_messages, *long_term_memory],
+            )
             graph.nodes.append(
                 GraphNodeState(
                     intent_code=node_payload.intent_code,
@@ -186,9 +200,12 @@ class GraphDraftNormalizer:
                     ),
                     position=index,
                     source_fragment=node_payload.source_fragment or message,
-                    slot_memory=dict(node_payload.slot_memory),
+                    slot_memory=slot_memory,
+                    history_slot_keys=history_slots,
                 )
             )
+            if history_slots:
+                history_slot_usage.append((graph.nodes[-1].title, history_slots))
 
         for edge_payload in payload.edges:
             if edge_payload.source_index >= len(graph.nodes) or edge_payload.target_index >= len(graph.nodes):
@@ -222,6 +239,7 @@ class GraphDraftNormalizer:
             payload=payload,
             graph=graph,
             intents_by_code=intents_by_code,
+            history_slot_usage=history_slot_usage,
         )
         graph.status = GraphStatus.WAITING_CONFIRMATION if needs_confirmation else GraphStatus.DRAFT
         graph.actions = (
@@ -238,6 +256,17 @@ class GraphDraftNormalizer:
                 if len(graph.nodes) > 1
                 else f"识别到事项：{graph.nodes[0].title}" if graph.nodes else "未识别到明确事项"
             )
+        if history_slot_usage:
+            history_notes = "；".join(
+                f"{title} 复用历史槽位 {', '.join(slot_keys)}"
+                for title, slot_keys in history_slot_usage
+            )
+            summary_prefix = graph.summary.strip()
+            graph.summary = (
+                f"{summary_prefix}。检测到历史信息复用：{history_notes}，请确认后执行"
+                if summary_prefix
+                else f"检测到历史信息复用：{history_notes}，请确认后执行"
+            )
         return graph
 
     def _resolve_confirmation_needed(
@@ -246,6 +275,7 @@ class GraphDraftNormalizer:
         payload: UnifiedGraphDraftPayload,
         graph: ExecutionGraphState,
         intents_by_code: dict[str, IntentDefinition],
+        history_slot_usage: list[tuple[str, list[str]]],
     ) -> bool:
         if not graph.nodes:
             return False
@@ -260,8 +290,9 @@ class GraphDraftNormalizer:
             return True
         if confirm_policies == {GraphConfirmPolicy.NEVER}:
             return False
+        if history_slot_usage:
+            return True
         return payload.needs_confirmation or len(graph.nodes) > 1
-
 
 class LLMIntentGraphBuilder:
     def __init__(
@@ -329,6 +360,20 @@ class LLMIntentGraphBuilder:
                 model=self.model,
                 on_delta=on_delta,
             )
+        except Exception as exc:
+            if llm_exception_is_retryable(exc):
+                raise
+            logger.warning("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
+            return await self._build_via_legacy_chain(
+                message=message,
+                intents=active_intents,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+                recognition=recognition,
+                on_delta=on_delta,
+            )
+
+        try:
             payload = UnifiedGraphDraftPayload.model_validate(raw_payload)
         except Exception:
             logger.warning("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
@@ -345,6 +390,8 @@ class LLMIntentGraphBuilder:
             payload=payload,
             message=message,
             intents_by_code=intents_by_code,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
         )
         if result.recognition.primary and not result.graph.nodes:
             fallback_graph = await self.fallback_planner.plan(

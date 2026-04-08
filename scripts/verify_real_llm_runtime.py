@@ -36,6 +36,8 @@ async def _run() -> None:
         api_key=settings.llm_api_key,
         default_model=settings.default_llm_model or "",
         timeout_seconds=settings.llm_timeout_seconds,
+        rate_limit_max_retries=settings.llm_rate_limit_max_retries,
+        rate_limit_retry_delay_seconds=settings.llm_rate_limit_retry_delay_seconds,
         extra_headers=settings.llm_headers,
         structured_output_method=settings.llm_structured_output_method,
     )

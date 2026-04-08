@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: intent-router-api
+  name: intent-gas-bill-agent
   namespace: intent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: intent-router-api
+      app: intent-gas-bill-agent
   template:
     metadata:
       labels:
-        app: intent-router-api
+        app: intent-gas-bill-agent
     spec:
       terminationGracePeriodSeconds: 30
       containers:
-        - name: router-api
+        - name: gas-bill-agent
           image: python:3.12-slim
           imagePullPolicy: IfNotPresent
           workingDir: /workspace
@@ -32,14 +32,14 @@ spec:
               set -e
               rm -rf /workspace/build /workspace/backend/src/intent_router.egg-info
               python -m pip install --no-cache-dir /workspace
-              python -m uvicorn router_entry:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
+              python -m uvicorn intent_agents.gas_bill_payment_app:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
               name: http
           resources:
             requests:
-              cpu: 250m
-              memory: 384Mi
+              cpu: 150m
+              memory: 256Mi
           startupProbe:
             httpGet:
               path: /health
@@ -71,11 +71,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: intent-router-api
+  name: intent-gas-bill-agent
   namespace: intent
 spec:
   selector:
-    app: intent-router-api
+    app: intent-gas-bill-agent
   ports:
     - name: http
       port: 8000

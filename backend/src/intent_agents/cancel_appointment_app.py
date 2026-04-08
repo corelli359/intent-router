@@ -1,55 +1,9 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
-from fastapi import Depends, FastAPI
-
-from intent_agents.common import (
-    AgentCancelRequest,
-    AgentCancelResponse,
-    AgentExecutionResponse,
-    AgentLLMSettings,
-    LangChainJsonObjectRunner,
+from intent_agents.transfer_money_app import app, create_app
+from intent_agents.transfer_money_app import (
+    get_transfer_money_service as get_cancel_appointment_service,
 )
-from intent_agents.transfer_money_service import TransferMoneyAgentRequest, TransferMoneyAgentService
-
-
-@lru_cache
-def get_cancel_appointment_settings() -> AgentLLMSettings:
-    return AgentLLMSettings.from_env(prefix="TRANSFER_MONEY_AGENT", service_name="transfer-money-agent")
-
-
-@lru_cache
-def get_cancel_appointment_service() -> TransferMoneyAgentService:
-    settings = get_cancel_appointment_settings()
-    resolver = LangChainJsonObjectRunner(settings) if settings.connection_ready else None
-    return TransferMoneyAgentService(resolver=resolver)
-
-
-def create_app() -> FastAPI:
-    app = FastAPI(title="Transfer Money Agent", version="0.1.0")
-
-    @app.get("/health")
-    async def health() -> dict[str, object]:
-        settings = get_cancel_appointment_settings()
-        return {
-            "status": "ok",
-            "service": settings.service_name,
-            "llm_ready": settings.connection_ready,
-        }
-
-    @app.post("/api/agent/run", response_model=AgentExecutionResponse)
-    async def run_agent(
-        request: TransferMoneyAgentRequest,
-        service: TransferMoneyAgentService = Depends(get_cancel_appointment_service),
-    ) -> AgentExecutionResponse:
-        return await service.handle(request)
-
-    @app.post("/api/agent/cancel", response_model=AgentCancelResponse)
-    async def cancel_agent(request: AgentCancelRequest) -> AgentCancelResponse:
-        return AgentCancelResponse(status="cancelled")
-
-    return app
-
-
-app = create_app()
+from intent_agents.transfer_money_app import (
+    get_transfer_money_settings as get_cancel_appointment_settings,
+)

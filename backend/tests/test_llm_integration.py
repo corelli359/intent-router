@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(BACKEND_SRC) not in sys.path:
@@ -17,6 +19,7 @@ from router_core.domain import IntentMatch  # noqa: E402
 from router_core.llm_client import (  # noqa: E402
     IntentRecognitionMatchPayload,
     IntentRecognitionPayload,
+    LangChainLLMClient,
 )
 from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
 from router_core.v2_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
@@ -24,6 +27,7 @@ from router_core.v2_planner import (  # noqa: E402
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
 )
+from langchain_core.prompts import ChatPromptTemplate  # noqa: E402
 
 
 class FakeLangChainClient:
@@ -142,6 +146,81 @@ def test_llm_intent_recognizer_can_fail_closed_without_regex_fallback() -> None:
 
         assert result.primary == []
         assert result.candidates == []
+
+    asyncio.run(run())
+
+
+def test_llm_intent_recognizer_propagates_retryable_llm_errors() -> None:
+    class _FakeRateLimitError(Exception):
+        def __init__(self) -> None:
+            super().__init__("rate limited")
+            self.status_code = 429
+
+    class RateLimitedClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, variables, model, on_delta
+            raise _FakeRateLimitError()
+
+    async def run() -> None:
+        intents = [
+            IntentDefinition(
+                intent_code="transfer_money",
+                name="转账",
+                description="执行转账",
+                examples=["给张三转 200 元"],
+                keywords=["转账", "汇款"],
+                agent_url="https://agent.example.com/transfer",
+                dispatch_priority=100,
+                primary_threshold=0.7,
+                candidate_threshold=0.5,
+            )
+        ]
+
+        recognizer = LLMIntentRecognizer(RateLimitedClient())
+        with pytest.raises(_FakeRateLimitError):
+            await recognizer.recognize(
+                message="帮我转账给张三 200 元",
+                intents=intents,
+                recent_messages=[],
+                long_term_memory=[],
+            )
+
+    asyncio.run(run())
+
+
+def test_langchain_llm_client_retries_rate_limited_requests_once() -> None:
+    class _FakeRateLimitError(Exception):
+        def __init__(self) -> None:
+            super().__init__("rate limited")
+            self.status_code = 429
+            self.body = {"error": {"type": "rate_limit_error"}}
+
+    class _RetryableClient(LangChainLLMClient):
+        def __init__(self) -> None:
+            super().__init__(
+                base_url="https://example.com",
+                default_model="test-model",
+                rate_limit_max_retries=1,
+                rate_limit_retry_delay_seconds=0,
+            )
+            self.calls = 0
+
+        async def _stream_once(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            self.calls += 1
+            if self.calls == 1:
+                raise _FakeRateLimitError()
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        client = _RetryableClient()
+        payload = await client.run_json(
+            prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+            variables={},
+        )
+
+        assert payload == {"matches": []}
+        assert client.calls == 2
 
     asyncio.run(run())
 

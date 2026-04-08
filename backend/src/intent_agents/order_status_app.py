@@ -1,55 +1,9 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
-from fastapi import Depends, FastAPI
-
-from intent_agents.account_balance_service import AccountBalanceAgentRequest, AccountBalanceAgentService
-from intent_agents.common import (
-    AgentCancelRequest,
-    AgentCancelResponse,
-    AgentExecutionResponse,
-    AgentLLMSettings,
-    LangChainJsonObjectRunner,
+from intent_agents.account_balance_app import app, create_app
+from intent_agents.account_balance_app import (
+    get_account_balance_service as get_order_status_service,
 )
-
-
-@lru_cache
-def get_order_status_settings() -> AgentLLMSettings:
-    return AgentLLMSettings.from_env(prefix="ACCOUNT_BALANCE_AGENT", service_name="account-balance-agent")
-
-
-@lru_cache
-def get_order_status_service() -> AccountBalanceAgentService:
-    settings = get_order_status_settings()
-    resolver = LangChainJsonObjectRunner(settings) if settings.connection_ready else None
-    return AccountBalanceAgentService(resolver=resolver)
-
-
-def create_app() -> FastAPI:
-    app = FastAPI(title="Account Balance Agent", version="0.1.0")
-
-    @app.get("/health")
-    async def health() -> dict[str, object]:
-        settings = get_order_status_settings()
-        return {
-            "status": "ok",
-            "service": settings.service_name,
-            "llm_ready": settings.connection_ready,
-        }
-
-    @app.post("/api/agent/run", response_model=AgentExecutionResponse)
-    async def run_agent(
-        request: AccountBalanceAgentRequest,
-        service: AccountBalanceAgentService = Depends(get_order_status_service),
-    ) -> AgentExecutionResponse:
-        return await service.handle(request)
-
-    @app.post("/api/agent/cancel", response_model=AgentCancelResponse)
-    async def cancel_agent(request: AgentCancelRequest) -> AgentCancelResponse:
-        return AgentCancelResponse(status="cancelled")
-
-    return app
-
-
-app = create_app()
+from intent_agents.account_balance_app import (
+    get_account_balance_settings as get_order_status_settings,
+)

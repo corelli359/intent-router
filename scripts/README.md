@@ -60,6 +60,24 @@ Pytest wrapper:
 RUN_REAL_LLM_TEST=1 pytest backend/tests/integration/test_real_llm_runtime_script.py
 ```
 
+### 5) Register additional financial intents
+
+This upserts the extra V2 financial intents used by the multi-agent runtime:
+
+- `query_credit_card_repayment`
+- `pay_gas_bill`
+- `exchange_forex`
+
+The script now points these intents to dedicated K8s services:
+
+- `query_credit_card_repayment` -> `intent-credit-card-agent`
+- `pay_gas_bill` -> `intent-gas-bill-agent`
+- `exchange_forex` -> `intent-forex-agent`
+
+```bash
+python scripts/register_financial_intents.py --base-url "$INTENT_ROUTER_BASE_URL" --activate
+```
+
 ## Pytest integration wrapper
 
 `backend/tests/integration/test_mvp_validation_scripts.py` wraps these scripts.

@@ -14,6 +14,7 @@ from router_core.domain import (
     ChatMessage,
     IntentDefinition,
     IntentMatch,
+    LongTermMemoryEntry,
     RouterSnapshot,
     SessionPlan,
     SessionPlanItem,

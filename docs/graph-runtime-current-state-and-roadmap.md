@@ -39,17 +39,18 @@
 
 ### 3.1 主链路
 
-当前 V2 主链路是：
+当前 V2 主链路有两种首轮建图模式：
 
 1. 用户消息进入 `GraphRouterOrchestrator`
-2. `LLMIntentRecognizer` 做多意图识别
-3. `LLMIntentGraphPlanner` 基于识别结果输出 graph payload
-4. 后端把 payload 转成 `ExecutionGraphState`
-5. graph 进入 `pending_graph` 或 `current_graph`
-6. orchestrator 根据边依赖和节点状态选择下一个可执行 node
-7. node 复用现有 `Task + StreamingAgentClient + Agent HTTP/SSE 协议`
-8. agent 返回 `waiting / completed / failed`
-9. orchestrator 更新 node / graph / session 状态，并通过 SSE 推给前端
+2. 如果 `ROUTER_V2_GRAPH_BUILD_MODE=unified`，首轮直接走 `LLMIntentGraphBuilder`
+3. 如果是 `legacy`，则先走 `LLMIntentRecognizer`，再走 `LLMIntentGraphPlanner`
+4. 后端把 draft/payload 归一化成 `ExecutionGraphState`
+5. 如果发现复用了历史槽位或本身需要确认，graph 进入 `pending_graph`
+6. 确认后 graph 转成 `current_graph`
+7. orchestrator 根据边依赖和节点状态选择下一个可执行 node
+8. node 复用现有 `Task + StreamingAgentClient + Agent HTTP/SSE 协议`
+9. agent 返回 `waiting / completed / failed`
+10. orchestrator 更新 node / graph / session 状态，并通过 SSE 推给前端
 
 对应代码主要在：
 
@@ -111,24 +112,10 @@ graph 的节点、边、顺序、条件都来自：
 - `failed`
 - `cancelled`
 
-当前语义中最关键的一点是：
+当前语义中最关键的两点是：
 
-- `completed` 表示整张 graph 的可执行链路都已正常完成
-- `partially_completed` 表示有些节点完成了，但也有节点被跳过、取消或其他非纯完成结果
-
-最近这次修复的核心就是把：
-
-- `completed + skipped`
-
-从过去错误地汇总为：
-
-- `completed`
-
-改成了：
-
-- `partially_completed`
-
-这样 graph 的最终状态才和真实执行结果一致。
+- `completed` 表示所有“本应执行”的链路都结束了；如果某些后继节点只是因为条件不满足而没有执行，graph 仍然是 `completed`
+- `partially_completed` 只表示“本来应该继续执行，但有节点失败、取消、或被非条件原因跳过”
 
 ### 4.2 Node 级状态
 
@@ -211,8 +198,10 @@ graph 的节点、边、顺序、条件都来自：
 当某个条件分支不满足时：
 
 - node 会被标成 `skipped`
+- `skip_reason_code` 会被标成 `condition_not_met`
 - `blocking_reason` 会写入触发该跳过的条件标签或原因
-- graph 会被汇总成 `partially_completed`，而不是纯 `completed`
+- graph 最终仍然会汇总成 `completed`
+- 同时 runtime 会额外给用户一条明确提示，说明哪个节点因为条件不满足没有执行
 
 这一步对于未来多意图 graph 非常关键。
 
@@ -231,6 +220,14 @@ graph 的节点、边、顺序、条件都来自：
 - 取消待确认 graph
 - 取消当前 waiting node
 - 当前 waiting node 上收到新目标后重规划
+- 如果 graph 复用了历史槽位，先要求用户确认再执行
+
+这里要注意一个运行时细节：
+
+- 现在不再依赖 LLM 主动把历史槽位写进 `node.slot_memory`
+- runtime 会先对 LLM 输出做 grounding
+- 然后再从 session 中最近已确认的 `task.slot_memory` 以及 long-term memory 里的结构化 `key=value` 条目补齐允许复用的槽位
+- 只要发生这种历史注入，node 就会记录到 `history_slot_keys`，graph 会被抬到 `waiting_confirmation`
 
 但当前还不支持：
 

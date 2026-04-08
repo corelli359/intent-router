@@ -316,6 +316,43 @@ def test_transfer_money_service_fails_when_amount_exceeds_limit() -> None:
     asyncio.run(run())
 
 
+def test_transfer_money_service_does_not_silently_reuse_history_sensitive_slots() -> None:
+    async def run() -> None:
+        service = TransferMoneyAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "recipient_name": "小明",
+                    "recipient_card_number": "6222020100049999999",
+                    "recipient_phone_last4": "1234",
+                    "amount": "1000",
+                    "has_enough_information": True,
+                    "ask_message": "",
+                }
+            )
+        )
+        response = await service.handle(
+            TransferMoneyAgentRequest(
+                sessionId="session_transfer_007",
+                taskId="task_transfer_007",
+                input="帮我转账",
+                conversation={
+                    "recentMessages": [
+                        "user: 给小明转1000",
+                        "assistant: 请提供收款卡号、收款人手机号后4位",
+                        "user: 卡号 6222020100049999999，后四位 1234",
+                    ],
+                    "longTermMemory": [],
+                },
+            )
+        )
+
+        assert response.status == "waiting_user_input"
+        assert response.content == "请提供收款人姓名、收款卡号、收款人手机号后4位、转账金额"
+        assert response.slot_memory == {}
+
+    asyncio.run(run())
+
+
 def test_transfer_money_http_app_returns_router_payload() -> None:
     async def run() -> None:
         app = create_app()
@@ -342,7 +379,11 @@ def test_transfer_money_http_app_returns_router_payload() -> None:
                     "sessionId": "session_transfer_007",
                     "taskId": "task_transfer_007",
                     "input": "给李四转 3000 元",
-                    "recipient": {"name": "李四"},
+                    "recipient": {
+                        "name": "李四",
+                        "cardNumber": "6222020100049999999",
+                        "phoneLast4": "1234",
+                    },
                     "transfer": {"amount": "3000"},
                     "conversation": {"recentMessages": [], "longTermMemory": []},
                 },

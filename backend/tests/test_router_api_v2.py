@@ -55,6 +55,24 @@ def _mock_intents() -> list[IntentDefinition]:
             dispatch_priority=100,
             primary_threshold=0.68,
             candidate_threshold=0.45,
+            slot_schema=[
+                {
+                    "slot_key": "card_number",
+                    "label": "卡号",
+                    "description": "银行卡号",
+                    "value_type": "account_number",
+                    "required": True,
+                    "allow_from_history": True,
+                },
+                {
+                    "slot_key": "phone_last_four",
+                    "label": "手机号后4位",
+                    "description": "手机号后4位",
+                    "value_type": "phone_last4",
+                    "required": True,
+                    "allow_from_history": True,
+                },
+            ],
         ),
         IntentDefinition(
             intent_code="transfer_money",
@@ -66,6 +84,38 @@ def _mock_intents() -> list[IntentDefinition]:
             dispatch_priority=95,
             primary_threshold=0.72,
             candidate_threshold=0.5,
+            slot_schema=[
+                {
+                    "slot_key": "recipient_name",
+                    "label": "收款人",
+                    "description": "收款人姓名",
+                    "value_type": "person_name",
+                    "required": True,
+                },
+                {
+                    "slot_key": "amount",
+                    "label": "金额",
+                    "description": "转账金额",
+                    "value_type": "currency",
+                    "required": True,
+                },
+                {
+                    "slot_key": "recipient_card_number",
+                    "label": "收款卡号",
+                    "description": "收款银行卡号",
+                    "value_type": "account_number",
+                    "required": True,
+                    "allow_from_history": False,
+                },
+                {
+                    "slot_key": "recipient_phone_last_four",
+                    "label": "收款人手机号后4位",
+                    "description": "收款人手机号后4位",
+                    "value_type": "phone_last4",
+                    "required": True,
+                    "allow_from_history": False,
+                },
+            ],
         ),
     ]
 
@@ -220,6 +270,283 @@ class _SingleNodeConfirmGraphBuilder:
         )()
 
 
+class _HistoryPrefillGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, recent_messages, long_term_memory, recognition, on_delta
+        if "卡号" in message or "尾号" in message:
+            graph = ExecutionGraphState(
+                source_message=message,
+                summary="识别到余额查询",
+                status=GraphStatus.DRAFT,
+            )
+            graph.nodes.append(
+                GraphNodeState(
+                    intent_code="query_account_balance",
+                    title="查询账户余额",
+                    confidence=0.96,
+                    position=0,
+                    source_fragment=message,
+                    slot_memory={
+                        "card_number": "6222021234567890",
+                        "phone_last_four": "1234",
+                    },
+                )
+            )
+            return type(
+                "GraphBuildResult",
+                (),
+                {
+                    "recognition": RecognitionResult(
+                        primary=[IntentMatch(intent_code="query_account_balance", confidence=0.96, reason="grounded")],
+                        candidates=[],
+                    ),
+                    "graph": graph,
+                },
+            )()
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="识别到余额查询",
+            status=GraphStatus.DRAFT,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="query_account_balance",
+                title="查询账户余额",
+                confidence=0.96,
+                position=0,
+                source_fragment=message,
+                slot_memory={
+                    "card_number": "6222021234567890",
+                    "phone_last_four": "1234",
+                },
+                history_slot_keys=["card_number", "phone_last_four"],
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": RecognitionResult(
+                    primary=[IntentMatch(intent_code="query_account_balance", confidence=0.96, reason="history")],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
+
+
+class _HistoryConditionalGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, recent_messages, long_term_memory, recognition, on_delta
+        if "卡号" in message or "尾号" in message:
+            graph = ExecutionGraphState(
+                source_message=message,
+                summary="识别到余额查询",
+                status=GraphStatus.DRAFT,
+            )
+            graph.nodes.append(
+                GraphNodeState(
+                    intent_code="query_account_balance",
+                    title="查询账户余额",
+                    confidence=0.96,
+                    position=0,
+                    source_fragment=message,
+                    slot_memory={
+                        "card_number": "6222021234567890",
+                        "phone_last_four": "1234",
+                    },
+                )
+            )
+            return type(
+                "GraphBuildResult",
+                (),
+                {
+                    "recognition": RecognitionResult(
+                        primary=[IntentMatch(intent_code="query_account_balance", confidence=0.96, reason="grounded")],
+                        candidates=[],
+                    ),
+                    "graph": graph,
+                },
+            )()
+
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="先查余额，如果余额足够就给小明转账 1000 元",
+            status=GraphStatus.DRAFT,
+        )
+        balance = GraphNodeState(
+            intent_code="query_account_balance",
+            title="查询账户余额",
+            confidence=0.96,
+            position=0,
+            source_fragment="帮我查一下余额",
+            slot_memory={
+                "card_number": "6222021234567890",
+                "phone_last_four": "1234",
+            },
+        )
+        transfer = GraphNodeState(
+            intent_code="transfer_money",
+            title="给小明转账 1000 元",
+            confidence=0.92,
+            position=1,
+            source_fragment="如果大于199999，就给小明转账1000",
+            slot_memory={"recipient_name": "小明", "amount": "1000"},
+        )
+        transfer.depends_on.append(balance.node_id)
+        transfer.relation_reason = "当余额 > 199999 时执行"
+        graph.nodes.extend([balance, transfer])
+        graph.edges.append(
+            GraphEdge(
+                source_node_id=balance.node_id,
+                target_node_id=transfer.node_id,
+                relation_type=GraphEdgeType.CONDITIONAL,
+                label="当余额 > 199999 时执行",
+                condition=GraphCondition(
+                    source_node_id=balance.node_id,
+                    left_key="balance",
+                    operator=">",
+                    right_value=199999,
+                ),
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": RecognitionResult(
+                    primary=[
+                        IntentMatch(intent_code="query_account_balance", confidence=0.96, reason="history"),
+                        IntentMatch(intent_code="transfer_money", confidence=0.92, reason="conditional"),
+                    ],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
+
+
+class _RateLimitedGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del message, intents, recent_messages, long_term_memory, recognition, on_delta
+
+        class _RateLimitError(Exception):
+            def __init__(self) -> None:
+                super().__init__("rate limited")
+                self.status_code = 429
+
+        raise _RateLimitError()
+
+
+class _FirstMatchThenRateLimitedRecognizer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del message, intents, recent_messages, long_term_memory, on_delta
+        self.calls += 1
+        if self.calls == 1:
+            return RecognitionResult(
+                primary=[IntentMatch(intent_code="query_account_balance", confidence=0.96, reason="fixed")],
+                candidates=[],
+            )
+
+        class _RateLimitError(Exception):
+            def __init__(self) -> None:
+                super().__init__("rate limited")
+                self.status_code = 429
+
+        raise _RateLimitError()
+
+
+class _HistoryConditionalGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, recent_messages, long_term_memory, recognition, on_delta
+        if "如果大于199999" in message:
+            graph = ExecutionGraphState(
+                source_message=message,
+                summary="先查询账户余额，如果余额大于 199999 元则给小明转账 1000 元",
+                status=GraphStatus.DRAFT,
+            )
+            balance = GraphNodeState(
+                intent_code="query_account_balance",
+                title="查询账户余额",
+                confidence=0.97,
+                position=0,
+                source_fragment="帮我查一下余额",
+                slot_memory={},
+            )
+            transfer = GraphNodeState(
+                intent_code="transfer_money",
+                title="给小明转账 1000 元",
+                confidence=0.91,
+                position=1,
+                source_fragment="如果大于199999，就给小明转账1000",
+                slot_memory={"recipient_name": "小明", "amount": "1000"},
+            )
+            transfer.depends_on.append(balance.node_id)
+            transfer.relation_reason = "余额大于 199999 时转账"
+            graph.nodes.extend([balance, transfer])
+            graph.edges.append(
+                GraphEdge(
+                    source_node_id=balance.node_id,
+                    target_node_id=transfer.node_id,
+                    relation_type=GraphEdgeType.CONDITIONAL,
+                    label="余额大于 199999 时转账",
+                    condition=GraphCondition(
+                        source_node_id=balance.node_id,
+                        left_key="balance",
+                        operator=">",
+                        right_value=199999,
+                    ),
+                )
+            )
+            return type(
+                "GraphBuildResult",
+                (),
+                {
+                    "recognition": RecognitionResult(
+                        primary=[
+                            IntentMatch(intent_code="query_account_balance", confidence=0.97, reason="history"),
+                            IntentMatch(intent_code="transfer_money", confidence=0.91, reason="conditional"),
+                        ],
+                        candidates=[],
+                    ),
+                    "graph": graph,
+                },
+            )()
+
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="识别到余额查询",
+            status=GraphStatus.DRAFT,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="query_account_balance",
+                title="查询账户余额",
+                confidence=0.96,
+                position=0,
+                source_fragment=message,
+                slot_memory={
+                    "card_number": "6222021234567890",
+                    "phone_last_four": "1234",
+                },
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": RecognitionResult(
+                    primary=[IntentMatch(intent_code="query_account_balance", confidence=0.96, reason="seed")],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
+
+
 def test_v2_multi_intent_graph_requires_confirmation_and_runs_sequentially() -> None:
     async def run() -> None:
         app, _ = _test_v2_app()
@@ -278,6 +605,178 @@ def test_v2_single_node_waiting_confirmation_from_unified_builder_stays_pending(
             assert snapshot["pending_graph"]["status"] == "waiting_confirmation"
             assert len(snapshot["pending_graph"]["nodes"]) == 1
             assert snapshot["current_graph"] is None
+
+    asyncio.run(run())
+
+
+def test_v2_history_prefill_requires_confirmation_before_execution() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(graph_builder=_HistoryPrefillGraphBuilder())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            seed_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "卡号 6222021234567890，尾号1234"},
+            )
+            assert seed_turn.status_code == 200
+            first_snapshot = seed_turn.json()["snapshot"]
+            assert first_snapshot["current_graph"]["status"] == "completed"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额"},
+            )
+            assert second_turn.status_code == 200
+            snapshot = second_turn.json()["snapshot"]
+            pending_graph = snapshot["pending_graph"]
+            assert pending_graph is not None
+            assert pending_graph["status"] == "waiting_confirmation"
+            assert pending_graph["nodes"][0]["history_slot_keys"] == ["card_number", "phone_last_four"]
+            assert "检测到历史信息复用" in pending_graph["summary"]
+            assert snapshot["current_graph"] is None
+
+    asyncio.run(run())
+
+
+def test_v2_history_prefill_in_conditional_graph_requires_confirmation() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(graph_builder=_HistoryConditionalGraphBuilder())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额"},
+            )
+            assert first_turn.status_code == 200
+            assert first_turn.json()["snapshot"]["current_graph"]["status"] == "waiting_user_input"
+
+            seed_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "卡号 6222021234567890，尾号1234"},
+            )
+            assert seed_turn.status_code == 200
+            assert seed_turn.json()["snapshot"]["current_graph"]["status"] == "completed"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额，如果大于199999，就给小明转账1000"},
+            )
+            assert second_turn.status_code == 200
+            snapshot = second_turn.json()["snapshot"]
+            pending_graph = snapshot["pending_graph"]
+            assert pending_graph is not None
+            assert pending_graph["status"] == "waiting_confirmation"
+            assert [node["intent_code"] for node in pending_graph["nodes"]] == [
+                "query_account_balance",
+                "transfer_money",
+            ]
+            assert pending_graph["nodes"][0]["history_slot_keys"] == ["card_number", "phone_last_four"]
+            assert pending_graph["nodes"][1]["history_slot_keys"] == []
+            assert "检测到历史信息复用" in pending_graph["summary"]
+            assert snapshot["current_graph"] is None
+
+    asyncio.run(run())
+
+
+def test_v2_history_prefill_on_conditional_graph_requires_confirmation_and_finishes_completed() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(graph_builder=_HistoryConditionalGraphBuilder())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            seed_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额，卡号 6222021234567890，尾号1234"},
+            )
+            assert seed_turn.status_code == 200
+            assert seed_turn.json()["snapshot"]["current_graph"]["status"] == "completed"
+
+            conditional_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额，如果大于199999，就给小明转账1000"},
+            )
+            assert conditional_turn.status_code == 200
+            pending_graph = conditional_turn.json()["snapshot"]["pending_graph"]
+            assert pending_graph is not None
+            assert pending_graph["status"] == "waiting_confirmation"
+            assert pending_graph["nodes"][0]["intent_code"] == "query_account_balance"
+            assert pending_graph["nodes"][0]["history_slot_keys"] == ["card_number", "phone_last_four"]
+            assert "检测到历史信息复用" in pending_graph["summary"]
+
+            confirm_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/actions",
+                json={
+                    "task_id": pending_graph["graph_id"],
+                    "source": "router",
+                    "action_code": "confirm_graph",
+                    "confirm_token": pending_graph["confirm_token"],
+                },
+            )
+            assert confirm_turn.status_code == 200
+            snapshot = confirm_turn.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert [node["status"] for node in current_graph["nodes"]] == ["completed", "skipped"]
+            assert current_graph["nodes"][1]["skip_reason_code"] == "condition_not_met"
+            assert "因条件未满足未执行" in snapshot["messages"][-1]["content"]
+
+    asyncio.run(run())
+
+
+def test_v2_rate_limited_graph_builder_returns_busy_message() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(graph_builder=_RateLimitedGraphBuilder())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额，如果大于199999，就给小明转账1000"},
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["current_graph"] is None
+            assert snapshot["pending_graph"] is None
+            assert snapshot["messages"][-1]["content"] == "当前意图识别服务繁忙，请稍后重试。"
+
+    asyncio.run(run())
+
+
+def test_v2_waiting_node_can_continue_when_recognizer_is_temporarily_unavailable() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(recognizer=_FirstMatchThenRateLimitedRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我查一下余额"},
+            )
+            assert first_turn.status_code == 200
+            first_snapshot = first_turn.json()["snapshot"]
+            assert first_snapshot["current_graph"]["status"] == "waiting_user_input"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "卡号 6222021234567890，尾号1234"},
+            )
+            assert second_turn.status_code == 200
+            second_snapshot = second_turn.json()["snapshot"]
+            assert second_snapshot["current_graph"]["status"] == "completed"
+            assert second_snapshot["messages"][-1]["content"] == "查询成功，账户余额为 8000 元"
 
     asyncio.run(run())
 
@@ -388,7 +887,7 @@ def test_v2_runtime_fails_closed_for_mock_scheme_agent_url() -> None:
         snapshot = response.json()["snapshot"]
         assert response.status_code == 200
         assert snapshot["current_graph"]["nodes"][0]["status"] == "failed"
-        assert "Unsupported agent_url scheme" in snapshot["messages"][-1]["content"]
+        assert any("Unsupported agent_url scheme" in message["content"] for message in snapshot["messages"])
 
     asyncio.run(run())
 
@@ -464,7 +963,7 @@ def test_v2_expands_multi_transfer_conditions_and_skips_unsatisfied_branch() -> 
     asyncio.run(run())
 
 
-def test_v2_single_conditional_skip_marks_graph_partially_completed() -> None:
+def test_v2_single_conditional_skip_marks_graph_completed_with_skip_reason() -> None:
     class _SingleConditionalPlanner:
         async def plan(self, *, message, matches, intents_by_code, recent_messages=None, long_term_memory=None):
             graph = ExecutionGraphState(
@@ -542,9 +1041,12 @@ def test_v2_single_conditional_skip_marks_graph_partially_completed() -> None:
                 json={"content": "6222020100049999999，尾号1234"},
             )
             assert resume_turn.status_code == 200
-            current_graph = resume_turn.json()["snapshot"]["current_graph"]
-            assert current_graph["status"] == "partially_completed"
+            snapshot = resume_turn.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
             assert [node["status"] for node in current_graph["nodes"]] == ["completed", "skipped"]
             assert current_graph["nodes"][1]["blocking_reason"] == "余额大于8000时转账"
+            assert current_graph["nodes"][1]["skip_reason_code"] == "condition_not_met"
+            assert "因条件未满足未执行" in snapshot["messages"][-1]["content"]
 
     asyncio.run(run())

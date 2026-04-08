@@ -145,6 +145,8 @@ def _build_llm_client() -> LangChainLLMClient | None:
         api_key=settings.llm_api_key,
         default_model=settings.default_llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
+        rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),
+        rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),
         extra_headers=settings.llm_headers,
         structured_output_method=settings.llm_structured_output_method,
     )

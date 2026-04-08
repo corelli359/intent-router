@@ -18,12 +18,16 @@ from router_core.domain import (
     TaskStatus,
     utc_now,
 )
+from router_core.llm_client import llm_exception_is_retryable
 from router_core.memory_store import LongTermMemoryStore
 from router_core.recognizer import IntentRecognizer, RecognitionResult
+from router_core.slot_grounding import apply_history_slot_values, normalize_slot_memory
 from router_core.v2_domain import (
     ExecutionGraphState,
+    GraphAction,
     GraphCondition,
     GraphNodeState,
+    GraphNodeSkipReason,
     GraphNodeStatus,
     GraphRouterSnapshot,
     GraphSessionState,
@@ -51,6 +55,12 @@ ACTIVE_NODE_STATUSES = {
     GraphNodeStatus.RUNNING,
     GraphNodeStatus.WAITING_USER_INPUT,
     GraphNodeStatus.WAITING_CONFIRMATION,
+}
+TERMINAL_GRAPH_STATUSES = {
+    GraphStatus.COMPLETED,
+    GraphStatus.PARTIALLY_COMPLETED,
+    GraphStatus.FAILED,
+    GraphStatus.CANCELLED,
 }
 
 
@@ -160,16 +170,29 @@ class GraphRouterOrchestrator:
         session.messages.append(ChatMessage(role="user", content=content))
         session.touch()
 
-        if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
-            await self._handle_pending_graph_turn(session, content)
-            return self.snapshot(session.session_id)
+        try:
+            if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
+                await self._handle_pending_graph_turn(session, content)
+                return self.snapshot(session.session_id)
 
-        waiting_node = self._get_waiting_node(session)
-        if waiting_node is not None:
-            await self._handle_waiting_node_turn(session, waiting_node, content)
-            return self.snapshot(session.session_id)
+            waiting_node = self._get_waiting_node(session)
+            if waiting_node is not None:
+                await self._handle_waiting_node_turn(session, waiting_node, content)
+                return self.snapshot(session.session_id)
 
-        await self._route_new_message(session, content)
+            await self._route_new_message(session, content)
+        except Exception as exc:
+            if not llm_exception_is_retryable(exc):
+                raise
+            logger.warning("Graph router LLM is temporarily unavailable", exc_info=True)
+            session.messages.append(
+                ChatMessage(
+                    role="assistant",
+                    content="当前意图识别服务繁忙，请稍后重试。",
+                    created_at=utc_now(),
+                )
+            )
+            session.touch()
         return self.snapshot(session.session_id)
 
     async def handle_action(
@@ -256,6 +279,14 @@ class GraphRouterOrchestrator:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
+        self._apply_history_prefill_policy(
+            session,
+            graph,
+            source_message=content,
+            intents_by_code=active_intents,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+        )
         if graph.status == GraphStatus.WAITING_CONFIRMATION:
             graph.touch(GraphStatus.WAITING_CONFIRMATION)
             session.pending_graph = graph
@@ -423,7 +454,7 @@ class GraphRouterOrchestrator:
             return
 
         while True:
-            self._refresh_node_states(graph)
+            await self._refresh_graph_state(session, graph)
             waiting_node = self._get_waiting_node(session)
             if waiting_node is not None:
                 session.active_node_id = waiting_node.node_id
@@ -481,7 +512,7 @@ class GraphRouterOrchestrator:
         if not (isinstance(previous_initial_source_input, str) and previous_initial_source_input):
             previous_initial_source_input = node.source_fragment or graph.source_message
         effective_user_input = (node.source_fragment or user_input) if created_new_task else user_input
-        task.input_context = self._build_session_context(session, task=task)
+        task.input_context = self._build_graph_task_context(session, graph=graph, task=task)
         task.input_context.update(
             {
                 "graph_id": graph.graph_id,
@@ -536,7 +567,7 @@ class GraphRouterOrchestrator:
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
 
-        context = self._build_session_context(session)
+        context = self._build_graph_task_context(session, graph=graph)
         context.update(
             {
                 "source_input": node.source_fragment or graph.source_message,
@@ -615,7 +646,7 @@ class GraphRouterOrchestrator:
                 ),
             )
         )
-        self._refresh_node_states(graph)
+        await self._refresh_graph_state(session, graph)
         await self._emit_graph_progress(session)
 
     async def _fail_node(
@@ -645,7 +676,7 @@ class GraphRouterOrchestrator:
                 payload={"cust_id": session.cust_id, **(payload or {}), "graph": self._graph_payload(graph), "node": self._node_payload(node)},
             )
         )
-        self._refresh_node_states(graph)
+        await self._refresh_graph_state(session, graph)
         await self._emit_graph_progress(session)
 
     async def _resume_waiting_node(
@@ -675,13 +706,19 @@ class GraphRouterOrchestrator:
         pending_graph = session.pending_graph
         if pending_graph is None:
             return
-        recognition = await self._recognize_message(
-            session,
-            content,
-            recent_messages=[],
-            long_term_memory=[],
-            emit_events=False,
-        )
+        try:
+            recognition = await self._recognize_message(
+                session,
+                content,
+                recent_messages=[],
+                long_term_memory=[],
+                emit_events=False,
+            )
+        except Exception as exc:
+            if not llm_exception_is_retryable(exc):
+                raise
+            logger.warning("Pending graph recognition unavailable, falling back to conservative wait", exc_info=True)
+            recognition = RecognitionResult(primary=[], candidates=[])
         decision = await self.turn_interpreter.interpret_pending_graph(
             message=content,
             pending_graph=pending_graph,
@@ -711,13 +748,19 @@ class GraphRouterOrchestrator:
         waiting_node: GraphNodeState,
         content: str,
     ) -> None:
-        recognition = await self._recognize_message(
-            session,
-            content,
-            recent_messages=[],
-            long_term_memory=[],
-            emit_events=False,
-        )
+        try:
+            recognition = await self._recognize_message(
+                session,
+                content,
+                recent_messages=[],
+                long_term_memory=[],
+                emit_events=False,
+            )
+        except Exception as exc:
+            if not llm_exception_is_retryable(exc):
+                raise
+            logger.warning("Waiting node recognition unavailable, continuing current node conservatively", exc_info=True)
+            recognition = RecognitionResult(primary=[], candidates=[])
         graph = session.current_graph
         if graph is None:
             return
@@ -760,7 +803,7 @@ class GraphRouterOrchestrator:
             task.touch(TaskStatus.CANCELLED)
         node.touch(GraphNodeStatus.CANCELLED, blocking_reason=reason)
         await self._publish_node_state(session, graph, node, TaskStatus.CANCELLED, "node.cancelled", reason)
-        self._refresh_node_states(graph)
+        await self._refresh_graph_state(session, graph)
         await self._emit_graph_progress(session)
 
     async def _cancel_current_graph(self, session: GraphSessionState, *, reason: str) -> None:
@@ -990,9 +1033,14 @@ class GraphRouterOrchestrator:
         graph = session.current_graph
         if graph is None:
             return
+        previous_status = graph.status
         graph.touch(self._graph_status(graph))
         event_name = self._graph_event_name(graph.status)
-        await self._publish_graph_state(session, event_name, self._graph_message(graph.status))
+        message = self._graph_message(graph)
+        if self._should_append_graph_terminal_message(graph, previous_status):
+            session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
+            session.touch()
+        await self._publish_graph_state(session, event_name, message)
 
     def _refresh_node_states(self, graph: ExecutionGraphState) -> None:
         for node in graph.nodes:
@@ -1006,11 +1054,23 @@ class GraphRouterOrchestrator:
             should_skip = False
             all_ready = True
             blocking_reason = "等待上游节点完成"
+            skip_reason_code: str | None = None
             for edge in incoming_edges:
                 source = graph.node_by_id(edge.source_node_id)
-                if source.status in {GraphNodeStatus.FAILED, GraphNodeStatus.CANCELLED, GraphNodeStatus.SKIPPED}:
+                if source.status == GraphNodeStatus.FAILED:
                     should_skip = True
                     blocking_reason = edge.label or "上游节点未满足依赖"
+                    skip_reason_code = GraphNodeSkipReason.UPSTREAM_FAILED.value
+                    break
+                if source.status == GraphNodeStatus.CANCELLED:
+                    should_skip = True
+                    blocking_reason = edge.label or "上游节点未满足依赖"
+                    skip_reason_code = GraphNodeSkipReason.UPSTREAM_CANCELLED.value
+                    break
+                if source.status == GraphNodeStatus.SKIPPED:
+                    should_skip = True
+                    blocking_reason = edge.label or "上游节点未满足依赖"
+                    skip_reason_code = GraphNodeSkipReason.UPSTREAM_SKIPPED.value
                     break
                 expected_statuses = (
                     edge.condition.expected_statuses
@@ -1023,16 +1083,22 @@ class GraphRouterOrchestrator:
                             continue
                         should_skip = True
                         blocking_reason = edge.label or "条件依赖未满足"
+                        skip_reason_code = GraphNodeSkipReason.CONDITION_NOT_MET.value
                         break
                     continue
                 if source.status in TERMINAL_NODE_STATUSES:
                     should_skip = True
                     blocking_reason = edge.label or "条件依赖未满足"
+                    skip_reason_code = GraphNodeSkipReason.CONDITION_NOT_MET.value
                     break
                 all_ready = False
 
             if should_skip:
-                node.touch(GraphNodeStatus.SKIPPED, blocking_reason=blocking_reason)
+                node.touch(
+                    GraphNodeStatus.SKIPPED,
+                    blocking_reason=blocking_reason,
+                    skip_reason_code=skip_reason_code,
+                )
             elif all_ready:
                 node.touch(GraphNodeStatus.READY)
             else:
@@ -1074,15 +1140,14 @@ class GraphRouterOrchestrator:
         if any(status == GraphNodeStatus.WAITING_USER_INPUT for status in statuses):
             return GraphStatus.WAITING_USER_INPUT
         if any(status in {GraphNodeStatus.READY, GraphNodeStatus.BLOCKED, GraphNodeStatus.RUNNING} for status in statuses):
-            completed = any(status == GraphNodeStatus.COMPLETED for status in statuses)
-            return GraphStatus.PARTIALLY_COMPLETED if completed else GraphStatus.RUNNING
+            return GraphStatus.RUNNING
         if all(status in {GraphNodeStatus.CANCELLED, GraphNodeStatus.SKIPPED} for status in statuses):
             return GraphStatus.CANCELLED
         if all(status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.SKIPPED} for status in statuses):
             return (
-                GraphStatus.PARTIALLY_COMPLETED
-                if any(status == GraphNodeStatus.SKIPPED for status in statuses)
-                else GraphStatus.COMPLETED
+                GraphStatus.COMPLETED
+                if self._all_skipped_nodes_are_condition_unmet(graph)
+                else GraphStatus.PARTIALLY_COMPLETED
             )
         if any(status == GraphNodeStatus.FAILED for status in statuses):
             completed = any(status == GraphNodeStatus.COMPLETED for status in statuses)
@@ -1121,6 +1186,144 @@ class GraphRouterOrchestrator:
                 return task
         return None
 
+    async def _refresh_graph_state(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
+        previous_statuses = {node.node_id: node.status for node in graph.nodes}
+        self._refresh_node_states(graph)
+        graph_status = self._graph_status(graph)
+
+        for node in graph.nodes:
+            previous_status = previous_statuses.get(node.node_id)
+            if previous_status == node.status or node.status != GraphNodeStatus.SKIPPED:
+                continue
+            message = self._skipped_node_message(node)
+            await self._publish_node_state(
+                session,
+                graph,
+                node,
+                TaskStatus.COMPLETED,
+                "node.skipped",
+                message,
+            )
+            if node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value and graph_status not in {
+                GraphStatus.COMPLETED,
+                GraphStatus.PARTIALLY_COMPLETED,
+                GraphStatus.FAILED,
+                GraphStatus.CANCELLED,
+            }:
+                session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
+                session.touch()
+
+        waiting_node = self._get_waiting_node(session)
+        session.active_node_id = waiting_node.node_id if waiting_node is not None else None
+
+    def _apply_history_prefill_policy(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        *,
+        source_message: str,
+        intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+    ) -> None:
+        history_nodes: list[GraphNodeState] = []
+        history_texts = [*recent_messages, *long_term_memory]
+        history_slot_values = self._history_slot_values(session, long_term_memory=long_term_memory)
+
+        for node in graph.nodes:
+            intent = intents_by_code.get(node.intent_code)
+            if intent is None:
+                continue
+            slot_memory, history_slot_keys = normalize_slot_memory(
+                slot_memory=node.slot_memory,
+                slot_schema=intent.slot_schema,
+                grounding_text=f"{source_message}\n{node.source_fragment or ''}",
+                history_texts=history_texts,
+            )
+            slot_memory, injected_history_keys = apply_history_slot_values(
+                slot_memory=slot_memory,
+                slot_schema=intent.slot_schema,
+                history_slot_values=history_slot_values,
+            )
+            for slot_key in injected_history_keys:
+                if slot_key not in history_slot_keys:
+                    history_slot_keys.append(slot_key)
+            node.slot_memory = slot_memory
+            node.history_slot_keys = history_slot_keys
+            if history_slot_keys:
+                history_nodes.append(node)
+
+        if not history_nodes:
+            return
+
+        history_notes = "；".join(
+            f"{node.title} 复用历史槽位 {', '.join(node.history_slot_keys)}"
+            for node in history_nodes
+        )
+        summary_note = f"检测到历史信息复用：{history_notes}，请确认后执行"
+        summary = graph.summary.strip()
+        if summary_note not in summary:
+            graph.summary = f"{summary}。{summary_note}" if summary else summary_note
+        graph.touch(GraphStatus.WAITING_CONFIRMATION)
+        if not graph.actions:
+            graph.actions = [
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ]
+
+    def _history_slot_values(
+        self,
+        session: GraphSessionState,
+        *,
+        long_term_memory: list[str],
+    ) -> dict[str, Any]:
+        values: dict[str, Any] = {}
+
+        for task in reversed(session.tasks):
+            if not task.slot_memory:
+                continue
+            for key, value in task.slot_memory.items():
+                if key in values or value is None:
+                    continue
+                values[key] = value
+
+        for entry in reversed(long_term_memory):
+            if ":" not in entry or "=" not in entry:
+                continue
+            _, raw_pairs = entry.split(":", 1)
+            for raw_pair in raw_pairs.split(","):
+                if "=" not in raw_pair:
+                    continue
+                key, raw_value = raw_pair.split("=", 1)
+                slot_key = key.strip()
+                slot_value = raw_value.strip()
+                if not slot_key or not slot_value or slot_key in values:
+                    continue
+                values[slot_key] = slot_value
+
+        return values
+
+    def _build_graph_task_context(
+        self,
+        session: GraphSessionState,
+        *,
+        graph: ExecutionGraphState,
+        task: Task | None = None,
+    ) -> dict[str, Any]:
+        context = self._build_session_context(session, task=task)
+        context.update(
+            {
+                "graph": self._graph_payload(graph),
+                "graph_summary": graph.summary,
+                "completed_node_outputs": {
+                    node.node_id: dict(node.output_payload)
+                    for node in graph.nodes
+                    if node.status == GraphNodeStatus.COMPLETED and node.output_payload
+                },
+            }
+        )
+        return context
+
     def _build_session_context(self, session: GraphSessionState, task: Task | None = None) -> dict[str, Any]:
         long_term_memory = self.session_store.long_term_memory.recall(session.cust_id)
         return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
@@ -1153,7 +1356,7 @@ class GraphRouterOrchestrator:
             GraphStatus.RUNNING: TaskStatus.RUNNING,
             GraphStatus.WAITING_USER_INPUT: TaskStatus.WAITING_USER_INPUT,
             GraphStatus.WAITING_CONFIRMATION_NODE: TaskStatus.WAITING_CONFIRMATION,
-            GraphStatus.PARTIALLY_COMPLETED: TaskStatus.RUNNING,
+            GraphStatus.PARTIALLY_COMPLETED: TaskStatus.COMPLETED,
             GraphStatus.COMPLETED: TaskStatus.COMPLETED,
             GraphStatus.FAILED: TaskStatus.FAILED,
             GraphStatus.CANCELLED: TaskStatus.CANCELLED,
@@ -1171,11 +1374,20 @@ class GraphRouterOrchestrator:
             return "graph.cancelled"
         return "graph.updated"
 
-    def _graph_message(self, status: GraphStatus) -> str:
+    def _graph_message(self, graph: ExecutionGraphState) -> str:
+        status = graph.status
+        condition_skips = self._condition_skipped_nodes(graph)
         if status == GraphStatus.COMPLETED:
+            if condition_skips:
+                summaries = "；".join(
+                    f"节点「{node.title}」因条件未满足未执行"
+                    + (f"（{node.blocking_reason}）" if node.blocking_reason else "")
+                    for node in condition_skips
+                )
+                return f"执行图已完成：{summaries}"
             return "执行图已完成"
         if status == GraphStatus.PARTIALLY_COMPLETED:
-            return "执行图部分完成，部分节点因条件未满足被跳过"
+            return "执行图部分完成，存在已完成节点之外的未执行或异常终止节点"
         if status == GraphStatus.FAILED:
             return "执行图执行失败"
         if status == GraphStatus.CANCELLED:
@@ -1185,6 +1397,46 @@ class GraphRouterOrchestrator:
         if status == GraphStatus.WAITING_CONFIRMATION_NODE:
             return "执行图等待节点确认"
         return "执行图状态更新"
+
+    def _condition_skipped_nodes(self, graph: ExecutionGraphState) -> list[GraphNodeState]:
+        return [
+            node
+            for node in graph.nodes
+            if node.status == GraphNodeStatus.SKIPPED
+            and node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value
+        ]
+
+    def _all_skipped_nodes_are_condition_unmet(self, graph: ExecutionGraphState) -> bool:
+        skipped_nodes = [node for node in graph.nodes if node.status == GraphNodeStatus.SKIPPED]
+        return all(
+            node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value
+            for node in skipped_nodes
+        )
+
+    def _should_append_graph_terminal_message(
+        self,
+        graph: ExecutionGraphState,
+        previous_status: GraphStatus,
+    ) -> bool:
+        if graph.status not in {
+            GraphStatus.COMPLETED,
+            GraphStatus.PARTIALLY_COMPLETED,
+            GraphStatus.FAILED,
+            GraphStatus.CANCELLED,
+        }:
+            return False
+        if previous_status == graph.status:
+            return False
+        return graph.status != GraphStatus.COMPLETED or bool(self._condition_skipped_nodes(graph))
+
+    def _skipped_node_message(self, node: GraphNodeState) -> str:
+        if node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value:
+            if node.blocking_reason:
+                return f"节点「{node.title}」未执行：条件不满足（{node.blocking_reason}）"
+            return f"节点「{node.title}」未执行：条件不满足"
+        if node.blocking_reason:
+            return f"节点「{node.title}」已跳过（{node.blocking_reason}）"
+        return f"节点「{node.title}」已跳过"
 
     def _graph_payload(
         self,
@@ -1219,8 +1471,10 @@ class GraphRouterOrchestrator:
             "task_id": node.task_id,
             "depends_on": list(node.depends_on),
             "blocking_reason": node.blocking_reason,
+            "skip_reason_code": node.skip_reason_code,
             "relation_reason": node.relation_reason,
             "slot_memory": dict(node.slot_memory),
+            "history_slot_keys": list(node.history_slot_keys),
             "output_payload": dict(node.output_payload),
             "updated_at": node.updated_at.isoformat(),
         }

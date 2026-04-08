@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
 import json
 from dataclasses import dataclass, field
 from json import JSONDecodeError
+import logging
 from typing import Any, Awaitable, Callable, Literal, Protocol
 
 import httpx
@@ -11,6 +14,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
 
 AsyncDeltaCallback = Callable[[str], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 
 def extract_json_value(raw_text: str) -> Any:
@@ -84,12 +88,18 @@ class JsonLLMClient(Protocol):
     ) -> Any: ...
 
 
+def llm_exception_is_retryable(exc: Exception) -> bool:
+    return getattr(exc, "status_code", None) == 429
+
+
 @dataclass(slots=True)
 class LangChainLLMClient:
     base_url: str
     default_model: str
     api_key: str | None = None
     timeout_seconds: float = 30.0
+    rate_limit_max_retries: int = 2
+    rate_limit_retry_delay_seconds: float = 2.0
     extra_headers: dict[str, str] = field(default_factory=dict)
     structured_output_method: Literal["function_calling", "json_mode", "json_schema"] = "json_mode"
     http_async_client: httpx.AsyncClient | None = None
@@ -124,6 +134,35 @@ class LangChainLLMClient:
         model: str | None = None,
         on_delta: AsyncDeltaCallback | None = None,
     ) -> str:
+        last_error: Exception | None = None
+        for attempt in range(self.rate_limit_max_retries + 1):
+            try:
+                return await self._stream_once(prompt, variables, model=model, on_delta=on_delta)
+            except Exception as exc:
+                if not self._should_retry_rate_limit(exc, attempt=attempt):
+                    raise
+                last_error = exc
+                delay = self._rate_limit_retry_delay(exc, attempt=attempt)
+                logger.warning(
+                    "Retrying LLM call after transient rate limit (%s/%s) in %.2fs",
+                    attempt + 1,
+                    self.rate_limit_max_retries,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("LLM prompt streaming failed without raising an error")
+
+    async def _stream_once(
+        self,
+        prompt: ChatPromptTemplate,
+        variables: dict[str, Any],
+        *,
+        model: str | None = None,
+        on_delta: AsyncDeltaCallback | None = None,
+    ) -> str:
         chain = prompt | self._create_model(model)
         chunks: list[str] = []
         async for chunk in chain.astream(variables):
@@ -134,6 +173,28 @@ class LangChainLLMClient:
             if on_delta is not None:
                 await on_delta(text)
         return "".join(chunks)
+
+    def _should_retry_rate_limit(self, exc: Exception, *, attempt: int) -> bool:
+        if attempt >= self.rate_limit_max_retries:
+            return False
+        return llm_exception_is_retryable(exc)
+
+    def _rate_limit_retry_delay(self, exc: Exception, *, attempt: int) -> float:
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            error = body.get("error")
+            if isinstance(error, dict):
+                reset_time = error.get("reset_time")
+                if isinstance(reset_time, str):
+                    try:
+                        reset_at = datetime.fromisoformat(reset_time.replace("Z", "+00:00"))
+                    except ValueError:
+                        reset_at = None
+                    if reset_at is not None:
+                        delay = (reset_at - datetime.now(timezone.utc)).total_seconds() + 0.25
+                        if delay > 0:
+                            return min(delay, self.timeout_seconds)
+        return min(self.rate_limit_retry_delay_seconds * (attempt + 1), self.timeout_seconds)
 
     def _chunk_text(self, content: Any) -> str:
         if isinstance(content, str):

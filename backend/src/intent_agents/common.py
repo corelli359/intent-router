@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass
+import logging
 from typing import Any, Literal, Protocol
 
 import httpx
@@ -11,7 +13,10 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from config.settings import _env_headers, _load_local_env_files
-from router_core.llm_client import extract_json_value
+from router_core.llm_client import extract_json_value, llm_exception_is_retryable
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentCustomer(BaseModel):
@@ -137,6 +142,8 @@ class AgentLLMSettings(BaseModel):
     llm_api_key: str | None = None
     llm_model: str | None = None
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
+    llm_rate_limit_max_retries: int = Field(default=2, ge=0)
+    llm_rate_limit_retry_delay_seconds: float = Field(default=2.0, gt=0)
     llm_headers: dict[str, str] = Field(default_factory=dict)
 
     @property
@@ -155,6 +162,14 @@ class AgentLLMSettings(BaseModel):
                 30.0,
                 f"{prefix}_LLM_TIMEOUT_SECONDS",
                 "ROUTER_LLM_TIMEOUT_SECONDS",
+            ),
+            llm_rate_limit_max_retries=int(
+                _env_first(f"{prefix}_LLM_RATE_LIMIT_MAX_RETRIES", "ROUTER_LLM_RATE_LIMIT_MAX_RETRIES") or "2"
+            ),
+            llm_rate_limit_retry_delay_seconds=_env_float(
+                2.0,
+                f"{prefix}_LLM_RATE_LIMIT_RETRY_DELAY_SECONDS",
+                "ROUTER_LLM_RATE_LIMIT_RETRY_DELAY_SECONDS",
             ),
             llm_headers=_env_headers_with_fallback(f"{prefix}_LLM_HEADERS_JSON", "ROUTER_LLM_HEADERS_JSON"),
         )
@@ -201,17 +216,19 @@ class LangChainJsonObjectRunner:
                     schema,
                     method="json_mode",
                 )
-                response = await structured_chain.ainvoke(variables)
+                response = await self._ainvoke_with_retry(structured_chain, variables)
                 if isinstance(response, BaseModel):
                     return response.model_dump()
                 if response:
                     return response
             except Exception as exc:
                 structured_error = exc
+                if llm_exception_is_retryable(exc):
+                    raise
 
         chain = prompt | model
         chunks: list[str] = []
-        async for chunk in chain.astream(variables):
+        async for chunk in self._astream_with_retry(chain, variables):
             text = _chunk_text(chunk.content)
             if text:
                 chunks.append(text)
@@ -225,6 +242,58 @@ class LangChainJsonObjectRunner:
                 raise structured_error
             raise
         return validated.model_dump()
+
+    async def _ainvoke_with_retry(self, chain, variables: dict[str, Any]) -> Any:
+        last_error: Exception | None = None
+        for attempt in range(self.settings.llm_rate_limit_max_retries + 1):
+            try:
+                return await chain.ainvoke(variables)
+            except Exception as exc:
+                if attempt >= self.settings.llm_rate_limit_max_retries or not llm_exception_is_retryable(exc):
+                    raise
+                last_error = exc
+                delay = min(
+                    self.settings.llm_rate_limit_retry_delay_seconds * (attempt + 1),
+                    self.settings.llm_timeout_seconds,
+                )
+                logger.warning(
+                    "Retrying agent LLM structured call after transient rate limit (%s/%s) in %.2fs",
+                    attempt + 1,
+                    self.settings.llm_rate_limit_max_retries,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Agent structured LLM invocation failed without raising an error")
+
+    async def _astream_with_retry(self, chain, variables: dict[str, Any]):
+        last_error: Exception | None = None
+        for attempt in range(self.settings.llm_rate_limit_max_retries + 1):
+            try:
+                async for chunk in chain.astream(variables):
+                    yield chunk
+                return
+            except Exception as exc:
+                if attempt >= self.settings.llm_rate_limit_max_retries or not llm_exception_is_retryable(exc):
+                    raise
+                last_error = exc
+                delay = min(
+                    self.settings.llm_rate_limit_retry_delay_seconds * (attempt + 1),
+                    self.settings.llm_timeout_seconds,
+                )
+                logger.warning(
+                    "Retrying agent LLM streaming call after transient rate limit (%s/%s) in %.2fs",
+                    attempt + 1,
+                    self.settings.llm_rate_limit_max_retries,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Agent streaming LLM invocation failed without raising an error")
 
 
 def dump_json(value: Any) -> str:

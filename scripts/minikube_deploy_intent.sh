@@ -80,8 +80,36 @@ wait_for_mount
 node_kubectl -n "${NAMESPACE}" delete ingress intent-router-chat --ignore-not-found || true
 node_kubectl -n "${NAMESPACE}" delete service intent-backend --ignore-not-found || true
 node_kubectl -n "${NAMESPACE}" delete deployment intent-backend --ignore-not-found || true
-node_kubectl apply -k "${TARGET_PATH}/k8s/intent"
-for deployment in intent-router-api intent-admin-api intent-order-agent intent-appointment-agent intent-chat-web intent-admin-web; do
+
+manifests=(
+  namespace.yaml
+  router-api.yaml
+  admin-api.yaml
+  order-agent.yaml
+  appointment-agent.yaml
+  credit-card-repayment-agent.yaml
+  gas-bill-agent.yaml
+  forex-agent.yaml
+  chat-web.yaml
+  admin-web.yaml
+  ingress.yaml
+)
+
+for manifest in "${manifests[@]}"; do
+  node_kubectl apply -f "${TARGET_PATH}/k8s/intent/${manifest}"
+done
+
+for deployment in \
+  intent-router-api \
+  intent-admin-api \
+  intent-order-agent \
+  intent-appointment-agent \
+  intent-credit-card-agent \
+  intent-gas-bill-agent \
+  intent-forex-agent \
+  intent-chat-web \
+  intent-admin-web
+do
   node_kubectl -n "${NAMESPACE}" rollout restart deployment/"${deployment}"
   node_kubectl -n "${NAMESPACE}" rollout status deployment/"${deployment}" --timeout=20m
 done

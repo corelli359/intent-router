@@ -29,6 +29,13 @@ class GraphNodeStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class GraphNodeSkipReason(StrEnum):
+    CONDITION_NOT_MET = "condition_not_met"
+    UPSTREAM_FAILED = "upstream_failed"
+    UPSTREAM_CANCELLED = "upstream_cancelled"
+    UPSTREAM_SKIPPED = "upstream_skipped"
+
+
 class GraphStatus(StrEnum):
     DRAFT = "draft"
     WAITING_CONFIRMATION = "waiting_confirmation"
@@ -74,15 +81,24 @@ class GraphNodeState(BaseModel):
     task_id: str | None = None
     depends_on: list[str] = Field(default_factory=list)
     blocking_reason: str | None = None
+    skip_reason_code: str | None = None
     relation_reason: str | None = None
     slot_memory: dict[str, Any] = Field(default_factory=dict)
+    history_slot_keys: list[str] = Field(default_factory=list)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
-    def touch(self, status: GraphNodeStatus, *, blocking_reason: str | None = None) -> None:
+    def touch(
+        self,
+        status: GraphNodeStatus,
+        *,
+        blocking_reason: str | None = None,
+        skip_reason_code: str | None = None,
+    ) -> None:
         self.status = status
         self.blocking_reason = blocking_reason
+        self.skip_reason_code = skip_reason_code
         self.updated_at = utc_now()
 
 

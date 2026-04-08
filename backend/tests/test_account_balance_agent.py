@@ -237,6 +237,43 @@ def test_account_balance_service_extracts_phone_last_four_when_card_is_already_s
     asyncio.run(run())
 
 
+def test_account_balance_service_does_not_silently_reuse_history_sensitive_slots() -> None:
+    async def run() -> None:
+        service = AccountBalanceAgentService(
+            resolver=FakeJsonRunner(
+                {
+                    "card_number": "6222021234567890",
+                    "phone_last4": "1234",
+                    "has_enough_information": True,
+                    "ask_message": "",
+                }
+            )
+        )
+        response = await service.handle(
+            AccountBalanceAgentRequest(
+                sessionId="session_balance_008",
+                taskId="task_balance_008",
+                input="帮我查一下余额，如果大于199999就转账",
+                conversation={
+                    "recentMessages": [
+                        "user: 帮我查一下余额",
+                        "assistant: 请提供卡号和手机号后4位",
+                        "user: 卡号 6222021234567890，手机号后四位 1234",
+                    ],
+                    "longTermMemory": [
+                        "query_account_balance: card_number=6222021234567890, phone_last_four=1234"
+                    ],
+                },
+            )
+        )
+
+        assert response.status == "waiting_user_input"
+        assert response.content == "请提供卡号和手机号后4位"
+        assert response.slot_memory == {}
+
+    asyncio.run(run())
+
+
 def test_account_balance_http_app_returns_router_payload() -> None:
     async def run() -> None:
         app = create_app()

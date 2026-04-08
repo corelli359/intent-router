@@ -30,6 +30,14 @@
 设计：首轮新消息需要可选地走 “一次 LLM 直接产出 GraphDraft”，但等待态解释和重规划先保持现有 `recognizer + turn interpreter + planner` 路径，避免一次性耦死。
 实现：新增 `router_core/v2_graph_builder.py`，包含 `LLMIntentGraphBuilder`、`GraphDraftNormalizer` 和统一 draft schema；`GraphRouterOrchestrator` 已支持 `graph_builder` 可选路径；`router_api/dependencies.py` 新增 `ROUTER_V2_GRAPH_BUILD_MODE=legacy|unified` 装配开关。
 
+### [x] T31 · V2 历史槽位复用确认与条件跳过语义修正
+设计：如果 unified builder 或 graph runtime 复用了历史里的敏感槽位，不能直接执行，必须先进入 `waiting_confirmation`；同时 graph 的终态语义要从“只要有 skipped 就部分完成”收紧为“条件未满足导致的 skipped 仍算 completed，只有本应执行却失败/取消/异常跳过时才算 partially_completed”。
+实现：新增 `router_core/slot_grounding.py` 做 deterministic slot grounding；`GraphDraftNormalizer` 与 `GraphRouterOrchestrator` 会把历史复用槽位标记到 `history_slot_keys` 并强制确认；除了识别 LLM 已写出的历史槽位，runtime 现在还会从 session 已确认 `task.slot_memory` 与 long-term memory 的结构化 `key=value` 条目里做受控预填充，再统一进入确认态；`v2_orchestrator` 现在会暴露 `skip_reason_code`，并在条件未满足时输出明确的 graph 终态提示；相关回归测试已补到 `test_v2_graph_builder.py` 与 `test_router_api_v2.py`。
+
+### [x] T32 · 金融扩展意图与 Agent 拆分部署
+设计：为 V2 扩展信用卡还款信息查询、天然气缴费、换外汇三个 intent，并把它们做成真实可见的独立 agent 部署，而不是继续隐藏在已有 balance/transfer agent 后面。原 `intent-order-agent` 与 `intent-appointment-agent` 收敛回单意图职责，避免运行拓扑和注册表拓扑不一致。
+实现：新增 `credit_card_repayment_service.py`、`gas_bill_payment_service.py`、`forex_exchange_service.py` 以及对应的 `*_app.py` 独立入口；K8s 新增 `intent-credit-card-agent`、`intent-gas-bill-agent`、`intent-forex-agent` 三个 deployment/service；`scripts/register_financial_intents.py` 已改为注册到独立 service；`order_status_app.py` / `cancel_appointment_app.py` 退回到余额查询与转账的兼容别名；补充了对应 service/app 回归测试，并将 Minikube 部署脚本改为逐个 apply/rollout。
+
 ### [x] T24 · 运行时 `mock://` 清理
 设计：`MockStreamingAgentClient` 只能存在于测试支撑层，生产 `StreamingAgentClient` 必须严格限制为 `http://` / `https://`，对非法 scheme fail-closed，而不是偷偷执行 mock。
 实现：`router_core/agent_client.py` 已移除内置 `MockStreamingAgentClient` 和 `mock://` 分流；测试专用 mock client 已迁移到 `backend/tests/support/mock_agent_client.py`；补充了 runtime fail-closed 回归测试，覆盖 V1、V2 和 `StreamingAgentClient` 本身。

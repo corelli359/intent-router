@@ -817,7 +817,7 @@ export default function AdminPage() {
                     <label className="span-2">
                       <span>Agent 接口地址</span>
                       <input
-                        placeholder="http://intent-order-agent.intent.svc.cluster.local:8000/api/agent/run"
+                        placeholder="http://intent-your-agent.intent.svc.cluster.local:8000/api/agent/run"
                         value={form.agentUrl}
                         onChange={(event) => setForm({ ...form, agentUrl: event.target.value })}
                       />
