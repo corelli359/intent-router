@@ -18,7 +18,7 @@ from router_core.domain import (
     TaskStatus,
     utc_now,
 )
-from router_core.orchestrator import LongTermMemoryStore
+from router_core.memory_store import LongTermMemoryStore
 from router_core.recognizer import IntentRecognizer, RecognitionResult
 from router_core.v2_domain import (
     ExecutionGraphState,
