@@ -12,6 +12,10 @@
 
 这份文档默认对应当前分支 `feature/dynamic-intent-graph-runtime` 上的最新实现。
 
+如果你要单独看“当前 V2 一条消息会经过几次 LLM、每次 LLM 分别负责什么”，直接看：
+
+- `docs/v2-llm-call-flow.md`
+
 ## 2. 当前目标边界
 
 当前 V2 graph runtime 的定位不是“全自动通用工作流引擎”，而是：
@@ -522,4 +526,3 @@ graph 的节点、边、顺序、条件都来自：
 
 - 先把现有 graph runtime 的状态语义、解释能力、局部重规划做扎实
 - 再继续扩展条件表达和自动并发能力
-
