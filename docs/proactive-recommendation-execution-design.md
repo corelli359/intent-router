@@ -441,3 +441,56 @@ Agent 的“完成”要区分：
 - `Agent / Executor 职责拆分`
 
 这三件事补齐后，整条链路才算真正贴合你的目标需求。
+
+## 11. 当前分支落地状态（2026-04-09）
+
+当前分支已经把“主动推荐模式”和“自由对话模式”拆成了两条不同的入口语义，但执行层仍然保持 demo 级简化。
+
+### 11.1 已落地
+
+- `POST /api/router/v2/sessions/{session_id}/messages` 已支持 `proactiveRecommendation`
+- Router 新增独立的 `LLMProactiveRecommendationRouter`
+- 当前支持 4 种推荐模式分流结果：
+  - `no_selection`
+  - `direct_execute`
+  - `interactive_graph`
+  - `switch_to_free_dialog`
+- `/chat/v2` 的推荐卡片现在会把完整预填数据一起发给 Router：
+  - `recommendationItemId`
+  - `intentCode`
+  - `title`
+  - `description`
+  - `slotMemory`
+  - `executionPayload`
+  - `allowDirectExecute`
+
+### 11.2 当前运行时语义
+
+- `direct_execute`
+  - 对外入口已经是 `proactiveRecommendation`
+  - 当前仓库里内部仍暂时复用 `guidedSelection` 直达执行图
+  - 如果某个推荐项 `allowDirectExecute=false`，运行时会强制降级到 `interactive_graph`
+- `interactive_graph`
+  - 上游选中的推荐项先转成 recognition hint 和默认槽位种子
+  - graph builder / planner 仍然基于用户当前自然语言做图规划
+  - 推荐项的 `slotMemory` 会作为节点默认要素并回灌给 graph node
+  - 用户对金额、对象、条件、顺序的修改仍然在 graph runtime 内处理
+- `switch_to_free_dialog`
+  - 会完整退回原有自由对话识别链路
+  - 不继承推荐项默认要素
+
+### 11.3 仍未落地
+
+- 还没有独立 `ExecutionManager`
+- 还没有各意图独立的真实 `ExecutionService`
+- 当前 agent 仍然是“要素确认 + 模拟执行”合一
+
+因此，当前版本已经完成的是：
+
+- 主动推荐模式的语义分流
+- 推荐项预填要素进入 Router / graph runtime
+- 不破坏原有自由对话模式
+
+尚未完成的是：
+
+- Router -> Execution Manager -> Execution Service 的生产级拆层

@@ -16,6 +16,10 @@
 设计：用户进一步澄清后，“主动推荐”不应等价于 `guidedSelection` 直达执行图。正确目标是：前端先把带完整要素和执行报文的推荐事项展示给用户；Router 仍然用 LLM 识别用户通过自然语言选中了哪些推荐项。如果用户没有修改，则 Router 不建 graph，而是把原始执行报文原封不动交给执行管理服务；如果用户有修改、补充、条件或顺序要求，则 Router 建 graph，再由 intent agent 多轮确认，最后交给执行管理服务和执行服务。
 实现：新增 `docs/proactive-recommendation-execution-design.md`，把目标架构、当前 demo 与目标架构的差距、Router 新增路由模式、执行管理服务职责、intent agent / executor 职责拆分，以及分阶段开发顺序写清楚；同时更新 `docs/graph-runtime-current-state-and-roadmap.md`，把当前“推荐上下文只是语义入口、尚未完成执行分流”的现状明确记录下来。
 
+### [x] T36 · 主动推荐模式专属入口与运行时补全
+设计：推荐模式要通过独立报文与自由对话模式隔离，Router 先做 LLM 推荐分流，再决定是原样执行、进入 graph，还是切回自由对话；同时推荐项的预填要素必须进入运行时，不能在“有修改”的场景里被历史预填逻辑错误清洗掉。
+实现：后端新增 `ProactiveRecommendationPayload / RouteDecision / LLMProactiveRecommendationRouter`，`sessions_v2` 与 `v2_orchestrator` 已接入 `proactiveRecommendation`，并支持 `no_selection / direct_execute / interactive_graph / switch_to_free_dialog` 四种分流；推荐模式下“有修改”会把已选推荐项作为 recognition hint 和默认槽位种子继续建图，并跳过自由对话历史预填逻辑，避免把推荐默认值误当作历史注入；`/chat/v2` 推荐卡片已切到发送完整 `proactiveRecommendation` 报文；补充了推荐模式 API 回归测试和前端构建校验。
+
 ## 2026-04-07 V2 Graph Runtime
 
 ### [x] T21 · V2 动态执行图运行时

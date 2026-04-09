@@ -49,6 +49,10 @@ DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "最近对话里可能出现一条以 [FRONTEND_RECOMMENDATION_CONTEXT] 开头的推荐候选摘要。"
     "如果当前用户消息是在引用“第一个/第二个/都要/第三个改一下”这类推荐项，你可以结合这条摘要解析真正的用户目标，"
     "但不能把推荐候选本身直接当成已确认节点。"
+    "最近对话里也可能出现 [PROACTIVE_RECOMMENDATION_SELECTION] 摘要，表示上游已经在主动推荐模式中选中了若干推荐项，"
+    "其中的 slot_memory 是推荐模式显式提供的默认要素，不是历史猜测。"
+    "如果当前消息是在这些已选推荐项基础上做金额、收款人、条件或顺序修改，你应以这些已选 intent 为图规划种子，"
+    "并仅根据当前消息调整相应节点或边。"
     "source_fragment 应尽量截取与该节点最相关的原始片段，方便下游 agent 读取。"
     "slot_memory 只允许填明显来自当前用户消息的结构化提示，不允许凭空猜测。"
 )
@@ -105,6 +109,11 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
     "如果当前用户消息是在引用这些候选项，例如“第一个和第三个都要”“第二个改成给弟弟转500”，"
     "你可以结合该摘要解析用户真正选中了哪些意图以及如何修改槽位，"
     "但绝不能把推荐候选直接当成 primary_intents 或 graph nodes。"
+    "最近对话里也可能出现 [PROACTIVE_RECOMMENDATION_SELECTION] 摘要，表示主动推荐模式里已经有若干推荐项被上游明确选中。"
+    "这时 recognition_hint_json.primary 通常就是这些被选中的 intent，"
+    "你应优先在这些已选 intent 范围内做图构建，并把摘要中的 slot_memory 视为上游提供的默认要素。"
+    "如果当前消息只是修改金额、对象、条件、顺序或并行关系，应保留这些已选 intent 并按修改重建 graph；"
+    "只有当用户明确放弃这些推荐项并提出新的独立诉求时，才应偏离 recognition_hint_json.primary。"
     "node.slot_memory 只允许填写当前这条用户消息里能够直接落地的结构化值，不允许把 recent_messages 或 long_term_memory 里的敏感槽位直接写进 slot_memory。"
     "如果你判断某个节点只有复用历史槽位才能直接执行，应把 needs_confirmation 设为 true，并在 summary 里明确提示存在历史信息复用。"
     "candidate_intents 只用于保留弱歧义，不得把同一业务动作的泛化解释塞进 candidate_intents。"
@@ -187,6 +196,38 @@ DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT = (
     "}}"
 )
 
+DEFAULT_V2_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT = (
+    "你是一个主动推荐场景下的意图分流器。"
+    "系统已经给用户展示了一组推荐事项。"
+    "每个推荐事项都包含 recommendationItemId、intentCode、完整 slotMemory 和 executionPayload。"
+    "你的任务不是做开放式自由意图识别，而是判断用户这条回复属于哪一类："
+    "1. no_selection: 用户明确表示都不选、不执行这些推荐事项。"
+    "2. direct_execute: 用户明确选择了某几项推荐事项，而且没有修改任何关键数据要素，没有新增条件、顺序、并行或附加意图。"
+    "3. interactive_graph: 用户选择了某几项推荐事项，但同时修改了数据要素，或者新增了条件、顺序、并行、附加说明，需要进入 graph 和 intent agent 继续确认。"
+    "4. switch_to_free_dialog: 用户没有沿着推荐事项做选择，而是表达了一个独立的新诉求，应该切回自由对话模式。"
+    "你必须只从给定 recommendationItemId 中选择 selectedRecommendationIds。"
+    "如果用户说“第一个/第二个/前两个/都要/都不要”，你要结合推荐清单顺序解析。"
+    "如果某个推荐项 allowDirectExecute=false，即使用户不修改要素，也不能输出 direct_execute。"
+    "只要用户改了金额、收款人、卡号、手机号后四位、币种，或者加了‘如果…再…’、‘先…再…’、‘同时…’之类关系，就必须输出 interactive_graph。"
+    "如果用户只是接受推荐项原始数据，不做任何改动，才允许输出 direct_execute。"
+    "你必须输出 JSON，不能输出解释。"
+)
+
+DEFAULT_V2_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT = (
+    "系统推荐话术:\n{intro_text}\n\n"
+    "推荐事项清单(JSON):\n{recommendation_items_json}\n\n"
+    "用户回复:\n{message}\n\n"
+    "请输出 JSON:\n"
+    "{{\n"
+    '  "route_mode": "no_selection | direct_execute | interactive_graph | switch_to_free_dialog",\n'
+    '  "selectedRecommendationIds": ["string"],\n'
+    '  "selectedIntents": ["string"],\n'
+    '  "hasUserModification": false,\n'
+    '  "modificationReasons": ["string"],\n'
+    '  "reason": "string"\n'
+    "}}"
+)
+
 
 def build_recognizer_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages(
@@ -206,4 +247,8 @@ def build_v2_turn_interpreter_prompt(*, system_prompt: str, human_prompt: str) -
 
 
 def build_v2_unified_graph_builder_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
+
+
+def build_v2_proactive_recommendation_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)

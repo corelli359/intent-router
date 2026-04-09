@@ -12,6 +12,7 @@ from router_core.context_builder import ContextBuilder
 from router_core.domain import (
     ChatMessage,
     IntentDefinition,
+    IntentMatch,
     RouterSnapshot,
     Task,
     TaskEvent,
@@ -39,6 +40,9 @@ from router_core.v2_domain import (
     GraphSessionState,
     GraphStatus,
     GuidedSelectionPayload,
+    ProactiveRecommendationItem,
+    ProactiveRecommendationPayload,
+    ProactiveRecommendationRouteMode,
     RecommendationContextPayload,
 )
 from router_core.v2_graph_semantics import repair_unexecutable_condition_edges, resolve_output_value
@@ -49,6 +53,10 @@ from router_core.v2_planner import (
     SequentialIntentGraphPlanner,
     TurnDecisionPayload,
     TurnInterpreter,
+)
+from router_core.v2_recommendation_router import (
+    NullProactiveRecommendationRouter,
+    ProactiveRecommendationRouter,
 )
 
 
@@ -134,6 +142,7 @@ class GraphRouterOrchestrator:
         graph_builder: IntentGraphBuilder | None = None,
         planner: IntentGraphPlanner | None = None,
         turn_interpreter: TurnInterpreter | None = None,
+        recommendation_router: ProactiveRecommendationRouter | None = None,
         context_builder: ContextBuilder | None = None,
         agent_client: AgentClient | None = None,
         config: GraphRouterOrchestratorConfig | None = None,
@@ -145,6 +154,7 @@ class GraphRouterOrchestrator:
         self.graph_builder = graph_builder
         self.planner = planner or SequentialIntentGraphPlanner()
         self.turn_interpreter = turn_interpreter or BasicTurnInterpreter()
+        self.recommendation_router = recommendation_router or NullProactiveRecommendationRouter()
         self.context_builder = context_builder or ContextBuilder()
         self.agent_client = agent_client or StreamingAgentClient()
         self.config = config or GraphRouterOrchestratorConfig()
@@ -182,6 +192,7 @@ class GraphRouterOrchestrator:
         *,
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
+        proactive_recommendation: ProactiveRecommendationPayload | None = None,
     ) -> GraphRouterSnapshot:
         session = self.session_store.get_or_create(session_id, cust_id)
         message_content = content.strip()
@@ -191,6 +202,14 @@ class GraphRouterOrchestrator:
         session.touch()
 
         try:
+            if proactive_recommendation is not None:
+                await self._handle_proactive_recommendation_turn(
+                    session,
+                    content=message_content,
+                    proactive_recommendation=proactive_recommendation,
+                )
+                return self.snapshot(session.session_id)
+
             if guided_selection is not None:
                 await self._handle_guided_selection_turn(session, content=message_content, guided_selection=guided_selection)
                 return self.snapshot(session.session_id)
@@ -222,6 +241,64 @@ class GraphRouterOrchestrator:
             )
             session.touch()
         return self.snapshot(session.session_id)
+
+    async def _handle_proactive_recommendation_turn(
+        self,
+        session: GraphSessionState,
+        *,
+        content: str,
+        proactive_recommendation: ProactiveRecommendationPayload,
+    ) -> None:
+        if not proactive_recommendation.items:
+            raise ValueError("proactive_recommendation.items is required")
+        if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
+            await self._cancel_pending_graph(session, graph_id=None, confirm_token=None)
+        if session.current_graph is not None and session.current_graph.status not in TERMINAL_GRAPH_STATUSES:
+            await self._cancel_current_graph(session, reason="用户切换到主动推荐事项处理")
+
+        decision = await self.recommendation_router.decide(
+            message=content,
+            proactive_recommendation=proactive_recommendation,
+        )
+        items_by_id = {item.recommendation_item_id: item for item in proactive_recommendation.items}
+        selected_items = [
+            items_by_id[recommendation_id]
+            for recommendation_id in decision.selected_recommendation_ids
+            if recommendation_id in items_by_id
+        ]
+
+        if decision.route_mode == ProactiveRecommendationRouteMode.NO_SELECTION:
+            message = "好的，本次不执行这些推荐事项。"
+            session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
+            session.touch()
+            await self._publish_session_state(session, "session.idle")
+            return
+
+        if decision.route_mode == ProactiveRecommendationRouteMode.SWITCH_TO_FREE_DIALOG:
+            await self._route_new_message(session, content)
+            return
+
+        if not selected_items:
+            await self._publish_no_match_hint(session)
+            return
+
+        if (
+            decision.route_mode == ProactiveRecommendationRouteMode.DIRECT_EXECUTE
+            and any(not item.allow_direct_execute for item in selected_items)
+        ):
+            decision.route_mode = ProactiveRecommendationRouteMode.INTERACTIVE_GRAPH
+
+        if decision.route_mode == ProactiveRecommendationRouteMode.DIRECT_EXECUTE:
+            guided_selection = self._guided_selection_from_proactive_items(selected_items)
+            await self._route_guided_selection(session, content="", guided_selection=guided_selection)
+            return
+
+        await self._route_proactive_interactive_graph(
+            session,
+            content=content,
+            proactive_recommendation=proactive_recommendation,
+            selected_items=selected_items,
+        )
 
     async def _handle_guided_selection_turn(
         self,
@@ -274,6 +351,8 @@ class GraphRouterOrchestrator:
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
+        proactive_defaults: list[ProactiveRecommendationItem] | None = None,
+        skip_history_prefill: bool = False,
     ) -> None:
         graph: ExecutionGraphState | None = None
         if recognition is None and (recent_messages is None or long_term_memory is None):
@@ -327,15 +406,21 @@ class GraphRouterOrchestrator:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
-        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
-        self._apply_history_prefill_policy(
-            session,
+        self._apply_proactive_slot_defaults(
             graph,
-            source_message=content,
+            selected_items=proactive_defaults or [],
             intents_by_code=active_intents,
-            recent_messages=recent_messages,
-            long_term_memory=long_term_memory,
         )
+        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
+        if not skip_history_prefill:
+            self._apply_history_prefill_policy(
+                session,
+                graph,
+                source_message=content,
+                intents_by_code=active_intents,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+            )
         if graph.status == GraphStatus.WAITING_CONFIRMATION:
             graph.touch(GraphStatus.WAITING_CONFIRMATION)
             session.pending_graph = graph
@@ -405,6 +490,29 @@ class GraphRouterOrchestrator:
         self._activate_graph(graph)
         await self._publish_graph_state(session, "graph.created", "已根据所选意图创建执行图")
         await self._drain_graph(session, graph.source_message)
+
+    async def _route_proactive_interactive_graph(
+        self,
+        session: GraphSessionState,
+        *,
+        content: str,
+        proactive_recommendation: ProactiveRecommendationPayload,
+        selected_items: list[ProactiveRecommendationItem],
+    ) -> None:
+        context = self._build_session_context(session)
+        await self._route_new_message(
+            session,
+            content,
+            recognition=self._recognition_from_proactive_items(selected_items),
+            recent_messages=self._augment_recent_messages_with_proactive_selection(
+                context["recent_messages"],
+                proactive_recommendation=proactive_recommendation,
+                selected_items=selected_items,
+            ),
+            long_term_memory=context["long_term_memory"],
+            proactive_defaults=selected_items,
+            skip_history_prefill=True,
+        )
 
     async def _recognize_message(
         self,
@@ -1524,6 +1632,24 @@ class GraphRouterOrchestrator:
         titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]
         return f"已选择推荐事项：{'、'.join(titles)}"
 
+    def _guided_selection_from_proactive_items(
+        self,
+        selected_items: list[ProactiveRecommendationItem],
+    ) -> GuidedSelectionPayload:
+        return GuidedSelectionPayload.model_validate(
+            {
+                "selectedIntents": [
+                    {
+                        "intentCode": item.intent_code,
+                        "title": item.title,
+                        "sourceFragment": item.title,
+                        "slotMemory": item.slot_memory,
+                    }
+                    for item in selected_items
+                ]
+            }
+        )
+
     def _augment_recent_messages_with_recommendations(
         self,
         recent_messages: list[str],
@@ -1535,6 +1661,19 @@ class GraphRouterOrchestrator:
         return [
             *recent_messages,
             self._recommendation_context_summary(recommendation_context),
+        ]
+
+    def _augment_recent_messages_with_proactive_selection(
+        self,
+        recent_messages: list[str],
+        *,
+        proactive_recommendation: ProactiveRecommendationPayload,
+        selected_items: list[ProactiveRecommendationItem],
+    ) -> list[str]:
+        return [
+            *recent_messages,
+            self._proactive_recommendation_context_summary(proactive_recommendation),
+            self._proactive_selection_summary(selected_items),
         ]
 
     def _recommendation_context_summary(self, recommendation_context: RecommendationContextPayload) -> str:
@@ -1553,6 +1692,42 @@ class GraphRouterOrchestrator:
             lines.append(f"recommendation_id={recommendation_context.recommendation_id}")
         return "\n".join(lines)
 
+    def _proactive_recommendation_context_summary(
+        self,
+        proactive_recommendation: ProactiveRecommendationPayload,
+    ) -> str:
+        lines = [
+            "[PROACTIVE_RECOMMENDATION_CONTEXT] 以下是系统本轮展示给用户的主动推荐事项；每项都带有原始默认要素。",
+        ]
+        if proactive_recommendation.intro_text:
+            lines.append(f"intro_text={proactive_recommendation.intro_text}")
+        for index, item in enumerate(proactive_recommendation.items, start=1):
+            lines.append(
+                f"{index}. {item.title} ({item.intent_code})"
+                f" recommendation_item_id={item.recommendation_item_id}"
+            )
+            if item.description:
+                lines.append(f"   description={item.description}")
+            if item.slot_memory:
+                lines.append(f"   slot_memory={item.slot_memory}")
+        return "\n".join(lines)
+
+    def _proactive_selection_summary(
+        self,
+        selected_items: list[ProactiveRecommendationItem],
+    ) -> str:
+        lines = [
+            "[PROACTIVE_RECOMMENDATION_SELECTION] 以下推荐事项已由上游分流器选中；当前用户消息可能会修改其中部分要素或新增关系。",
+        ]
+        for index, item in enumerate(selected_items, start=1):
+            lines.append(
+                f"{index}. {item.title} ({item.intent_code})"
+                f" recommendation_item_id={item.recommendation_item_id}"
+            )
+            if item.slot_memory:
+                lines.append(f"   slot_memory={item.slot_memory}")
+        return "\n".join(lines)
+
     def _guided_selection_summary(self, guided_selection: GuidedSelectionPayload) -> str:
         titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]
         return (
@@ -1560,6 +1735,55 @@ class GraphRouterOrchestrator:
             if titles
             else "已按用户选择生成执行图"
         )
+
+    def _recognition_from_proactive_items(
+        self,
+        selected_items: list[ProactiveRecommendationItem],
+    ) -> RecognitionResult:
+        matches: list[IntentMatch] = []
+        for index, item in enumerate(selected_items):
+            matches.append(
+                IntentMatch(
+                    intent_code=item.intent_code,
+                    confidence=max(0.5, round(0.99 - (index * 0.01), 2)),
+                    reason="selected_from_proactive_recommendation",
+                )
+            )
+        return RecognitionResult(primary=matches, candidates=[])
+
+    def _apply_proactive_slot_defaults(
+        self,
+        graph: ExecutionGraphState,
+        *,
+        selected_items: list[ProactiveRecommendationItem],
+        intents_by_code: dict[str, IntentDefinition],
+    ) -> None:
+        if not selected_items:
+            return
+
+        items_by_intent: dict[str, list[ProactiveRecommendationItem]] = {}
+        for item in selected_items:
+            items_by_intent.setdefault(item.intent_code, []).append(item)
+
+        for node in graph.nodes:
+            candidates = items_by_intent.get(node.intent_code)
+            if not candidates:
+                continue
+            selected_item = candidates.pop(0)
+            intent = intents_by_code.get(node.intent_code)
+            if intent is None:
+                continue
+            node.slot_memory = normalize_structured_slot_memory(
+                slot_memory={
+                    **selected_item.slot_memory,
+                    **node.slot_memory,
+                },
+                slot_schema=intent.slot_schema,
+            )
+            if not node.title:
+                node.title = selected_item.title
+            if not node.source_fragment:
+                node.source_fragment = selected_item.title
 
     def _should_append_graph_terminal_message(
         self,

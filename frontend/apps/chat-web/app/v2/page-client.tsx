@@ -98,17 +98,22 @@ type TimelineEntry = {
   created_at: string;
 };
 
-type RecommendationIntentTemplate = {
+type ProactiveRecommendationItemTemplate = {
+  recommendationItemId: string;
   intentCode: string;
   title: string;
   description: string;
+  slotMemory: Record<string, unknown>;
+  executionPayload: Record<string, unknown>;
+  allowDirectExecute: boolean;
   examples: string[];
 };
 
-type RecommendationBundle = {
+type ProactiveRecommendationBundle = {
   id: string;
   created_at: string;
-  intents: RecommendationIntentTemplate[];
+  introText: string;
+  items: ProactiveRecommendationItemTemplate[];
 };
 
 type DisplayEntry =
@@ -126,7 +131,8 @@ type DisplayEntry =
       created_at: string;
       sort_index: number;
       active: boolean;
-      intents: RecommendationIntentTemplate[];
+      introText: string;
+      items: ProactiveRecommendationItemTemplate[];
     };
 
 const API_BASE = "/api/router/v2";
@@ -137,35 +143,89 @@ const BOOT_MESSAGE: BackendMessage = {
   created_at: "",
 };
 
-const RECOMMENDATION_TEMPLATES: RecommendationIntentTemplate[] = [
+const RECOMMENDATION_INTRO_TEXT =
+  "你有一笔工资到账了。根据你前几个月的习惯，我们为你准备了几个待办事项，看看有没有要执行的。";
+
+const RECOMMENDATION_TEMPLATES: ProactiveRecommendationItemTemplate[] = [
   {
+    recommendationItemId: "rec-balance-main",
     intentCode: "query_account_balance",
-    title: "查询账户余额",
+    title: "查询工资卡余额",
     description: "适合查卡里还有多少钱，通常需要卡号和手机号后4位。",
+    slotMemory: {
+      card_number: "6222000100001234567",
+      phone_last_four: "9999",
+    },
+    executionPayload: {
+      account_type: "debit",
+      channel: "mobile_app",
+    },
+    allowDirectExecute: true,
     examples: ["帮我查一下账户余额", "看下我这张卡还剩多少钱"],
   },
   {
+    recommendationItemId: "rec-transfer-mom",
     intentCode: "transfer_money",
-    title: "转账",
+    title: "给妈妈转账 2000 元",
     description: "适合给家人或朋友转账，通常要收款人、金额等信息。",
+    slotMemory: {
+      recipient_name: "妈妈",
+      amount: "2000",
+      recipient_card_number: "6222020100049999999",
+      recipient_phone_last_four: "9999",
+    },
+    executionPayload: {
+      currency: "CNY",
+      memo: "生活费",
+    },
+    allowDirectExecute: true,
     examples: ["给小明转1000", "帮我给我弟弟转500"],
   },
   {
+    recommendationItemId: "rec-credit-bill",
     intentCode: "query_credit_card_repayment",
     title: "查询信用卡还款信息",
     description: "适合查本期应还金额、最低还款额和到期日。",
+    slotMemory: {
+      card_number: "436742888800001234",
+      phone_last_four: "9999",
+    },
+    executionPayload: {
+      include_min_payment: true,
+    },
+    allowDirectExecute: true,
     examples: ["查一下我的信用卡还款信息", "我这期信用卡要还多少钱"],
   },
   {
+    recommendationItemId: "rec-gas-bill",
     intentCode: "pay_gas_bill",
     title: "缴纳天然气费",
     description: "适合给燃气户号缴费，通常需要户号和金额。",
+    slotMemory: {
+      gas_account_number: "88001234",
+      amount: "88",
+    },
+    executionPayload: {
+      provider: "city_gas",
+      cycle: "monthly",
+    },
+    allowDirectExecute: true,
     examples: ["给燃气户号88001234交88元", "帮我缴一下天然气费"],
   },
   {
+    recommendationItemId: "rec-forex-usd",
     intentCode: "exchange_forex",
-    title: "换外汇",
+    title: "换汇 100 美元",
     description: "适合购汇或结汇，通常要币种和金额。",
+    slotMemory: {
+      source_currency: "CNY",
+      target_currency: "USD",
+      amount: "100",
+    },
+    executionPayload: {
+      quote_mode: "realtime",
+    },
+    allowDirectExecute: true,
     examples: ["把1000人民币换成美元", "我想换100美元"],
   },
 ];
@@ -313,7 +373,7 @@ function createLocalId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
-function shuffleTemplates(items: RecommendationIntentTemplate[]): RecommendationIntentTemplate[] {
+function shuffleTemplates(items: ProactiveRecommendationItemTemplate[]): ProactiveRecommendationItemTemplate[] {
   const next = [...items];
   for (let index = next.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
@@ -322,11 +382,12 @@ function shuffleTemplates(items: RecommendationIntentTemplate[]): Recommendation
   return next;
 }
 
-function createRecommendationBundle(): RecommendationBundle {
+function createRecommendationBundle(): ProactiveRecommendationBundle {
   return {
     id: createLocalId("recommendation"),
     created_at: new Date().toISOString(),
-    intents: shuffleTemplates(RECOMMENDATION_TEMPLATES).slice(0, 4),
+    introText: RECOMMENDATION_INTRO_TEXT,
+    items: shuffleTemplates(RECOMMENDATION_TEMPLATES).slice(0, 4),
   };
 }
 
@@ -340,7 +401,7 @@ function messageSortValue(value: string): number {
 
 function buildDisplayEntries(
   messages: BackendMessage[],
-  recommendationBundles: RecommendationBundle[],
+  recommendationBundles: ProactiveRecommendationBundle[],
   activeRecommendationId: string | null,
 ): DisplayEntry[] {
   const textEntries: DisplayEntry[] = messages.map((message, index) => ({
@@ -357,7 +418,8 @@ function buildDisplayEntries(
     created_at: bundle.created_at,
     sort_index: messageSortValue(bundle.created_at) * 10 + index + 5,
     active: bundle.id === activeRecommendationId,
-    intents: bundle.intents,
+    introText: bundle.introText,
+    items: bundle.items,
   }));
 
   return [...textEntries, ...recommendationEntries].sort((left, right) => left.sort_index - right.sort_index);
@@ -423,7 +485,7 @@ export default function ChatV2PageClient() {
   const [custId, setCustId] = useState<string>(DEFAULT_CUST_ID);
   const [snapshot, setSnapshot] = useState<BackendSnapshot | null>(null);
   const [messages, setMessages] = useState<BackendMessage[]>([BOOT_MESSAGE]);
-  const [recommendationBundles, setRecommendationBundles] = useState<RecommendationBundle[]>([]);
+  const [recommendationBundles, setRecommendationBundles] = useState<ProactiveRecommendationBundle[]>([]);
   const [activeRecommendationId, setActiveRecommendationId] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [composer, setComposer] = useState("");
@@ -615,14 +677,18 @@ export default function ChatV2PageClient() {
         body: JSON.stringify({
           content,
           cust_id: custId,
-          recommendationContext: activeRecommendationBundle
+          proactiveRecommendation: activeRecommendationBundle
             ? {
-                recommendationId: activeRecommendationBundle.id,
-                intents: activeRecommendationBundle.intents.map((item) => ({
+                mode: "proactive_recommendation",
+                introText: activeRecommendationBundle.introText,
+                items: activeRecommendationBundle.items.map((item) => ({
+                  recommendationItemId: item.recommendationItemId,
                   intentCode: item.intentCode,
                   title: item.title,
                   description: item.description,
-                  examples: item.examples,
+                  slotMemory: item.slotMemory,
+                  executionPayload: item.executionPayload,
+                  allowDirectExecute: item.allowDirectExecute,
                 })),
               }
             : undefined,
@@ -778,9 +844,10 @@ export default function ChatV2PageClient() {
                       助手
                       {formatTime(entry.created_at) ? ` · ${formatTime(entry.created_at)}` : ""}
                     </div>
-                    <p>这里有一组可参考的推荐事项。你可以直接用自然语言回复选择、组合或修改，系统仍然会走意图识别，而不是直接执行这些卡片。</p>
+                    <p>{entry.introText}</p>
+                    <p>这些推荐项已经带上了默认要素。你可以直接用自然语言选择某几项，或修改金额、条件、顺序；系统会继续做意图识别与分流。</p>
                     <div className="recommendation-grid">
-                      {entry.intents.map((item, index) => (
+                      {entry.items.map((item, index) => (
                         <div key={`${entry.id}-${item.intentCode}`} className="recommendation-card">
                           <div className="recommendation-card-head">
                             <span className="recommendation-index">{String(index + 1).padStart(2, "0")}</span>
@@ -790,16 +857,23 @@ export default function ChatV2PageClient() {
                             </div>
                           </div>
                           <p>{item.description}</p>
+                          <div className="graph-slot-list">
+                            {Object.entries(item.slotMemory).map(([key, value]) => (
+                              <span key={`${entry.id}-${item.recommendationItemId}-${key}`} className="graph-slot-pill">
+                                {key}: {formatSlotValue(value)}
+                              </span>
+                            ))}
+                          </div>
                           <small>例如：{item.examples[0] ?? "请用自然语言描述你的诉求"}</small>
                         </div>
                       ))}
                     </div>
                     <p className="recommendation-hint">
-                      例如你可以回复：“第一个和第三个都要”“帮我按第二个来，但金额改成500”“我不选这些，还是想换100美元”。
+                      例如你可以回复：“第一个和第三个都要”“第一个，但是金额改成500”“这些都不要，我想换100美元”。
                     </p>
                     {entry.active ? (
                       <div className="recommendation-state">
-                        <Badge label="本轮推荐上下文已激活" tone="emphasis" />
+                        <Badge label="本轮主动推荐已激活" tone="emphasis" />
                       </div>
                     ) : null}
                   </article>
@@ -837,7 +911,9 @@ export default function ChatV2PageClient() {
             <div className="composer-foot">
               <small className="hint-text">
                 支持直接补充、修改或取消当前事项。
-                {hasActiveRecommendations ? " 当前已有一组推荐上下文处于激活状态，你的这条消息会带着该上下文一起进入意图识别。" : " 你也可以先点“推荐事项”，再用自然语言表达想要其中哪些事项。"}
+                {hasActiveRecommendations
+                  ? " 当前已有一组主动推荐处于激活状态；直接接受会优先走推荐执行分流，修改数据或条件会进入 graph。"
+                  : " 你也可以先点“推荐事项”，再用自然语言表达想要其中哪些事项。"}
               </small>
               <div className="composer-actions">
                 <button className="toggle-button recommendation-trigger" onClick={triggerRecommendations} type="button">

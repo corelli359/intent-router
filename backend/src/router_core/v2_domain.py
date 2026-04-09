@@ -196,3 +196,39 @@ class RecommendationContextPayload(BaseModel):
 
     recommendation_id: str | None = Field(default=None, alias="recommendationId")
     intents: list[RecommendationIntent] = Field(default_factory=list, alias="intents")
+
+
+class ProactiveRecommendationRouteMode(StrEnum):
+    NO_SELECTION = "no_selection"
+    DIRECT_EXECUTE = "direct_execute"
+    INTERACTIVE_GRAPH = "interactive_graph"
+    SWITCH_TO_FREE_DIALOG = "switch_to_free_dialog"
+
+
+class ProactiveRecommendationItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    recommendation_item_id: str = Field(alias="recommendationItemId")
+    intent_code: str = Field(alias="intentCode")
+    title: str
+    description: str | None = None
+    slot_memory: dict[str, Any] = Field(default_factory=dict, alias="slotMemory")
+    execution_payload: dict[str, Any] = Field(default_factory=dict, alias="executionPayload")
+    allow_direct_execute: bool = Field(default=True, alias="allowDirectExecute")
+
+
+class ProactiveRecommendationPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    mode: str = "proactive_recommendation"
+    intro_text: str | None = Field(default=None, alias="introText")
+    items: list[ProactiveRecommendationItem] = Field(default_factory=list, alias="items")
+
+
+class ProactiveRecommendationRouteDecision(BaseModel):
+    route_mode: ProactiveRecommendationRouteMode = ProactiveRecommendationRouteMode.NO_SELECTION
+    selected_recommendation_ids: list[str] = Field(default_factory=list, alias="selectedRecommendationIds")
+    selected_intents: list[str] = Field(default_factory=list, alias="selectedIntents")
+    has_user_modification: bool = Field(default=False, alias="hasUserModification")
+    modification_reasons: list[str] = Field(default_factory=list, alias="modificationReasons")
+    reason: str = ""

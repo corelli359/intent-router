@@ -23,6 +23,10 @@ from router_core.v2_planner import (
     LLMIntentGraphPlanner,
     SequentialIntentGraphPlanner,
 )
+from router_core.v2_recommendation_router import (
+    LLMProactiveRecommendationRouter,
+    NullProactiveRecommendationRouter,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -118,6 +122,15 @@ def build_router_runtime() -> RouterRuntime:
             )
             if llm_client is not None
             else BasicTurnInterpreter()
+        ),
+        recommendation_router=(
+            LLMProactiveRecommendationRouter(
+                llm_client,
+                model=settings.llm_model,
+                fallback=NullProactiveRecommendationRouter(),
+            )
+            if llm_client is not None
+            else NullProactiveRecommendationRouter()
         ),
         agent_client=agent_client,
         config=GraphRouterOrchestratorConfig(

@@ -27,6 +27,9 @@ from router_core.v2_domain import (
     GraphEdgeType,
     GraphNodeState,
     GraphStatus,
+    ProactiveRecommendationPayload,
+    ProactiveRecommendationRouteDecision,
+    ProactiveRecommendationRouteMode,
 )
 from router_core.v2_orchestrator import GraphRouterOrchestrator
 from router_core.v2_planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
@@ -335,12 +338,70 @@ class _RecommendationAwareRecognizer:
         )
 
 
+class _ProactiveFreeDialogRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del intents, long_term_memory, on_delta
+        assert message == "我想换100美元"
+        assert not any(entry.startswith("[PROACTIVE_RECOMMENDATION_SELECTION]") for entry in recent_messages)
+        return RecognitionResult(
+            primary=[IntentMatch(intent_code="exchange_forex", confidence=0.96, reason="free dialog switch")],
+            candidates=[],
+        )
+
+
+class _StaticRecommendationRouter:
+    def __init__(self, decision: ProactiveRecommendationRouteDecision) -> None:
+        self._decision = decision
+
+    async def decide(self, *, message, proactive_recommendation):
+        del message, proactive_recommendation
+        return self._decision.model_copy(deep=True)
+
+
+class _ProactiveInteractiveGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, long_term_memory, on_delta
+        assert message == "第一个，但是金额改成500"
+        assert recognition is not None
+        assert [match.intent_code for match in recognition.primary] == ["transfer_money"]
+        proactive_selection = next(
+            (entry for entry in recent_messages if entry.startswith("[PROACTIVE_RECOMMENDATION_SELECTION]")),
+            None,
+        )
+        assert proactive_selection is not None
+        assert "给妈妈转账2000元" in proactive_selection
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="已根据推荐项和用户修改重建执行图",
+            status=GraphStatus.DRAFT,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="transfer_money",
+                title="给妈妈转账500元",
+                confidence=0.98,
+                position=0,
+                source_fragment=message,
+                slot_memory={"amount": "500"},
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": recognition,
+                "graph": graph,
+            },
+        )()
+
+
 def _test_v2_app(
     *,
     recognizer=None,
     graph_builder=None,
     planner=None,
     turn_interpreter=None,
+    recommendation_router=None,
 ) -> tuple[object, GraphRouterOrchestrator]:
     broker = EventBroker()
     orchestrator = GraphRouterOrchestrator(
@@ -350,6 +411,7 @@ def _test_v2_app(
         graph_builder=graph_builder,
         planner=planner or SequentialIntentGraphPlanner(),
         turn_interpreter=turn_interpreter or BasicTurnInterpreter(),
+        recommendation_router=recommendation_router,
         agent_client=MockStreamingAgentClient(),
     )
     app = create_router_app()
@@ -1332,5 +1394,246 @@ def test_v2_recommendation_context_still_routes_via_llm_recognition() -> None:
                 "exchange_forex",
             ]
             assert snapshot["messages"][-1]["content"] == "第一个和第三个都要"
+
+    asyncio.run(run())
+
+
+def test_v2_proactive_recommendation_direct_execute_bypasses_free_dialog_recognizer() -> None:
+    proactive_recommendation = {
+        "introText": "工资到账后，这里有两项可直接执行的事项。",
+        "items": [
+            {
+                "recommendationItemId": "rec_transfer_mom",
+                "intentCode": "transfer_money",
+                "title": "给妈妈转账2000元",
+                "description": "沿用上次转账信息",
+                "slotMemory": {
+                    "recipient_name": "妈妈",
+                    "recipient_card_number": "6222020100049999999",
+                    "recipient_phone_last_four": "1234",
+                    "amount": "2000",
+                },
+                "executionPayload": {"mock": "transfer"},
+                "allowDirectExecute": True,
+            },
+            {
+                "recommendationItemId": "rec_exchange_usd",
+                "intentCode": "exchange_forex",
+                "title": "换100美元",
+                "description": "按默认币种换汇",
+                "slotMemory": {
+                    "source_currency": "CNY",
+                    "target_currency": "USD",
+                    "amount": "100",
+                },
+                "executionPayload": {"mock": "forex"},
+                "allowDirectExecute": True,
+            },
+        ],
+    }
+
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_ExplodingRecognizer(),
+            recommendation_router=_StaticRecommendationRouter(
+                ProactiveRecommendationRouteDecision(
+                    route_mode=ProactiveRecommendationRouteMode.DIRECT_EXECUTE,
+                    selectedRecommendationIds=["rec_transfer_mom", "rec_exchange_usd"],
+                    selectedIntents=["transfer_money", "exchange_forex"],
+                    hasUserModification=False,
+                    reason="用户直接接受推荐原始数据",
+                )
+            ),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "第一个和第二个都要",
+                    "proactiveRecommendation": proactive_recommendation,
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert [node["intent_code"] for node in current_graph["nodes"]] == [
+                "transfer_money",
+                "exchange_forex",
+            ]
+            assert [node["status"] for node in current_graph["nodes"]] == ["completed", "completed"]
+            assert snapshot["messages"][0]["content"] == "第一个和第二个都要"
+
+    asyncio.run(run())
+
+
+def test_v2_proactive_recommendation_interactive_graph_keeps_user_modification_for_follow_up() -> None:
+    proactive_recommendation = {
+        "introText": "工资到账后，这里有一项常用转账建议。",
+        "items": [
+            {
+                "recommendationItemId": "rec_transfer_mom",
+                "intentCode": "transfer_money",
+                "title": "给妈妈转账2000元",
+                "description": "沿用上次转账信息",
+                "slotMemory": {
+                    "recipient_name": "妈妈",
+                    "recipient_card_number": "6222020100049999999",
+                    "recipient_phone_last_four": "1234",
+                    "amount": "2000",
+                },
+                "executionPayload": {"mock": "transfer"},
+                "allowDirectExecute": True,
+            }
+        ],
+    }
+
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_ExplodingRecognizer(),
+            graph_builder=_ProactiveInteractiveGraphBuilder(),
+            recommendation_router=_StaticRecommendationRouter(
+                ProactiveRecommendationRouteDecision(
+                    route_mode=ProactiveRecommendationRouteMode.INTERACTIVE_GRAPH,
+                    selectedRecommendationIds=["rec_transfer_mom"],
+                    selectedIntents=["transfer_money"],
+                    hasUserModification=True,
+                    modificationReasons=["用户修改了金额"],
+                    reason="用户修改推荐项金额，需要重建执行图",
+                )
+            ),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "第一个，但是金额改成500",
+                    "proactiveRecommendation": proactive_recommendation,
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert current_graph["nodes"][0]["intent_code"] == "transfer_money"
+            assert current_graph["nodes"][0]["slot_memory"]["recipient_name"] == "妈妈"
+            assert current_graph["nodes"][0]["slot_memory"]["recipient_card_number"] == "6222020100049999999"
+            assert current_graph["nodes"][0]["slot_memory"]["amount"] == "500"
+            assert snapshot["messages"][-1]["content"] == "已向妈妈转账 500 元，转账成功"
+
+    asyncio.run(run())
+
+
+def test_v2_proactive_recommendation_switch_to_free_dialog_reuses_existing_recognition_path() -> None:
+    proactive_recommendation = {
+        "introText": "工资到账后，这里有一组推荐事项。",
+        "items": [
+            {
+                "recommendationItemId": "rec_transfer_mom",
+                "intentCode": "transfer_money",
+                "title": "给妈妈转账2000元",
+                "slotMemory": {
+                    "recipient_name": "妈妈",
+                    "recipient_card_number": "6222020100049999999",
+                    "recipient_phone_last_four": "1234",
+                    "amount": "2000",
+                },
+                "executionPayload": {},
+                "allowDirectExecute": True,
+            }
+        ],
+    }
+
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_ProactiveFreeDialogRecognizer(),
+            recommendation_router=_StaticRecommendationRouter(
+                ProactiveRecommendationRouteDecision(
+                    route_mode=ProactiveRecommendationRouteMode.SWITCH_TO_FREE_DIALOG,
+                    selectedRecommendationIds=[],
+                    selectedIntents=[],
+                    hasUserModification=False,
+                    reason="用户表达了独立新诉求",
+                )
+            ),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "我想换100美元",
+                    "proactiveRecommendation": proactive_recommendation,
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["pending_graph"] is None
+            assert snapshot["current_graph"]["nodes"][0]["intent_code"] == "exchange_forex"
+            assert snapshot["current_graph"]["status"] == "waiting_user_input"
+
+    asyncio.run(run())
+
+
+def test_v2_proactive_recommendation_no_selection_returns_idle_without_graph() -> None:
+    proactive_recommendation = {
+        "introText": "工资到账后，这里有一组推荐事项。",
+        "items": [
+            {
+                "recommendationItemId": "rec_transfer_mom",
+                "intentCode": "transfer_money",
+                "title": "给妈妈转账2000元",
+                "slotMemory": {
+                    "recipient_name": "妈妈",
+                    "recipient_card_number": "6222020100049999999",
+                    "recipient_phone_last_four": "1234",
+                    "amount": "2000",
+                },
+                "executionPayload": {},
+                "allowDirectExecute": True,
+            }
+        ],
+    }
+
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recommendation_router=_StaticRecommendationRouter(
+                ProactiveRecommendationRouteDecision(
+                    route_mode=ProactiveRecommendationRouteMode.NO_SELECTION,
+                    selectedRecommendationIds=[],
+                    selectedIntents=[],
+                    hasUserModification=False,
+                    reason="用户明确表示不执行推荐事项",
+                )
+            ),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "这些都不要",
+                    "proactiveRecommendation": proactive_recommendation,
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["current_graph"] is None
+            assert snapshot["pending_graph"] is None
+            assert snapshot["messages"][-1]["content"] == "好的，本次不执行这些推荐事项。"
 
     asyncio.run(run())

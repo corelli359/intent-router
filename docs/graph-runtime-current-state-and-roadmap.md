@@ -258,15 +258,21 @@ graph 的节点、边、顺序、条件都来自：
 - `cancel_graph`
 - `cancel_node`
 
-此外，`POST /api/router/v2/sessions/{session_id}/messages` 现在还支持两类与推荐场景相关的可选负载：
+此外，`POST /api/router/v2/sessions/{session_id}/messages` 现在还支持三类与推荐场景相关的可选负载：
 
 1. `recommendationContext`
 2. `guidedSelection`
+3. `proactiveRecommendation`
 
 其中：
 
 - `recommendationContext` 的定位是“把前端刚展示给用户的推荐候选项作为语义上下文传给 LLM”，仍然要走正常意图识别
 - `guidedSelection` 是更底层的结构化直达能力，当前仍保留在后端里，但它不再是主动推荐场景的最终目标形态
+- `proactiveRecommendation` 是当前推荐模式的主入口，语义上与自由对话模式隔离，由专门的推荐分流器先判断：
+  - `no_selection`
+  - `direct_execute`
+  - `interactive_graph`
+  - `switch_to_free_dialog`
 
 `guidedSelection` 的结构目前是：
 
@@ -279,7 +285,8 @@ graph 的节点、边、顺序、条件都来自：
 
 - 前端把推荐候选项放进对话区
 - 用户继续用自然语言表达“第一个”“第一个和第三个都要”“第二个改成给弟弟转500”
-- Router 结合 `recommendationContext` 做正常意图识别
+- 推荐模式优先通过 `proactiveRecommendation` 进入独立分流
+- 自由对话模式仍然保持原有识别 / 建图链路不变
 
 ### 6.2 前端能力
 
@@ -306,8 +313,9 @@ graph 的节点、边、顺序、条件都来自：
 - 由按钮触发的一条对话内推荐消息
 - 推荐卡片展示在聊天区，而不是侧栏选择器
 - 用户仍然通过自然语言来选择、组合、修改这些推荐项
-- 前端只负责把推荐上下文随消息一起传给 Router
-- Router 仍然要做意图识别，而不是跳过识别直接执行
+- 前端会把推荐项完整预填要素一起作为 `proactiveRecommendation` 发送给 Router
+- 如果用户只是原样接受推荐项，Router 可以进入推荐模式直达执行分流
+- 如果用户修改金额、对象、条件或顺序，Router 仍然会进入 graph runtime
 
 ## 7. 当前已经完成的关键治理
 
