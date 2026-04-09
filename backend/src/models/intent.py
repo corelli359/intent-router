@@ -38,6 +38,18 @@ class SlotOverwritePolicy(str, Enum):
     ALWAYS_OVERWRITE = "always_overwrite"
 
 
+class SlotBindingScope(str, Enum):
+    NODE_INPUT = "node_input"
+    CONDITION_OPERAND = "condition_operand"
+    SHARED_PREFILL = "shared_prefill"
+
+
+class SlotConfirmationPolicy(str, Enum):
+    NEVER = "never"
+    WHEN_AMBIGUOUS = "when_ambiguous"
+    ALWAYS = "always"
+
+
 class GraphConfirmPolicy(str, Enum):
     AUTO = "auto"
     ALWAYS = "always"
@@ -49,11 +61,16 @@ class IntentSlotDefinition(BaseModel):
     slot_key: str = Field(min_length=1, max_length=128)
     label: str = Field(default="", max_length=128)
     description: str = Field(default="", max_length=2000)
+    semantic_definition: str = Field(default="", max_length=2000)
     value_type: SlotValueType = SlotValueType.STRING
     required: bool = False
     allow_from_history: bool = False
+    allow_from_recommendation: bool = True
     aliases: list[str] = Field(default_factory=list)
     examples: list[str] = Field(default_factory=list)
+    counter_examples: list[str] = Field(default_factory=list)
+    bind_scope: SlotBindingScope = SlotBindingScope.NODE_INPUT
+    confirmation_policy: SlotConfirmationPolicy = SlotConfirmationPolicy.WHEN_AMBIGUOUS
     overwrite_policy: SlotOverwritePolicy = SlotOverwritePolicy.OVERWRITE_IF_NEW_NONEMPTY
 
 

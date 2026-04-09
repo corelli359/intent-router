@@ -12,7 +12,7 @@ if str(BACKEND_SRC) not in sys.path:
     sys.path.insert(0, str(BACKEND_SRC))
 
 from router_core.domain import IntentDefinition  # noqa: E402
-from router_core.v2_domain import GraphStatus  # noqa: E402
+from router_core.v2_domain import GraphStatus, SlotBindingSource  # noqa: E402
 from router_core.v2_graph_builder import GraphDraftNormalizer, LLMIntentGraphBuilder, UnifiedGraphDraftPayload  # noqa: E402
 
 
@@ -356,3 +356,138 @@ def test_graph_draft_normalizer_drops_unconfirmed_sensitive_slots_when_history_r
     assert result.graph.status == GraphStatus.DRAFT
     assert result.graph.nodes[0].slot_memory == {}
     assert result.graph.nodes[0].history_slot_keys == []
+
+
+def test_graph_draft_normalizer_keeps_slot_bindings_and_condition_thresholds_separate() -> None:
+    normalizer = GraphDraftNormalizer()
+    result = normalizer.normalize(
+        payload=UnifiedGraphDraftPayload.model_validate(
+            {
+                "summary": "燃气缴费后查余额，若大于20000则转账，若还有余额再换汇",
+                "needs_confirmation": True,
+                "primary_intents": [
+                    {"intent_code": "query_account_balance", "confidence": 0.96, "reason": "balance condition provider"},
+                    {"intent_code": "transfer_money", "confidence": 0.95, "reason": "conditional transfer"},
+                    {"intent_code": "exchange_forex", "confidence": 0.94, "reason": "post transfer forex"},
+                ],
+                "candidate_intents": [],
+                "nodes": [
+                    {
+                        "intent_code": "query_account_balance",
+                        "title": "查询账户余额",
+                        "confidence": 0.96,
+                        "source_fragment": "余额大于20000的话",
+                        "slot_memory": {},
+                        "slot_bindings": [],
+                    },
+                    {
+                        "intent_code": "transfer_money",
+                        "title": "给妈妈转2000",
+                        "confidence": 0.95,
+                        "source_fragment": "给妈妈转2000",
+                        "slot_memory": {"recipient_name": "妈妈", "amount": "2000"},
+                        "slot_bindings": [
+                            {
+                                "slot_key": "recipient_name",
+                                "value": "妈妈",
+                                "source": "user_message",
+                                "source_text": "给妈妈",
+                                "confidence": 0.98,
+                            },
+                            {
+                                "slot_key": "amount",
+                                "value": "2000",
+                                "source": "user_message",
+                                "source_text": "转2000",
+                                "confidence": 0.99,
+                            },
+                        ],
+                    },
+                    {
+                        "intent_code": "exchange_forex",
+                        "title": "换200美金",
+                        "confidence": 0.94,
+                        "source_fragment": "我再换200美金",
+                        "slot_memory": {"source_currency": "CNY", "target_currency": "USD", "amount": "200"},
+                        "slot_bindings": [
+                            {
+                                "slot_key": "amount",
+                                "value": "200",
+                                "source": "user_message",
+                                "source_text": "换200美金",
+                                "confidence": 0.97,
+                            }
+                        ],
+                    },
+                ],
+                "edges": [
+                    {
+                        "source_index": 0,
+                        "target_index": 1,
+                        "relation_type": "conditional",
+                        "label": "余额大于20000时转账",
+                        "condition": {
+                            "left_key": "balance",
+                            "operator": ">",
+                            "right_value": 20000,
+                        },
+                    },
+                    {
+                        "source_index": 1,
+                        "target_index": 2,
+                        "relation_type": "sequential",
+                        "label": "转账后再换汇",
+                    },
+                ],
+            }
+        ),
+        message="余额大于20000的话，就给妈妈转2000，如果还有余额的话，我再换200美金",
+        intents_by_code={
+            "query_account_balance": _balance_intent(),
+            "transfer_money": _transfer_intent(),
+            "exchange_forex": IntentDefinition(
+                intent_code="exchange_forex",
+                name="换外汇",
+                description="执行换汇，需要币种和金额。",
+                examples=["换200美金"],
+                keywords=["换汇"],
+                agent_url="http://agent.example.com/forex",
+                dispatch_priority=90,
+                primary_threshold=0.75,
+                candidate_threshold=0.5,
+                slot_schema=[
+                    {
+                        "slot_key": "source_currency",
+                        "label": "卖出币种",
+                        "semantic_definition": "用户要卖出的原币种",
+                        "value_type": "string",
+                        "required": True,
+                    },
+                    {
+                        "slot_key": "target_currency",
+                        "label": "买入币种",
+                        "semantic_definition": "用户要换入的目标币种",
+                        "value_type": "string",
+                        "required": True,
+                    },
+                    {
+                        "slot_key": "amount",
+                        "label": "换汇金额",
+                        "semantic_definition": "本次换汇的执行金额，不是条件阈值金额",
+                        "value_type": "currency",
+                        "required": True,
+                    },
+                ],
+            ),
+        },
+    )
+
+    assert result.graph.edges[0].condition is not None
+    assert result.graph.edges[0].condition.right_value == 20000
+    assert result.graph.nodes[1].slot_memory["amount"] == "2000"
+    assert result.graph.nodes[2].slot_memory["amount"] == "200"
+    assert result.graph.nodes[1].slot_bindings[1].slot_key == "amount"
+    assert result.graph.nodes[1].slot_bindings[1].value == "2000"
+    assert result.graph.nodes[1].slot_bindings[1].source == SlotBindingSource.USER_MESSAGE
+    assert result.graph.nodes[2].slot_bindings[-1].slot_key == "amount"
+    assert result.graph.nodes[2].slot_bindings[-1].value == "200"

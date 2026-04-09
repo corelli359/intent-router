@@ -2,6 +2,24 @@
 
 ## 2026-04-05 补充执行情况
 
+## 2026-04-10 Fix Branch 分步改造计划
+
+### [x] T37 · Slot Binding 注册模型补强
+设计：意图识别准确率的关键不只是“识别出值”，而是“把值绑定到正确的 slot 和正确的 node 上”。因此 slot 注册模型要补充 `semantic_definition / bind_scope / counter_examples / allow_from_recommendation / confirmation_policy`，让 LLM 在识别和建图阶段有正式的绑定约束。
+实现：`models.intent` 已补充 `SlotBindingScope / SlotConfirmationPolicy` 和相关 slot 字段；`admin_api.schemas`、`sql_intent_repository` 由于直接透传 `IntentSlotDefinition` JSON，因此保持兼容；新增字段已进入 recognizer / builder 的 intent payload 输入链路。
+
+### [x] T38 · Unified Builder / Planner 槽位绑定输出
+设计：Builder 不能只产出 `slot_memory`，还要尽量产出 `slot_bindings`，显式记录 `slot_key / value / source_text / confidence / source`，以便后续处理“条件阈值金额 vs 执行金额”“推荐默认值 vs 用户修改值”等冲突。
+实现：`prompt_templates.py` 已增加 `slot_bindings` 输出约束和“条件阈值不得写入 node.slot_memory”提示；`v2_domain.py` 新增 `SlotBindingState / SlotBindingSource`；`v2_graph_builder.py` 现在会归一化 `slot_bindings`；`v2_orchestrator.py` 也会为 guided selection、推荐默认值和历史复用重建绑定来源。
+
+### [x] T39 · `v2_orchestrator` 第一刀拆分为 `v2_graph_runtime`
+设计：先拆纯图运行时语义，包括节点 ready/block/skip 判定、条件匹配、graph status 归约和 waiting/ready node 选择；先不动 agent dispatch 协议，降低行为风险。
+实现：已新增 `router_core/v2_graph_runtime.py`，承接 `activate_graph / refresh_node_states / condition_matches / graph_status / next_ready_node / waiting_node / status mapping` 等纯运行时逻辑；`v2_orchestrator.py` 已改为调用该 runtime engine，开始脱离“大一统状态机”。
+
+### [x] T40 · 槽位绑定精度与重复执行稳定性回归
+设计：自动测试要补齐“条件金额与执行金额分离”“推荐默认值与用户修改值优先级”“同 session 重复发送同一句复杂消息仍保持相同 graph 形态”三类高价值回归。
+实现：已补 `test_v2_graph_builder.py` 的条件金额/执行金额分离断言、`test_router_api_v2.py` 的 repeated-run stability 回归、`test_prompt_templates.py` 的 prompt 约束断言，以及 `test_v2_graph_runtime.py` 的 runtime engine 单测；同时补跑了 admin/repository/runtime 装配回归。
+
 ## 2026-04-09 Guided Selection 与条件语义补强
 
 ### [x] T33 · V2 隐式条件依赖修复

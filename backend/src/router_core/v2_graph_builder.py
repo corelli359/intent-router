@@ -25,6 +25,8 @@ from router_core.v2_domain import (
     GraphEdgeType,
     GraphNodeState,
     GraphStatus,
+    SlotBindingSource,
+    SlotBindingState,
 )
 from router_core.v2_planner import IntentGraphPlanner, SequentialIntentGraphPlanner
 
@@ -51,6 +53,15 @@ class GraphDraftNodePayload(BaseModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     source_fragment: str | None = None
     slot_memory: dict[str, Any] = Field(default_factory=dict)
+    slot_bindings: list["GraphDraftSlotBindingPayload"] = Field(default_factory=list)
+
+
+class GraphDraftSlotBindingPayload(BaseModel):
+    slot_key: str
+    value: Any | None = None
+    source: SlotBindingSource = SlotBindingSource.USER_MESSAGE
+    source_text: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class GraphDraftEdgePayload(BaseModel):
@@ -68,6 +79,9 @@ class UnifiedGraphDraftPayload(BaseModel):
     candidate_intents: list[GraphDraftIntentPayload] = Field(default_factory=list)
     nodes: list[GraphDraftNodePayload] = Field(default_factory=list)
     edges: list[GraphDraftEdgePayload] = Field(default_factory=list)
+
+
+GraphDraftNodePayload.model_rebuild()
 
 
 @dataclass(slots=True)
@@ -201,6 +215,17 @@ class GraphDraftNormalizer:
                     position=index,
                     source_fragment=node_payload.source_fragment or message,
                     slot_memory=slot_memory,
+                    slot_bindings=self._normalize_slot_bindings(
+                        node_payload=node_payload,
+                        intent=intent,
+                        slot_memory=slot_memory,
+                        history_slot_keys=history_slots,
+                        default_confidence=(
+                            node_payload.confidence
+                            if node_payload.confidence is not None
+                            else confidence_by_code.get(node_payload.intent_code, 0.0)
+                        ),
+                    ),
                     history_slot_keys=history_slots,
                 )
             )
@@ -268,6 +293,53 @@ class GraphDraftNormalizer:
                 else f"检测到历史信息复用：{history_notes}，请确认后执行"
             )
         return graph
+
+    def _normalize_slot_bindings(
+        self,
+        *,
+        node_payload: GraphDraftNodePayload,
+        intent: IntentDefinition,
+        slot_memory: dict[str, Any],
+        history_slot_keys: list[str],
+        default_confidence: float,
+    ) -> list[SlotBindingState]:
+        if not slot_memory:
+            return []
+
+        allowed_slot_keys = {slot.slot_key for slot in intent.slot_schema}
+        normalized_by_key: dict[str, SlotBindingState] = {}
+
+        for binding in node_payload.slot_bindings:
+            if binding.slot_key not in allowed_slot_keys or binding.slot_key not in slot_memory:
+                continue
+            normalized_by_key[binding.slot_key] = SlotBindingState(
+                slot_key=binding.slot_key,
+                value=slot_memory[binding.slot_key],
+                source=(
+                    SlotBindingSource.HISTORY
+                    if binding.slot_key in history_slot_keys
+                    else binding.source
+                ),
+                source_text=binding.source_text,
+                confidence=binding.confidence if binding.confidence is not None else default_confidence,
+            )
+
+        for slot_key, value in slot_memory.items():
+            if slot_key in normalized_by_key:
+                continue
+            normalized_by_key[slot_key] = SlotBindingState(
+                slot_key=slot_key,
+                value=value,
+                source=(
+                    SlotBindingSource.HISTORY
+                    if slot_key in history_slot_keys
+                    else SlotBindingSource.USER_MESSAGE
+                ),
+                confidence=default_confidence,
+            )
+
+        ordered_slot_keys = [slot.slot_key for slot in intent.slot_schema if slot.slot_key in normalized_by_key]
+        return [normalized_by_key[slot_key] for slot_key in ordered_slot_keys]
 
     def _resolve_confirmation_needed(
         self,

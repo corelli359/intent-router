@@ -426,6 +426,122 @@ class ExecutableGraphNode(BaseModel):
 - `ExecutableGraphNode` 不包含业务对象
 - 只包含运行 graph 所需的最小节点元数据
 
+## 6.4.1 Slot Binding 设计
+
+这里需要明确一个关键点：
+
+**Router 不是只要拿到 `slot_memory` 就够了，还要尽量知道“这个值为什么会落到这个槽位里”。**
+
+否则后续会持续出现这类问题：
+
+- 条件阈值金额被错绑到执行金额槽位
+- 推荐默认值、用户修改值、历史复用值互相污染
+- 同一句话里两个金额、两个姓名、两个账号时，对号入座不稳定
+
+因此，注册阶段和运行阶段都要把槽位从“普通字段”升级成“带语义、作用域、来源和置信度的绑定对象”。
+
+### 注册阶段：`IntentSlotDefinition` 不能只定义字段名
+
+每个 slot 至少应带这些信息：
+
+- `slot_key`
+- `value_type`
+- `semantic_definition`
+- `bind_scope`
+- `examples`
+- `counter_examples`
+- `allow_from_history`
+- `allow_from_recommendation`
+- `confirmation_policy`
+
+建议结构：
+
+```python
+class IntentSlotDefinition(BaseModel):
+    slot_key: str
+    value_type: str
+    semantic_definition: str = ""
+    bind_scope: Literal["node_input", "condition_operand", "shared_prefill"] = "node_input"
+    examples: list[str] = Field(default_factory=list)
+    counter_examples: list[str] = Field(default_factory=list)
+    allow_from_history: bool = False
+    allow_from_recommendation: bool = True
+    confirmation_policy: Literal["never", "when_ambiguous", "always"] = "when_ambiguous"
+```
+
+作用：
+
+- `semantic_definition` 告诉 LLM 这个槽位到底表示什么
+- `counter_examples` 告诉 LLM 哪些看起来相似的表达不要塞进这个槽位
+- `bind_scope` 强制区分：
+  - 节点执行输入
+  - 条件表达式操作数
+  - 推荐/共享上下文预填
+
+### 运行阶段：节点里要保存 `slot_bindings`
+
+除了 `slot_memory`，节点还应保存绑定细节：
+
+```python
+class SlotBindingState(BaseModel):
+    slot_key: str
+    value: Any
+    source: Literal["user_message", "history", "recommendation", "agent", "runtime_prefill"]
+    source_text: str | None = None
+    confidence: float | None = None
+```
+
+节点示意：
+
+```python
+class ExecutableGraphNode(BaseModel):
+    intent_code: str
+    slot_memory: dict[str, Any]
+    slot_bindings: list[SlotBindingState] = Field(default_factory=list)
+```
+
+这样 Router 后续能知道：
+
+- 这个值是用户本轮说的，还是推荐默认值
+- 这个值是历史复用的，还是 agent 多轮补回来的
+- 这个值到底对应了哪段原文
+
+### `slot_memory` 和 `slot_bindings` 的边界
+
+- `slot_memory` 是可执行输入
+- `slot_bindings` 是解释性元数据
+
+也就是说：
+
+- agent 真正执行时仍然主要消费 `slot_memory`
+- Router 和前端用 `slot_bindings` 做确认、审计、调试和冲突处理
+
+### 槽位来源优先级
+
+运行时建议固定以下优先级：
+
+1. 用户本轮明确修改
+2. 用户本轮明确表达
+3. agent 当前轮补回
+4. 已确认的推荐默认值
+5. 已确认的历史复用值
+
+注意：
+
+- 推荐默认值不是历史
+- 历史复用不是用户当前输入
+- 条件阈值不是节点执行槽位
+
+### 最重要的提示词约束
+
+在 unified builder / planner prompt 中，必须明确写死这些约束：
+
+- 条件阈值金额只能进入 `edge.condition.right_value`
+- 节点执行金额只能进入对应节点的 `slot_memory.amount`
+- 如果一句话里出现多个相同 `value_type` 的值，必须按 `slot_schema.semantic_definition` 和 `counter_examples` 对号入座
+- 当 LLM 能判断绑定关系时，应输出 `slot_bindings`
+- 判断不稳时宁可留空并触发 agent 多轮补槽，也不要猜
+
 ## 6.5 Router -> Agent 请求协议：`AgentInvocationRequest`
 
 Router 发给 agent 的东西应该尽量少，核心就是当前输入与槽位。

@@ -7,6 +7,7 @@ DEFAULT_RECOGNIZER_SYSTEM_PROMPT = (
     "你是一个多意图识别器。"
     "只能从已注册 intent 中选择，不能虚构新的 intent_code。"
     "每个 intent 都会附带 slot_schema 和 graph_build_hints。"
+    "slot_schema 里的 semantic_definition、bind_scope、examples、counter_examples 都是强约束。"
     "你必须严格利用这些注册约束，判断哪些内容只是该 intent 的槽位，哪些才是新的独立 intent。"
     "你可以返回多个意图，但必须保持谨慎。"
     "只有当用户在当前这条消息里明确表达了两个或以上彼此独立的业务目标时，才返回多个 intent。"
@@ -34,6 +35,7 @@ DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "你是一个多意图执行图规划器。"
     "输入里已经给出了本轮已识别出的 intent 候选，你只能使用这些 intent_code。"
     "每个 intent 定义里包含 slot_schema 和 graph_build_hints，你必须严格遵守。"
+    "slot_schema 里的 semantic_definition、bind_scope、examples、counter_examples 都是强约束。"
     "你的任务是把用户当前诉求规划为一个动态执行图。"
     "你必须输出 JSON，不能输出解释。"
     "如果同一个 intent 在一句话里出现多次，可以生成多个节点。"
@@ -53,8 +55,12 @@ DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "其中的 slot_memory 是推荐模式显式提供的默认要素，不是历史猜测。"
     "如果当前消息是在这些已选推荐项基础上做金额、收款人、条件或顺序修改，你应以这些已选 intent 为图规划种子，"
     "并仅根据当前消息调整相应节点或边。"
+    "如果一句话同时出现条件阈值金额和执行金额，必须严格区分。"
+    "条件阈值只能进入 edge.condition.right_value，不能错误写进 node.slot_memory。"
+    "同理，属于某个节点执行动作的金额、姓名、卡号，只能写进对应节点的 slot_memory。"
     "source_fragment 应尽量截取与该节点最相关的原始片段，方便下游 agent 读取。"
     "slot_memory 只允许填明显来自当前用户消息的结构化提示，不允许凭空猜测。"
+    "如果能够判断槽位与原文片段的对应关系，应同时输出 slot_bindings，明确 slot_key、value、source_text 和 confidence。"
 )
 
 DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT = (
@@ -72,7 +78,16 @@ DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT = (
     '      "title": "string",\n'
     '      "confidence": 0.0,\n'
     '      "source_fragment": "string | null",\n'
-    '      "slot_memory": {{}}\n'
+    '      "slot_memory": {{}},\n'
+    '      "slot_bindings": [\n'
+    "        {{\n"
+    '          "slot_key": "string",\n'
+    '          "value": "string | number | boolean | null",\n'
+    '          "source": "user_message | history | recommendation | agent | runtime_prefill",\n'
+    '          "source_text": "string | null",\n'
+    '          "confidence": 0.0\n'
+    "        }}\n"
+    '      ]\n'
     "    }}\n"
     "  ],\n"
     '  "edges": [\n'
@@ -99,6 +114,7 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
     "第二，把 primary_intents 直接构造成执行图。"
     "你只能从已注册 intent 中选择，不能虚构新的 intent_code。"
     "每个 intent 都会附带 slot_schema、request_schema、field_mapping 和 graph_build_hints。"
+    "slot_schema 里的 semantic_definition、bind_scope、examples、counter_examples 都是强约束。"
     "slot_schema 是强约束：对象、金额、卡号、手机号后4位、订单号、时间等要素通常是槽位，不是新的 intent。"
     "如果一句话只表达了一个完整业务动作，即使同时给了多个槽位，也只能输出一个 primary intent 和一个 graph node。"
     "只有当用户明确表达多个独立目标、重复动作，或者存在明显的顺序/并行/条件关系时，才输出多个 primary intents 和多个 nodes。"
@@ -115,6 +131,10 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
     "如果当前消息只是修改金额、对象、条件、顺序或并行关系，应保留这些已选 intent 并按修改重建 graph；"
     "只有当用户明确放弃这些推荐项并提出新的独立诉求时，才应偏离 recognition_hint_json.primary。"
     "node.slot_memory 只允许填写当前这条用户消息里能够直接落地的结构化值，不允许把 recent_messages 或 long_term_memory 里的敏感槽位直接写进 slot_memory。"
+    "如果一句话同时出现条件阈值金额和执行金额，必须严格区分。"
+    "条件阈值只能进入 edge.condition.right_value，不能错误写进 node.slot_memory。"
+    "如果存在两个或以上相同 value_type 的槽位，例如两个金额、两个姓名、两个卡号，你必须按语义对号入座到正确 node 和 slot_key。"
+    "请尽量输出 node.slot_bindings，显式给出每个槽位值对应的 slot_key、value、source_text 和 confidence。"
     "如果你判断某个节点只有复用历史槽位才能直接执行，应把 needs_confirmation 设为 true，并在 summary 里明确提示存在历史信息复用。"
     "candidate_intents 只用于保留弱歧义，不得把同一业务动作的泛化解释塞进 candidate_intents。"
     "needs_confirmation 只在明显多节点、条件分支复杂，或 graph_build_hints 明确要求确认时设为 true。"
@@ -151,7 +171,16 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT = (
     '      "title": "string",\n'
     '      "confidence": 0.0,\n'
     '      "source_fragment": "string | null",\n'
-    '      "slot_memory": {{}}\n'
+    '      "slot_memory": {{}},\n'
+    '      "slot_bindings": [\n'
+    "        {{\n"
+    '          "slot_key": "string",\n'
+    '          "value": "string | number | boolean | null",\n'
+    '          "source": "user_message | history | recommendation | agent | runtime_prefill",\n'
+    '          "source_text": "string | null",\n'
+    '          "confidence": 0.0\n'
+    "        }}\n"
+    '      ]\n'
     "    }}\n"
     "  ],\n"
     '  "edges": [\n'

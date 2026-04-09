@@ -70,6 +70,23 @@ class GraphEdge(BaseModel):
     condition: GraphCondition | None = None
 
 
+class SlotBindingSource(StrEnum):
+    USER_MESSAGE = "user_message"
+    HISTORY = "history"
+    RECOMMENDATION = "recommendation"
+    AGENT = "agent"
+    RUNTIME_PREFILL = "runtime_prefill"
+
+
+class SlotBindingState(BaseModel):
+    slot_key: str
+    value: Any
+    source: SlotBindingSource = SlotBindingSource.USER_MESSAGE
+    source_text: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    is_modified: bool = False
+
+
 class GraphNodeState(BaseModel):
     node_id: str = Field(default_factory=lambda: f"node_{uuid4().hex[:10]}")
     intent_code: str
@@ -84,6 +101,7 @@ class GraphNodeState(BaseModel):
     skip_reason_code: str | None = None
     relation_reason: str | None = None
     slot_memory: dict[str, Any] = Field(default_factory=dict)
+    slot_bindings: list[SlotBindingState] = Field(default_factory=list)
     history_slot_keys: list[str] = Field(default_factory=list)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)

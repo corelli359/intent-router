@@ -1490,6 +1490,80 @@ def test_v2_implicit_balance_condition_inserts_hidden_node_instead_of_skipping()
     asyncio.run(run())
 
 
+def test_v2_repeating_same_conditional_message_keeps_graph_shape_and_condition() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            graph_builder=_ImplicitBalanceAfterTransferGraphBuilder(),
+            turn_interpreter=BasicTurnInterpreter(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            message = "我想给小明转账1000元，如果卡里余额还剩超过2000，我就换100美元"
+
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": message},
+            )
+            first_pending_graph = first_turn.json()["snapshot"]["pending_graph"]
+            assert [node["intent_code"] for node in first_pending_graph["nodes"]] == [
+                "transfer_money",
+                "query_account_balance",
+                "exchange_forex",
+            ]
+
+            await client.post(
+                f"/api/router/v2/sessions/{session_id}/actions",
+                json={
+                    "task_id": first_pending_graph["graph_id"],
+                    "source": "router",
+                    "action_code": "confirm_graph",
+                    "confirm_token": first_pending_graph["confirm_token"],
+                },
+            )
+            resume_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "收款卡号 6222020100049999999，手机号后四位1234；我的卡号 6222021234567890，尾号1234"},
+            )
+            assert resume_turn.status_code == 200
+            assert resume_turn.json()["snapshot"]["current_graph"]["status"] == "completed"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": message},
+            )
+            assert second_turn.status_code == 200
+            second_pending_graph = second_turn.json()["snapshot"]["pending_graph"]
+            assert second_pending_graph is not None
+            assert second_pending_graph["status"] == "waiting_confirmation"
+            assert [node["intent_code"] for node in second_pending_graph["nodes"]] == [
+                "transfer_money",
+                "query_account_balance",
+                "exchange_forex",
+            ]
+
+            conditional_edge = next(
+                edge
+                for edge in second_pending_graph["edges"]
+                if edge["relation_type"] == "conditional"
+            )
+            assert conditional_edge["condition"] == {
+                "source_node_id": conditional_edge["source_node_id"],
+                "expected_statuses": ["completed"],
+                "left_key": "balance",
+                "operator": ">",
+                "right_value": 2000,
+            }
+            query_balance_node = next(
+                node for node in second_pending_graph["nodes"] if node["intent_code"] == "query_account_balance"
+            )
+            assert conditional_edge["source_node_id"] == query_balance_node["node_id"]
+
+    asyncio.run(run())
+
+
 def test_v2_guided_selection_bypasses_recognizer_and_executes_selected_items() -> None:
     async def run() -> None:
         app, _ = _test_v2_app(recognizer=_ExplodingRecognizer())

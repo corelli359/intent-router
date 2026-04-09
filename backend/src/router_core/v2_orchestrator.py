@@ -44,8 +44,11 @@ from router_core.v2_domain import (
     ProactiveRecommendationPayload,
     ProactiveRecommendationRouteMode,
     RecommendationContextPayload,
+    SlotBindingSource,
+    SlotBindingState,
 )
-from router_core.v2_graph_semantics import repair_unexecutable_condition_edges, resolve_output_value
+from router_core.v2_graph_runtime import GraphRuntimeEngine
+from router_core.v2_graph_semantics import repair_unexecutable_condition_edges
 from router_core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
 from router_core.v2_planner import (
     BasicTurnInterpreter,
@@ -74,11 +77,6 @@ TERMINAL_NODE_STATUSES = {
     GraphNodeStatus.FAILED,
     GraphNodeStatus.CANCELLED,
     GraphNodeStatus.SKIPPED,
-}
-ACTIVE_NODE_STATUSES = {
-    GraphNodeStatus.RUNNING,
-    GraphNodeStatus.WAITING_USER_INPUT,
-    GraphNodeStatus.WAITING_CONFIRMATION,
 }
 TERMINAL_GRAPH_STATUSES = {
     GraphStatus.COMPLETED,
@@ -152,6 +150,7 @@ class GraphRouterOrchestrator:
         recommendation_router: ProactiveRecommendationRouter | None = None,
         context_builder: ContextBuilder | None = None,
         agent_client: AgentClient | None = None,
+        runtime_engine: GraphRuntimeEngine | None = None,
         config: GraphRouterOrchestratorConfig | None = None,
     ) -> None:
         self.publish_event = publish_event
@@ -164,6 +163,7 @@ class GraphRouterOrchestrator:
         self.recommendation_router = recommendation_router or NullProactiveRecommendationRouter()
         self.context_builder = context_builder or ContextBuilder()
         self.agent_client = agent_client or StreamingAgentClient()
+        self.runtime_engine = runtime_engine or GraphRuntimeEngine()
         self.config = config or GraphRouterOrchestratorConfig()
         if self.intent_catalog is None:
             class _FallbackCatalog:
@@ -477,6 +477,12 @@ class GraphRouterOrchestrator:
                     position=index,
                     source_fragment=content or selected.source_fragment or "",
                     slot_memory=slot_memory,
+                    slot_bindings=self._structured_slot_bindings(
+                        slot_memory=slot_memory,
+                        source=SlotBindingSource.RECOMMENDATION,
+                        source_text=selected.title or selected.source_fragment or "",
+                        confidence=1.0,
+                    ),
                 )
             )
 
@@ -664,12 +670,7 @@ class GraphRouterOrchestrator:
         return result
 
     def _activate_graph(self, graph: ExecutionGraphState) -> None:
-        graph.actions = []
-        self._refresh_node_states(graph)
-        if graph.status == GraphStatus.WAITING_CONFIRMATION:
-            graph.touch(GraphStatus.RUNNING)
-        else:
-            graph.touch(self._graph_status(graph))
+        self.runtime_engine.activate_graph(graph)
 
     async def _drain_graph(self, session: GraphSessionState, seed_input: str) -> None:
         graph = session.current_graph
@@ -1267,140 +1268,19 @@ class GraphRouterOrchestrator:
         await self._publish_graph_state(session, event_name, message)
 
     def _refresh_node_states(self, graph: ExecutionGraphState) -> None:
-        for node in graph.nodes:
-            if node.status in TERMINAL_NODE_STATUSES | ACTIVE_NODE_STATUSES:
-                continue
-            incoming_edges = graph.incoming_edges(node.node_id)
-            if not incoming_edges:
-                node.touch(GraphNodeStatus.READY)
-                continue
-
-            should_skip = False
-            all_ready = True
-            blocking_reason = "等待上游节点完成"
-            skip_reason_code: str | None = None
-            for edge in incoming_edges:
-                source = graph.node_by_id(edge.source_node_id)
-                if source.status == GraphNodeStatus.FAILED:
-                    should_skip = True
-                    blocking_reason = edge.label or "上游节点未满足依赖"
-                    skip_reason_code = GraphNodeSkipReason.UPSTREAM_FAILED.value
-                    break
-                if source.status == GraphNodeStatus.CANCELLED:
-                    should_skip = True
-                    blocking_reason = edge.label or "上游节点未满足依赖"
-                    skip_reason_code = GraphNodeSkipReason.UPSTREAM_CANCELLED.value
-                    break
-                if source.status == GraphNodeStatus.SKIPPED:
-                    should_skip = True
-                    blocking_reason = edge.label or "上游节点未满足依赖"
-                    skip_reason_code = GraphNodeSkipReason.UPSTREAM_SKIPPED.value
-                    break
-                expected_statuses = (
-                    edge.condition.expected_statuses
-                    if edge.condition is not None and edge.condition.expected_statuses
-                    else [GraphNodeStatus.COMPLETED.value]
-                )
-                if source.status.value in expected_statuses:
-                    if edge.condition is not None and edge.condition.left_key is not None:
-                        if self._condition_matches_from_condition(source, edge.condition):
-                            continue
-                        should_skip = True
-                        blocking_reason = edge.label or "条件依赖未满足"
-                        skip_reason_code = GraphNodeSkipReason.CONDITION_NOT_MET.value
-                        break
-                    continue
-                if source.status in TERMINAL_NODE_STATUSES:
-                    should_skip = True
-                    blocking_reason = edge.label or "条件依赖未满足"
-                    skip_reason_code = GraphNodeSkipReason.CONDITION_NOT_MET.value
-                    break
-                all_ready = False
-
-            if should_skip:
-                node.touch(
-                    GraphNodeStatus.SKIPPED,
-                    blocking_reason=blocking_reason,
-                    skip_reason_code=skip_reason_code,
-                )
-            elif all_ready:
-                node.touch(GraphNodeStatus.READY)
-            else:
-                node.touch(GraphNodeStatus.BLOCKED, blocking_reason=blocking_reason)
+        self.runtime_engine.refresh_node_states(graph)
 
     def _condition_matches_from_condition(self, source: GraphNodeState, condition: GraphCondition | None) -> bool:
-        if condition is None or condition.left_key is None or condition.operator is None:
-            return False
-        current_value = resolve_output_value(source.output_payload, condition.left_key)
-        if current_value is None:
-            return False
-        threshold = condition.right_value
-        operator = condition.operator
-        if isinstance(current_value, (int, float)) and isinstance(threshold, (int, float)):
-            left = float(current_value)
-            right = float(threshold)
-        else:
-            left = current_value
-            right = threshold
-        try:
-            if operator == ">":
-                return left > right
-            if operator == ">=":
-                return left >= right
-            if operator == "<":
-                return left < right
-            if operator == "<=":
-                return left <= right
-            return left == right
-        except TypeError:
-            return False
+        return self.runtime_engine.condition_matches(source, condition)
 
     def _graph_status(self, graph: ExecutionGraphState) -> GraphStatus:
-        statuses = [node.status for node in graph.nodes]
-        if not statuses:
-            return GraphStatus.COMPLETED
-        if any(status == GraphNodeStatus.WAITING_CONFIRMATION for status in statuses):
-            return GraphStatus.WAITING_CONFIRMATION_NODE
-        if any(status == GraphNodeStatus.WAITING_USER_INPUT for status in statuses):
-            return GraphStatus.WAITING_USER_INPUT
-        if any(status in {GraphNodeStatus.READY, GraphNodeStatus.BLOCKED, GraphNodeStatus.RUNNING} for status in statuses):
-            return GraphStatus.RUNNING
-        if all(status in {GraphNodeStatus.CANCELLED, GraphNodeStatus.SKIPPED} for status in statuses):
-            return GraphStatus.CANCELLED
-        if all(status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.SKIPPED} for status in statuses):
-            return (
-                GraphStatus.COMPLETED
-                if self._all_skipped_nodes_are_condition_unmet(graph)
-                else GraphStatus.PARTIALLY_COMPLETED
-            )
-        if any(status == GraphNodeStatus.FAILED for status in statuses):
-            completed = any(status == GraphNodeStatus.COMPLETED for status in statuses)
-            return GraphStatus.PARTIALLY_COMPLETED if completed else GraphStatus.FAILED
-        if any(status == GraphNodeStatus.CANCELLED for status in statuses):
-            completed = any(status == GraphNodeStatus.COMPLETED for status in statuses)
-            return GraphStatus.PARTIALLY_COMPLETED if completed else GraphStatus.CANCELLED
-        return GraphStatus.RUNNING
+        return self.runtime_engine.graph_status(graph)
 
     def _next_ready_node(self, graph: ExecutionGraphState) -> GraphNodeState | None:
-        ready_nodes = [node for node in graph.nodes if node.status == GraphNodeStatus.READY]
-        if not ready_nodes:
-            return None
-        ready_nodes.sort(key=lambda node: (node.position, node.created_at))
-        return ready_nodes[0]
+        return self.runtime_engine.next_ready_node(graph)
 
     def _get_waiting_node(self, session: GraphSessionState) -> GraphNodeState | None:
-        graph = session.current_graph
-        if graph is None:
-            return None
-        waiting_nodes = [
-            node
-            for node in graph.nodes
-            if node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
-        ]
-        if not waiting_nodes:
-            return None
-        waiting_nodes.sort(key=lambda node: node.updated_at, reverse=True)
-        return waiting_nodes[0]
+        return self.runtime_engine.waiting_node(session.current_graph)
 
     def _get_task(self, session: GraphSessionState, task_id: str | None) -> Task | None:
         if task_id is None:
@@ -1474,6 +1354,14 @@ class GraphRouterOrchestrator:
                     history_slot_keys.append(slot_key)
             node.slot_memory = slot_memory
             node.history_slot_keys = history_slot_keys
+            self._rebuild_node_slot_bindings(
+                node,
+                preferred_sources={
+                    slot_key: SlotBindingSource.HISTORY
+                    for slot_key in history_slot_keys
+                },
+                source_text=node.source_fragment or source_message,
+            )
             if history_slot_keys:
                 history_nodes.append(node)
 
@@ -1527,6 +1415,56 @@ class GraphRouterOrchestrator:
 
         return values
 
+    def _structured_slot_bindings(
+        self,
+        *,
+        slot_memory: dict[str, Any],
+        source: SlotBindingSource,
+        source_text: str | None,
+        confidence: float,
+    ) -> list[SlotBindingState]:
+        return [
+            SlotBindingState(
+                slot_key=slot_key,
+                value=value,
+                source=source,
+                source_text=source_text,
+                confidence=confidence,
+            )
+            for slot_key, value in slot_memory.items()
+        ]
+
+    def _rebuild_node_slot_bindings(
+        self,
+        node: GraphNodeState,
+        *,
+        preferred_sources: dict[str, SlotBindingSource] | None = None,
+        source_text: str | None = None,
+    ) -> None:
+        existing_by_key = {binding.slot_key: binding for binding in node.slot_bindings}
+        rebuilt: list[SlotBindingState] = []
+        for slot_key, value in node.slot_memory.items():
+            existing = existing_by_key.get(slot_key)
+            rebuilt.append(
+                SlotBindingState(
+                    slot_key=slot_key,
+                    value=value,
+                    source=(
+                        preferred_sources[slot_key]
+                        if preferred_sources and slot_key in preferred_sources
+                        else existing.source if existing is not None else SlotBindingSource.USER_MESSAGE
+                    ),
+                    source_text=(
+                        existing.source_text
+                        if existing is not None and existing.source_text
+                        else source_text
+                    ),
+                    confidence=existing.confidence if existing is not None else node.confidence,
+                    is_modified=existing.is_modified if existing is not None else False,
+                )
+            )
+        node.slot_bindings = rebuilt
+
     def _build_graph_task_context(
         self,
         session: GraphSessionState,
@@ -1568,33 +1506,10 @@ class GraphRouterOrchestrator:
         return getter()
 
     def _node_status_for_task_status(self, status: TaskStatus) -> GraphNodeStatus:
-        mapping = {
-            TaskStatus.CREATED: GraphNodeStatus.DRAFT,
-            TaskStatus.QUEUED: GraphNodeStatus.READY,
-            TaskStatus.DISPATCHING: GraphNodeStatus.RUNNING,
-            TaskStatus.RUNNING: GraphNodeStatus.RUNNING,
-            TaskStatus.WAITING_USER_INPUT: GraphNodeStatus.WAITING_USER_INPUT,
-            TaskStatus.WAITING_CONFIRMATION: GraphNodeStatus.WAITING_CONFIRMATION,
-            TaskStatus.RESUMING: GraphNodeStatus.RUNNING,
-            TaskStatus.COMPLETED: GraphNodeStatus.COMPLETED,
-            TaskStatus.FAILED: GraphNodeStatus.FAILED,
-            TaskStatus.CANCELLED: GraphNodeStatus.CANCELLED,
-        }
-        return mapping[status]
+        return self.runtime_engine.node_status_for_task_status(status)
 
     def _task_status_for_graph(self, status: GraphStatus) -> TaskStatus:
-        mapping = {
-            GraphStatus.DRAFT: TaskStatus.CREATED,
-            GraphStatus.WAITING_CONFIRMATION: TaskStatus.WAITING_CONFIRMATION,
-            GraphStatus.RUNNING: TaskStatus.RUNNING,
-            GraphStatus.WAITING_USER_INPUT: TaskStatus.WAITING_USER_INPUT,
-            GraphStatus.WAITING_CONFIRMATION_NODE: TaskStatus.WAITING_CONFIRMATION,
-            GraphStatus.PARTIALLY_COMPLETED: TaskStatus.COMPLETED,
-            GraphStatus.COMPLETED: TaskStatus.COMPLETED,
-            GraphStatus.FAILED: TaskStatus.FAILED,
-            GraphStatus.CANCELLED: TaskStatus.CANCELLED,
-        }
-        return mapping[status]
+        return self.runtime_engine.task_status_for_graph(status)
 
     def _graph_event_name(self, status: GraphStatus) -> str:
         if status == GraphStatus.COMPLETED:
@@ -1632,19 +1547,10 @@ class GraphRouterOrchestrator:
         return "执行图状态更新"
 
     def _condition_skipped_nodes(self, graph: ExecutionGraphState) -> list[GraphNodeState]:
-        return [
-            node
-            for node in graph.nodes
-            if node.status == GraphNodeStatus.SKIPPED
-            and node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value
-        ]
+        return self.runtime_engine.condition_skipped_nodes(graph)
 
     def _all_skipped_nodes_are_condition_unmet(self, graph: ExecutionGraphState) -> bool:
-        skipped_nodes = [node for node in graph.nodes if node.status == GraphNodeStatus.SKIPPED]
-        return all(
-            node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value
-            for node in skipped_nodes
-        )
+        return self.runtime_engine.all_skipped_nodes_are_condition_unmet(graph)
 
     def _guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:
         if guided_selection is None or not guided_selection.selected_intents:
@@ -1802,6 +1708,7 @@ class GraphRouterOrchestrator:
             if intent is None:
                 continue
             allowed_slot_keys = {slot.slot_key for slot in intent.slot_schema}
+            original_slot_keys = set(node.slot_memory)
             selected_item: ProactiveRecommendationItem | None = None
             candidates = items_by_intent.get(node.intent_code)
             if candidates:
@@ -1810,26 +1717,46 @@ class GraphRouterOrchestrator:
                 selected_item = fallback_items_by_intent[node.intent_code][0]
 
             merged_slot_memory: dict[str, Any] = {}
+            shared_slot_keys: set[str] = set()
             if shared_slot_memory:
-                merged_slot_memory.update(
-                    {
-                        key: value
-                        for key, value in shared_slot_memory.items()
-                        if key in allowed_slot_keys
-                    }
-                )
+                shared_defaults = {
+                    key: value
+                    for key, value in shared_slot_memory.items()
+                    if key in allowed_slot_keys
+                }
+                merged_slot_memory.update(shared_defaults)
+                shared_slot_keys.update(shared_defaults)
+            selected_slot_keys: set[str] = set()
             if selected_item is not None and selected_item.slot_memory:
-                merged_slot_memory.update(
-                    {
-                        key: value
-                        for key, value in selected_item.slot_memory.items()
-                        if key in allowed_slot_keys
-                    }
-                )
+                selected_defaults = {
+                    key: value
+                    for key, value in selected_item.slot_memory.items()
+                    if key in allowed_slot_keys
+                }
+                merged_slot_memory.update(selected_defaults)
+                selected_slot_keys.update(selected_defaults)
             merged_slot_memory.update(node.slot_memory)
             node.slot_memory = normalize_structured_slot_memory(
                 slot_memory=merged_slot_memory,
                 slot_schema=intent.slot_schema,
+            )
+            recommendation_keys = {
+                slot_key
+                for slot_key in node.slot_memory
+                if slot_key not in original_slot_keys
+                and (slot_key in shared_slot_keys or slot_key in selected_slot_keys)
+            }
+            self._rebuild_node_slot_bindings(
+                node,
+                preferred_sources={
+                    slot_key: SlotBindingSource.RECOMMENDATION
+                    for slot_key in recommendation_keys
+                },
+                source_text=(
+                    selected_item.title
+                    if selected_item is not None
+                    else proactive_recommendation.intro_text if proactive_recommendation is not None else node.source_fragment
+                ),
             )
             if selected_item is not None:
                 if not node.title:
@@ -1898,6 +1825,7 @@ class GraphRouterOrchestrator:
             "skip_reason_code": node.skip_reason_code,
             "relation_reason": node.relation_reason,
             "slot_memory": dict(node.slot_memory),
+            "slot_bindings": [binding.model_dump(mode="json") for binding in node.slot_bindings],
             "history_slot_keys": list(node.history_slot_keys),
             "output_payload": dict(node.output_payload),
             "updated_at": node.updated_at.isoformat(),
