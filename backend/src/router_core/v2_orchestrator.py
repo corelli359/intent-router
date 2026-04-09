@@ -352,6 +352,7 @@ class GraphRouterOrchestrator:
         long_term_memory: list[str] | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_defaults: list[ProactiveRecommendationItem] | None = None,
+        proactive_recommendation: ProactiveRecommendationPayload | None = None,
         skip_history_prefill: bool = False,
     ) -> None:
         graph: ExecutionGraphState | None = None
@@ -406,12 +407,13 @@ class GraphRouterOrchestrator:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
+        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
         self._apply_proactive_slot_defaults(
             graph,
             selected_items=proactive_defaults or [],
+            proactive_recommendation=proactive_recommendation,
             intents_by_code=active_intents,
         )
-        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
         if not skip_history_prefill:
             self._apply_history_prefill_policy(
                 session,
@@ -511,6 +513,7 @@ class GraphRouterOrchestrator:
             ),
             long_term_memory=context["long_term_memory"],
             proactive_defaults=selected_items,
+            proactive_recommendation=proactive_recommendation,
             skip_history_prefill=True,
         )
 
@@ -1701,6 +1704,8 @@ class GraphRouterOrchestrator:
         ]
         if proactive_recommendation.intro_text:
             lines.append(f"intro_text={proactive_recommendation.intro_text}")
+        if proactive_recommendation.shared_slot_memory:
+            lines.append(f"shared_slot_memory={proactive_recommendation.shared_slot_memory}")
         for index, item in enumerate(proactive_recommendation.items, start=1):
             lines.append(
                 f"{index}. {item.title} ({item.intent_code})"
@@ -1756,34 +1761,64 @@ class GraphRouterOrchestrator:
         graph: ExecutionGraphState,
         *,
         selected_items: list[ProactiveRecommendationItem],
+        proactive_recommendation: ProactiveRecommendationPayload | None,
         intents_by_code: dict[str, IntentDefinition],
     ) -> None:
-        if not selected_items:
+        if not selected_items and proactive_recommendation is None:
             return
 
         items_by_intent: dict[str, list[ProactiveRecommendationItem]] = {}
         for item in selected_items:
             items_by_intent.setdefault(item.intent_code, []).append(item)
+        fallback_items_by_intent: dict[str, list[ProactiveRecommendationItem]] = {}
+        if proactive_recommendation is not None:
+            for item in proactive_recommendation.items:
+                fallback_items_by_intent.setdefault(item.intent_code, []).append(item)
+        shared_slot_memory = (
+            dict(proactive_recommendation.shared_slot_memory)
+            if proactive_recommendation is not None
+            else {}
+        )
 
         for node in graph.nodes:
-            candidates = items_by_intent.get(node.intent_code)
-            if not candidates:
-                continue
-            selected_item = candidates.pop(0)
             intent = intents_by_code.get(node.intent_code)
             if intent is None:
                 continue
+            allowed_slot_keys = {slot.slot_key for slot in intent.slot_schema}
+            selected_item: ProactiveRecommendationItem | None = None
+            candidates = items_by_intent.get(node.intent_code)
+            if candidates:
+                selected_item = candidates.pop(0)
+            elif fallback_items_by_intent.get(node.intent_code):
+                selected_item = fallback_items_by_intent[node.intent_code][0]
+
+            merged_slot_memory: dict[str, Any] = {}
+            if shared_slot_memory:
+                merged_slot_memory.update(
+                    {
+                        key: value
+                        for key, value in shared_slot_memory.items()
+                        if key in allowed_slot_keys
+                    }
+                )
+            if selected_item is not None and selected_item.slot_memory:
+                merged_slot_memory.update(
+                    {
+                        key: value
+                        for key, value in selected_item.slot_memory.items()
+                        if key in allowed_slot_keys
+                    }
+                )
+            merged_slot_memory.update(node.slot_memory)
             node.slot_memory = normalize_structured_slot_memory(
-                slot_memory={
-                    **selected_item.slot_memory,
-                    **node.slot_memory,
-                },
+                slot_memory=merged_slot_memory,
                 slot_schema=intent.slot_schema,
             )
-            if not node.title:
-                node.title = selected_item.title
-            if not node.source_fragment:
-                node.source_fragment = selected_item.title
+            if selected_item is not None:
+                if not node.title:
+                    node.title = selected_item.title
+                if not node.source_fragment:
+                    node.source_fragment = selected_item.title
 
     def _should_append_graph_terminal_message(
         self,

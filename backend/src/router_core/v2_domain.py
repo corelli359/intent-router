@@ -222,6 +222,7 @@ class ProactiveRecommendationPayload(BaseModel):
 
     mode: str = "proactive_recommendation"
     intro_text: str | None = Field(default=None, alias="introText")
+    shared_slot_memory: dict[str, Any] = Field(default_factory=dict, alias="sharedSlotMemory")
     items: list[ProactiveRecommendationItem] = Field(default_factory=list, alias="items")
 
 

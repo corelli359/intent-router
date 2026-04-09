@@ -113,6 +113,7 @@ type ProactiveRecommendationBundle = {
   id: string;
   created_at: string;
   introText: string;
+  sharedSlotMemory: Record<string, unknown>;
   items: ProactiveRecommendationItemTemplate[];
 };
 
@@ -132,6 +133,7 @@ type DisplayEntry =
       sort_index: number;
       active: boolean;
       introText: string;
+      sharedSlotMemory: Record<string, unknown>;
       items: ProactiveRecommendationItemTemplate[];
     };
 
@@ -347,7 +349,7 @@ function toneForNodeStatus(status?: string): "default" | "warning" | "success" |
 
 function relationTypeLabel(type: string): string {
   if (type === "conditional") return "条件依赖";
-  if (type === "parallel") return "并行";
+  if (type === "parallel") return "无先后依赖";
   if (type === "sequential") return "顺序";
   return type;
 }
@@ -387,6 +389,10 @@ function createRecommendationBundle(): ProactiveRecommendationBundle {
     id: createLocalId("recommendation"),
     created_at: new Date().toISOString(),
     introText: RECOMMENDATION_INTRO_TEXT,
+    sharedSlotMemory: {
+      card_number: "6222000100001234567",
+      phone_last_four: "9999",
+    },
     items: shuffleTemplates(RECOMMENDATION_TEMPLATES).slice(0, 4),
   };
 }
@@ -419,6 +425,7 @@ function buildDisplayEntries(
     sort_index: messageSortValue(bundle.created_at) * 10 + index + 5,
     active: bundle.id === activeRecommendationId,
     introText: bundle.introText,
+    sharedSlotMemory: bundle.sharedSlotMemory,
     items: bundle.items,
   }));
 
@@ -679,12 +686,13 @@ export default function ChatV2PageClient() {
           cust_id: custId,
           proactiveRecommendation: activeRecommendationBundle
             ? {
-                mode: "proactive_recommendation",
-                introText: activeRecommendationBundle.introText,
-                items: activeRecommendationBundle.items.map((item) => ({
-                  recommendationItemId: item.recommendationItemId,
-                  intentCode: item.intentCode,
-                  title: item.title,
+              mode: "proactive_recommendation",
+              introText: activeRecommendationBundle.introText,
+              sharedSlotMemory: activeRecommendationBundle.sharedSlotMemory,
+              items: activeRecommendationBundle.items.map((item) => ({
+                recommendationItemId: item.recommendationItemId,
+                intentCode: item.intentCode,
+                title: item.title,
                   description: item.description,
                   slotMemory: item.slotMemory,
                   executionPayload: item.executionPayload,
@@ -779,6 +787,7 @@ export default function ChatV2PageClient() {
   const candidateIntents = snapshot?.candidate_intents ?? [];
   const nodeTitleById = new Map(displayedGraph?.nodes.map((node) => [node.node_id, node.title]) ?? []);
   const displayEntries = buildDisplayEntries(messages, recommendationBundles, activeRecommendationId);
+  const hasParallelEdges = Boolean(displayedGraph?.edges.some((edge) => edge.relation_type === "parallel"));
   const hasActiveRecommendations = activeRecommendationId !== null;
   const canSend = Boolean(sessionId && composer.trim() && !isSending);
 
@@ -1039,6 +1048,9 @@ export default function ChatV2PageClient() {
               <div className="section-head">
                 <p className="section-label">执行关系</p>
               </div>
+              {hasParallelEdges ? (
+                <p className="status-copy">当前图里标成“无先后依赖”的节点，表示它们没有严格顺序约束；但 V2 运行时仍按单前台节点串行调度，不会真的同时与多个 agent 交互。</p>
+              ) : null}
               <div className="graph-edge-list">
                 {displayedGraph.edges.map((edge) => (
                   <article key={edge.edge_id} className="graph-edge-card">

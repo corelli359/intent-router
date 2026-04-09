@@ -157,6 +157,64 @@ def _mock_intents() -> list[IntentDefinition]:
             ],
             graph_build_hints={"provides_context_keys": ["exchanged_amount", "source_currency", "target_currency"]},
         ),
+        IntentDefinition(
+            intent_code="query_credit_card_repayment",
+            name="查询信用卡还款信息",
+            description="查询信用卡账单，需要卡号和手机号后4位。",
+            examples=["查一下信用卡还款信息", "我这期信用卡要还多少钱"],
+            keywords=["信用卡", "还款", "账单"],
+            agent_url="http://test-agent/query_credit_card_repayment",
+            dispatch_priority=88,
+            primary_threshold=0.7,
+            candidate_threshold=0.5,
+            slot_schema=[
+                {
+                    "slot_key": "card_number",
+                    "label": "信用卡卡号",
+                    "description": "信用卡卡号",
+                    "value_type": "account_number",
+                    "required": True,
+                    "allow_from_history": True,
+                },
+                {
+                    "slot_key": "phone_last_four",
+                    "label": "手机号后4位",
+                    "description": "手机号后4位",
+                    "value_type": "phone_last4",
+                    "required": True,
+                    "allow_from_history": True,
+                },
+            ],
+            graph_build_hints={"provides_context_keys": ["due_amount", "minimum_due", "due_date"]},
+        ),
+        IntentDefinition(
+            intent_code="pay_gas_bill",
+            name="缴纳天然气费",
+            description="缴纳天然气费，需要燃气户号和缴费金额。",
+            examples=["给燃气户号88001234交88元", "帮我缴一下天然气费"],
+            keywords=["天然气", "燃气", "缴费"],
+            agent_url="http://test-agent/pay_gas_bill",
+            dispatch_priority=89,
+            primary_threshold=0.7,
+            candidate_threshold=0.5,
+            slot_schema=[
+                {
+                    "slot_key": "gas_account_number",
+                    "label": "燃气户号",
+                    "description": "燃气缴费户号",
+                    "value_type": "account_number",
+                    "required": True,
+                },
+                {
+                    "slot_key": "amount",
+                    "label": "缴费金额",
+                    "description": "天然气缴费金额",
+                    "value_type": "currency",
+                    "required": True,
+                },
+            ],
+            graph_build_hints={"provides_context_keys": ["amount", "business_status"]},
+        ),
     ]
 
 
@@ -383,6 +441,63 @@ class _ProactiveInteractiveGraphBuilder:
                 position=0,
                 source_fragment=message,
                 slot_memory={"amount": "500"},
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": recognition,
+                "graph": graph,
+            },
+        )()
+
+
+class _ProactiveConditionalRepairGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, recent_messages, long_term_memory, on_delta
+        assert message == "我选择缴天然气费和转账，如果余额超过2000，那么就给我妈妈转3000"
+        assert recognition is not None
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="已根据推荐项和条件要求生成执行图",
+            status=GraphStatus.WAITING_CONFIRMATION,
+            actions=[
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ],
+        )
+        gas = GraphNodeState(
+            intent_code="pay_gas_bill",
+            title="缴纳天然气费",
+            confidence=0.97,
+            position=0,
+            source_fragment="缴天然气费",
+            slot_memory={},
+        )
+        transfer = GraphNodeState(
+            intent_code="transfer_money",
+            title="给妈妈转3000",
+            confidence=0.95,
+            position=1,
+            source_fragment="如果余额超过2000，那么就给我妈妈转3000",
+            slot_memory={"recipient_name": "妈妈", "amount": "3000"},
+        )
+        transfer.depends_on.append(gas.node_id)
+        transfer.relation_reason = "余额超过2000时执行转账"
+        graph.nodes.extend([gas, transfer])
+        graph.edges.append(
+            GraphEdge(
+                source_node_id=gas.node_id,
+                target_node_id=transfer.node_id,
+                relation_type=GraphEdgeType.CONDITIONAL,
+                label="余额超过2000时执行转账",
+                condition=GraphCondition(
+                    source_node_id=gas.node_id,
+                    left_key="balance",
+                    operator=">",
+                    right_value=2000,
+                ),
             )
         )
         return type(
@@ -1635,5 +1750,106 @@ def test_v2_proactive_recommendation_no_selection_returns_idle_without_graph() -
             assert snapshot["current_graph"] is None
             assert snapshot["pending_graph"] is None
             assert snapshot["messages"][-1]["content"] == "好的，本次不执行这些推荐事项。"
+
+    asyncio.run(run())
+
+
+def test_v2_proactive_recommendation_hidden_balance_query_reuses_shared_account_context() -> None:
+    proactive_recommendation = {
+        "introText": "工资到账后，这里有几项待办。",
+        "sharedSlotMemory": {
+            "card_number": "6222000100001234567",
+            "phone_last_four": "9999",
+        },
+        "items": [
+            {
+                "recommendationItemId": "rec-gas-bill",
+                "intentCode": "pay_gas_bill",
+                "title": "缴纳天然气费",
+                "description": "已带入燃气户号和建议金额",
+                "slotMemory": {
+                    "gas_account_number": "88001234",
+                    "amount": "88",
+                },
+                "executionPayload": {"provider": "city_gas"},
+                "allowDirectExecute": True,
+            },
+            {
+                "recommendationItemId": "rec-transfer-mom",
+                "intentCode": "transfer_money",
+                "title": "给妈妈转账2000元",
+                "description": "已带入妈妈的收款信息",
+                "slotMemory": {
+                    "recipient_name": "妈妈",
+                    "recipient_card_number": "6222020100049999999",
+                    "recipient_phone_last_four": "9999",
+                    "amount": "2000",
+                },
+                "executionPayload": {"currency": "CNY"},
+                "allowDirectExecute": True,
+            },
+        ],
+    }
+
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_ExplodingRecognizer(),
+            graph_builder=_ProactiveConditionalRepairGraphBuilder(),
+            recommendation_router=_StaticRecommendationRouter(
+                ProactiveRecommendationRouteDecision(
+                    route_mode=ProactiveRecommendationRouteMode.INTERACTIVE_GRAPH,
+                    selectedRecommendationIds=["rec-gas-bill", "rec-transfer-mom"],
+                    selectedIntents=["pay_gas_bill", "transfer_money"],
+                    hasUserModification=True,
+                    modificationReasons=["用户新增了余额条件并修改转账金额"],
+                    reason="需要重建带条件的执行图",
+                )
+            ),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "我选择缴天然气费和转账，如果余额超过2000，那么就给我妈妈转3000",
+                    "proactiveRecommendation": proactive_recommendation,
+                },
+            )
+            assert first_turn.status_code == 200
+            pending_graph = first_turn.json()["snapshot"]["pending_graph"]
+            assert pending_graph is not None
+            assert [node["intent_code"] for node in pending_graph["nodes"]] == [
+                "pay_gas_bill",
+                "query_account_balance",
+                "transfer_money",
+            ]
+            assert pending_graph["nodes"][1]["slot_memory"] == {
+                "card_number": "6222000100001234567",
+                "phone_last_four": "9999",
+            }
+
+            confirm_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/actions",
+                json={
+                    "task_id": pending_graph["graph_id"],
+                    "source": "router",
+                    "action_code": "confirm_graph",
+                    "confirm_token": pending_graph["confirm_token"],
+                },
+            )
+            assert confirm_turn.status_code == 200
+            snapshot = confirm_turn.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert [node["status"] for node in current_graph["nodes"]] == [
+                "completed",
+                "completed",
+                "completed",
+            ]
+            assert all("请提供卡号" not in message["content"] for message in snapshot["messages"])
+            assert snapshot["messages"][-1]["content"] == "已向我妈妈转账 3000 元，转账成功"
 
     asyncio.run(run())
