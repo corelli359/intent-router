@@ -1,69 +1,36 @@
 # Dynamic Intent Graph Runtime Fix 改造方案
 
-## 1. 背景与核心判断
+## 1. 前提边界
 
-当前 V2 的问题，不只是某几个函数写得不够优雅，而是整体边界定义不清：
+这份方案以以下前提为基础，这些前提不是建议，而是架构边界：
 
-- `backend/src` 下面同时堆了多个可独立部署的服务，以及它们的共享逻辑，物理结构和部署结构不一致。
-- `IntentDefinition` 既承载 admin 注册模型，又承载运行时识别、图规划、Agent 调用、槽位映射，职责过载。
-- `GraphRouterOrchestrator` 同时承担 API 应用服务、会话管理、上下文组装、图状态机、Agent 调度、事件发布、UI 展示文案等多种职责，已经成为超大类。
-- 图运行时缺少清晰的上下游契约，导致 `_CONTEXT_KEY_ALIASES`、`_DEFAULT_INTENT_OUTPUT_KEYS`、`if context_key == "balance"` 这类补洞式逻辑出现。
-- 推荐模式、普通对话模式、历史复用模式之间的数据协议没有正式建模，很多信息通过字符串前缀或隐式约定传递。
+- `admin-service`、`router-service`、各 `agent-service` 由不同团队维护。
+- 每个服务都应当是无状态服务。
+- 服务之间必须代码隔离，不能出现 `service -> service` 的内部代码依赖。
+- 各服务之间的唯一协作方式是：
+  - 读写数据库中的标准化数据
+  - 调用标准 HTTP/SSE 接口
+- `router-service` 唯一感知 intent 的方式，是从数据库中读取已发布的 intent 路由元数据。
+- 每个 `agent-service` 对自己的单意图必须具备完整处理能力；如果没有 Router，它也应该能独立完成该意图。
+- Router 的存在意义不是接管业务数据，而是做：
+  - 理解
+  - 编排
+  - 调度
 
-结论：
+这意味着：
 
-- 这不是“再修几个 if/else”能解决的问题。
-- 需要按“服务目录隔离 + 共享包抽离 + contract-first + factory 编译”的方向重构。
-
----
-
-## 2. 改造目标
-
-### 2.1 目标一：按服务组织目录，而不是按技术层平铺
-
-仓库里有几个服务，就应该有几个服务目录。每个服务目录只放该服务的入口、依赖、接口、应用逻辑和测试。
-
-### 2.2 目标二：Intent 在 admin 注册时就提供完整运行契约
-
-Intent 不是一条“描述 + agent_url”的记录，而应该是一份完整的 `IntentSpec`：
-
-- 识别契约
-- 槽位契约
-- 图规划契约
-- 执行契约
-- 响应契约
-- UI/推荐契约
-
-然后由 `IntentFactory` 把 `IntentSpec` 编译成运行时对象。
-
-### 2.3 目标三：Router 只做编排，不再承载业务语义补丁
-
-Router Runtime 不应该知道：
-
-- `balance` 是余额业务
-- `query_account_balance` 是某个金融 intent
-- 某个 Agent 的 cancel URL 怎么猜
-- 推荐上下文要用什么魔法前缀字符串拼给大模型
-
-这些都应该由契约和工厂层提供。
-
-### 2.4 目标四：新增 100 个 intent 时，尽量不改 Router 核心代码
-
-理想状态下，新增 intent 只涉及：
-
-1. admin 注册 `IntentSpec`
-2. 配置或部署对应 Agent
-3. 补充对应测试
-
-不需要进入 Router 核心执行代码打补丁。
+- Router 不应该持有领域业务模型。
+- Router 不应该理解 agent 的内部表结构或业务对象。
+- Agent 不应该依赖 Router 的内部实现。
+- Admin 不应该和 Router 共享业务实现代码。
 
 ---
 
-## 3. 当前架构的核心问题
+## 2. 当前架构的真实问题
 
-## 3.1 物理目录与服务边界不一致
+## 2.1 当前目录结构没有体现服务边界
 
-当前 `backend/src` 目录把这些东西都平铺在一起：
+当前 `backend/src` 下平铺了：
 
 - `admin_api`
 - `router_api`
@@ -73,90 +40,133 @@ Router Runtime 不应该知道：
 - `persistence`
 - `config`
 
-这会带来两个问题：
+问题不在于“看起来乱”，而在于：
 
-- 从目录上看不出哪些是可独立部署服务，哪些是共享包。
-- Router 服务、Admin 服务、Agent 服务之间的依赖很容易变成“直接 import 内部模块”，最终耦合越来越深。
+- deployable service 和共享逻辑混在一起
+- 从目录上看不出团队边界
+- Router 很容易直接 import 本不该依赖的内部模块
 
-## 3.2 Intent 模型过薄，运行时只能补硬编码
+这对单团队原型没问题，但对多团队长期维护是错误的物理结构。
 
-当前 admin 注册模型见 [models/intent.py](/root/intent-router/backend/src/models/intent.py)。
+## 2.2 Router 侧当前存在不该出现的业务补丁
 
-它有这些字段：
+典型例子：
 
-- `agent_url`
-- `request_schema`
-- `field_mapping`
-- `slot_schema`
-- `graph_build_hints`
+- `_CONTEXT_KEY_ALIASES`
+- `_DEFAULT_INTENT_OUTPUT_KEYS`
+- `if context_key == "balance"`
+- `_cancel_url()` 猜 URL
 
-看上去很多，但缺了最关键的几类契约：
+这些东西之所以出现，不是因为单个函数写坏了，而是因为：
 
-- Agent 响应会产出哪些标准上下文字段
-- 条件边消费的字段与哪些 intent 输出字段对齐
-- 哪些槽位可跨节点共享，哪些只能当前节点使用
-- Agent 的显式 `cancel_url`
-- 推荐卡片和默认要素的结构化 UI 契约
+- intent 路由元数据不完整
+- agent 输出结果没有被标准化为 Router 可直接消费的意图结果
+- graph 条件依赖引用的字段没有在注册阶段被明确约束
+- Router 在运行时被迫去猜测
 
-因此运行时只能补洞：
+本质问题是：**Router 被迫承担了它不该承担的跨服务语义补洞职责。**
 
-- 用 `_CONTEXT_KEY_ALIASES` 做输出字段归一
-- 用 `_DEFAULT_INTENT_OUTPUT_KEYS` 猜 intent 可能产出什么
-- 用 `if context_key == "balance"` 改标题
-- 用 `_cancel_url()` 猜 Agent 的取消地址
-
-这些都是“契约没有前置建模，运行时被迫兜底”的表现。
-
-## 3.3 `GraphRouterOrchestrator` 不是 orchestrator，而是大一统控制器
+## 2.3 `GraphRouterOrchestrator` 已经不是 orchestrator，而是系统总控器
 
 当前 [v2_orchestrator.py](/root/intent-router/backend/src/router_core/v2_orchestrator.py) 1933 行，混杂了：
 
-- Session Store
-- Message routing
-- Recommendation routing
-- Planner context 组装
-- History prefill
-- 图状态推进
-- Graph status 计算
-- Task 创建
-- Agent dispatch
-- Node chunk 处理
-- Event 发布
-- Snapshot 输出
-- 前端展示文案
+- session 管理
+- message routing
+- recommendation routing
+- planner context 拼装
+- history prefill
+- graph 状态推进
+- node 调度
+- agent 调用
+- event 发布
+- snapshot 构造
+- UI 文案
 
-这意味着：
+这会导致两个直接后果：
 
-- 任何一个新需求都容易继续加到同一个文件
-- 执行层、应用层、展示层相互污染
-- 很难并行开发和模块测试
+- 增加意图时，虽然不一定每次都要改 orchestrator，但任何新场景都容易继续往这里塞逻辑
+- 执行引擎、应用服务、展示层耦合，后续无法稳定演进
 
-## 3.4 上下游数据结构缺少正式边界
+## 2.4 当前 Router 不是无状态服务
 
-当前存在多个隐式协议：
+当前 `GraphSessionStore` 仍然是内存态，这和目标架构不一致。
 
-- Planner context 通过 `recent_messages` 中的字符串前缀传递
-- Graph 条件通过 `GraphCondition.left_key` 和 Agent `payload` 的字面字段弱绑定
-- 节点槽位、历史槽位、已完成节点输出、共享账户信息分散在多个结构里
+如果 Router 是无状态服务，那么：
 
-结果是：
+- session
+- graph
+- node runtime state
+- active task / pending graph
 
-- recommendation 模式和 free dialog 模式的数据协议容易互相渗透
-- Agent 响应字段名变了，图条件就可能失效
-- 新增 intent 时，经常出现“planner 以为够了，agent 还要追问”
+都不能只存在单实例内存里，必须进入外部状态存储。
+
+---
+
+## 3. 正确的角色划分
+
+## 3.1 Admin Service
+
+职责：
+
+- 注册和管理 intent 路由元数据
+- 校验 intent 元数据是否完整
+- 把“可发布”的 intent routing spec 写入数据库
+
+不负责：
+
+- graph 编排
+- 节点调度
+- 业务执行
+
+## 3.2 Router Service
+
+职责：
+
+- 从数据库加载已发布的 intent routing spec
+- 用大模型做意图识别
+- 把意图编排为 graph
+- 把 graph 节点调度到对应 agent
+- 接收 agent 返回结果
+- 依据意图结果推动 graph 前进
+
+不负责：
+
+- 业务数据管理
+- 业务执行规则
+- 领域模型持久化
+
+一句话：
+
+**Router 只做理解、编排、调度。**
+
+## 3.3 Agent Service
+
+职责：
+
+- 完整处理自己的单意图
+- 自己维护业务数据与领域规则
+- 根据 Router 传入的输入与槽位完成交互或执行
+- 把本意图的结果以统一 envelope 形式返回给 Router
+
+一句话：
+
+**每个 agent 都是单意图能力所有者。**
 
 ---
 
 ## 4. 目标目录结构
 
-建议按“服务目录 + 共享包目录”重构。
+这里不再使用“共享业务 package”的思路，而是强调：
+
+- 服务目录隔离
+- 协议目录独立
+- 可选极薄 SDK
 
 ```text
 backend/
   services/
     admin-service/
       src/admin_service/
-        app.py
         api/
         application/
         domain/
@@ -165,20 +175,13 @@ backend/
 
     router-service/
       src/router_service/
-        app.py
         api/
         application/
         planning/
         execution/
         session/
         presentation/
-      tests/
-
-    agent-runtime/
-      src/agent_runtime/
-        app.py
-        sdk/
-        adapters/
+        infrastructure/
       tests/
 
     agents/
@@ -198,605 +201,709 @@ backend/
         src/fallback_agent/
         tests/
 
-  packages/
-    intent-spec/
-      src/intent_spec/
-    graph-contract/
-      src/graph_contract/
-    agent-contract/
-      src/agent_contract/
-    shared-kernel/
-      src/shared_kernel/
-    intent-factory/
-      src/intent_factory/
+  contracts/
+    intent-routing-spec/
+    agent-protocol/
+    router-callback-protocol/
+
+  sdks/
+    agent-sdk/   # 可选，且必须非常薄；如果组织不接受共享代码，可直接删除
 ```
 
-### 4.1 服务目录职责
+### 4.1 `services/` 的含义
 
-- `admin-service`
-  - 只负责 intent spec 注册、校验、版本管理、发布
-- `router-service`
-  - 只负责对话编排、图构建、图执行、会话状态、事件发布
-- `agent-runtime`
-  - 提供统一 agent SDK、公共适配器、执行外壳
-- `agents/*`
-  - 每个 agent 独立维护自己的业务逻辑
+这里每个目录都对应独立服务、独立团队、独立部署单元。
 
-### 4.2 共享包职责
+### 4.2 `contracts/` 的含义
 
-- `intent-spec`
-  - admin 注册模型、版本化 schema、spec 校验器
-- `graph-contract`
-  - 图节点/边/条件/上下文 key 的标准模型
-- `agent-contract`
-  - AgentInvocationRequest / AgentInvocationResponse 标准协议
-- `shared-kernel`
-  - 纯通用枚举、错误码、时间/ID 工具
-- `intent-factory`
-  - 把 `IntentSpec` 编译为 Router 和 Agent 可直接消费的运行时对象
+这里只放协议，不放共享业务实现。
+
+包括：
+
+- JSON Schema
+- OpenAPI
+- event schema
+- 路由元数据 schema
+
+### 4.3 `sdks/` 的含义
+
+这里只允许极薄的序列化/反序列化和 client 壳子。
+
+例如：
+
+- `agent-sdk` 只提供：
+  - `AgentInvocationRequest`
+  - `AgentInvocationResponse`
+  - 基础 FastAPI adapter
+
+不能放：
+
+- graph engine
+- router core
+- admin 校验业务逻辑
+
+如果组织要求绝对零共享代码，那么 `sdks/` 可以完全不要，只保留 `contracts/`。
 
 ---
 
-## 5. 新的数据结构设计
+## 5. 数据归属矩阵
 
-## 5.1 Admin 注册的核心对象：`IntentSpec`
+这是整个系统最关键的边界。
 
-建议把当前 `IntentPayload` 升级为版本化的 `IntentSpec`。
+| 数据类型 | 归属服务 | Router 是否持有 |
+|---|---|---|
+| intent 路由元数据 | admin-service / DB | 只读加载 |
+| 用户会话状态 | router-service 外部状态存储 | 是 |
+| graph / node 运行状态 | router-service 外部状态存储 | 是 |
+| agent 业务数据 | 各 agent 自己的 DB / 下游系统 | 否 |
+| 单意图处理规则 | 各 agent | 否 |
+| graph 条件依赖的节点结果 | Router 保存节点 result 副本 | 是 |
+
+要点：
+
+- Router 可以保存“节点结果副本”，因为这是编排状态的一部分。
+- Router 可以保存 `slot_memory`，因为这是多轮编排运行态的一部分。
+- 但 Router 不应保存 agent 的完整业务对象和领域数据。
+- `slot_memory` 不是账户、订单、换汇申请等业务主数据，它只是 Router 为了补槽、续跑、跨节点传递而保留的运行态输入。
+
+---
+
+## 6. 核心数据结构设计
+
+## 6.1 数据库中的核心对象：`IntentRoutingSpec`
+
+这里不再把它定义成重型业务 `IntentSpec`，而是明确它是：
+
+**Router 用来理解、编排、调度的元数据。**
+
+建议字段如下：
 
 ```json
 {
   "spec_version": "v2.1",
-  "intent_code": "exchange_forex",
+  "intent_code": "query_account_balance",
   "status": "active",
-  "display_name": "换外汇",
+  "display_name": "查询账户余额",
   "recognition": {
-    "description": "执行单次外汇兑换",
-    "examples": ["换200美元", "把人民币换成美元"],
-    "priority": 90,
-    "primary_threshold": 0.72,
+    "description": "查询账户余额，需要卡号和手机号后四位",
+    "examples": ["帮我查一下余额", "看看工资卡里还有多少钱"],
+    "dispatch_priority": 100,
+    "primary_threshold": 0.7,
     "candidate_threshold": 0.5
   },
-  "slots": [
+  "slot_schema": [
     {
       "slot_key": "card_number",
       "value_type": "account_number",
       "required": true,
-      "allow_from_history": true,
-      "share_scope": "graph_shared"
+      "allow_from_history": true
     },
     {
       "slot_key": "phone_last_four",
       "value_type": "phone_last4",
       "required": true,
-      "allow_from_history": true,
-      "share_scope": "graph_shared"
-    },
-    {
-      "slot_key": "source_currency",
-      "value_type": "string",
-      "required": true,
-      "share_scope": "node_only"
-    },
-    {
-      "slot_key": "target_currency",
-      "value_type": "string",
-      "required": true,
-      "share_scope": "node_only"
-    },
-    {
-      "slot_key": "amount",
-      "value_type": "currency",
-      "required": true,
-      "share_scope": "node_only"
+      "allow_from_history": true
     }
   ],
   "graph": {
-    "intent_scope_rule": "单次换汇是一个 intent",
+    "intent_scope_rule": "单次查询余额是一个 intent",
     "confirm_policy": "auto",
     "max_nodes_per_message": 4,
-    "produces_context": [
-      {
-        "key": "exchanged_amount",
-        "type": "currency"
-      },
-      {
-        "key": "business_status",
-        "type": "string"
+    "result_schema": {
+      "balance": {
+        "value_type": "number",
+        "description": "查询到的账户余额"
       }
-    ],
-    "consumes_context": [],
-    "planner_hints": {
-      "single_node_examples": ["换200美元"],
-      "multi_node_examples": ["先查余额，再换200美元"]
     }
   },
-  "execution": {
-    "run_url": "http://intent-forex-agent/run",
-    "cancel_url": "http://intent-forex-agent/cancel",
-    "request_mapping": {
-      "sessionId": "$session.id",
-      "taskId": "$task.id",
-      "input": "$message.current",
-      "account.cardNumber": "$slot_memory.card_number",
-      "account.phoneLast4": "$slot_memory.phone_last_four",
-      "exchange.sourceCurrency": "$slot_memory.source_currency",
-      "exchange.targetCurrency": "$slot_memory.target_currency",
-      "exchange.amount": "$slot_memory.amount"
-    }
-  },
-  "response": {
-    "slot_updates": {
-      "card_number": "$payload.card_number",
-      "phone_last_four": "$payload.phone_last_four"
-    },
-    "context_outputs": {
-      "exchanged_amount": "$payload.exchanged_amount",
-      "business_status": "$payload.business_status"
-    }
+  "dispatch": {
+    "run_url": "http://intent-account-balance-agent/run",
+    "cancel_url": "http://intent-account-balance-agent/cancel",
+    "timeout_seconds": 30
   },
   "ui": {
-    "recommendation_enabled": true,
-    "default_recommendation_title": "换100美元"
+    "recommendation_enabled": true
   }
 }
 ```
 
-## 5.2 关键新增字段说明
+### 6.1.1 这份 spec 不是什么
 
-### `graph.produces_context`
+它不是：
 
-这是替代 `_DEFAULT_INTENT_OUTPUT_KEYS` 的正式字段。
+- agent 的完整业务 schema
+- 下游系统的数据模型
+- 账户领域模型
+- 换汇领域模型
 
-作用：
+它只是 Router 需要知道的最小路由契约。
 
-- 明确一个 intent 在执行完成后能为 graph 提供哪些 canonical context key
-- 条件边只能依赖这些已声明输出
+### 6.1.2 `graph.result_schema` 的作用
 
-### `execution.cancel_url`
+这是替代 `_CONTEXT_KEY_ALIASES`、`_DEFAULT_INTENT_OUTPUT_KEYS` 的关键。
 
-这是替代 `_cancel_url()` 猜 URL 的正式字段。
+它表达的是：
 
-作用：
+- 这个 intent 在 `ishandover=true` 后，会向 Router 交回怎样的 `result`
+- graph 条件判断只允许引用这些已注册的结果字段
 
-- Router 不再推断 Agent URL 规则
-- 每个 intent 明确自己的取消接口
+例如：
 
-### `response.context_outputs`
+- `query_account_balance` -> `result.balance`
+- `query_credit_card_repayment` -> `result.due_amount`, `result.minimum_due`
+- `exchange_forex` -> `result.exchanged_amount`, `result.business_status`
 
-这是替代 `_CONTEXT_KEY_ALIASES` 运行时推断的正式映射。
+这样 Router 不需要再去猜：
 
-作用：
+- `available_balance`
+- `remaining_balance`
+- `left_balance`
 
-- Agent 返回任意业务字段名
-- 进入 graph runtime 前先标准化成 canonical context keys
+因为 Router 只认：
 
-### `slots[].share_scope`
+- `result.balance`
 
-作用：
+如果 agent 内部字段不是这个名字，那是 agent 自己或其 adapter 的事，不该让 graph runtime 去兜底。
 
-- 定义槽位是否可在图内共享
-- 避免所有槽位默认都可以历史继承或跨节点传递
+## 6.2 Router 内存中的对象：`IntentCatalogEntry`
 
-建议值：
-
-- `node_only`
-- `graph_shared`
-- `session_shared`
-
----
-
-## 6. IntentFactory 设计
-
-## 6.1 IntentFactory 的定位
-
-Admin 注册后，不直接把 `IntentSpec` 原样丢给 Router。
-
-应由 `IntentFactory` 完成“编译”：
-
-- 校验 spec 完整性
-- 生成识别视图
-- 生成图规划视图
-- 生成执行适配视图
-- 生成响应标准化视图
-
-## 6.2 Factory 产物
-
-建议生成统一运行时对象 `CompiledIntent`：
+Router 启动或热刷新时，从数据库读取 `IntentRoutingSpec`，转换成内存对象：
 
 ```python
-class CompiledIntent(BaseModel):
-    identity: IntentIdentity
-    recognition_profile: RecognitionProfile
-    slot_profile: SlotProfile
+class IntentCatalogEntry(BaseModel):
+    intent_code: str
+    recognition: RecognitionProfile
+    slot_schema: list[SlotDefinition]
     graph_profile: GraphProfile
-    execution_profile: ExecutionProfile
-    response_profile: ResponseProfile
+    dispatch_profile: DispatchProfile
     ui_profile: UIProfile | None = None
 ```
 
-其中：
+注意：
 
-- `RecognitionProfile`
-  - 给 recognizer / planner / graph_builder
-- `SlotProfile`
-  - 给 slot grounding / history prefill / graph shared slot policy
-- `GraphProfile`
-  - 给 graph runtime
-- `ExecutionProfile`
-  - 给 Agent dispatch
-- `ResponseProfile`
-  - 给 Agent 返回后的标准化
+- 这不是共享业务实现对象
+- 只是 Router 本地缓存的只读路由元数据
 
-## 6.3 Factory 的收益
+## 6.3 Planner 输出对象：`PlannedNodeDraft`
 
-这样新增 100 个 intent 时：
-
-- Router 只消费 `CompiledIntent`
-- 不需要感知 admin 的原始存储结构
-- Spec 变更可以在 factory 层做兼容
-
----
-
-## 7. Router Service 的新分层
-
-Router Service 建议重新拆成 6 层。
-
-## 7.1 API 层
-
-目录：
-
-- `router_service/api/`
-
-职责：
-
-- 接收 HTTP 请求
-- 做 DTO 校验
-- 调 application service
-- 返回 snapshot / SSE
-
-禁止：
-
-- 直接拼 prompt
-- 直接改 graph
-- 直接操作 task slot_memory
-
-## 7.2 Application 层
-
-目录：
-
-- `router_service/application/`
-
-职责：
-
-- 处理 `HandleUserMessageCommand`
-- 处理 `HandleActionCommand`
-- 协调 session、planning、execution、presentation
-
-它是薄应用服务，不做纯算法。
-
-## 7.3 Session 层
-
-目录：
-
-- `router_service/session/`
-
-职责：
-
-- Session store
-- long-term memory store
-- shared slot context store
-- session snapshot repository
-
-## 7.4 Planning 层
-
-目录：
-
-- `router_service/planning/`
-
-职责：
-
-- 构造 `PlannerContext`
-- 调 recognizer / graph_builder / planner
-- 做 graph semantic validation
-- 不做执行推进
-
-建议拆为：
-
-- `planner_context_builder.py`
-- `recognition_service.py`
-- `graph_planning_service.py`
-- `recommendation_planning_service.py`
-
-## 7.5 Execution 层
-
-目录：
-
-- `router_service/execution/`
-
-职责：
-
-- 图状态推进
-- 条件评估
-- ready node 选择
-- task 构造
-- node 执行
-- response 标准化
-
-建议拆为：
-
-- `graph_engine.py`
-- `condition_evaluator.py`
-- `shared_slot_resolver.py`
-- `node_task_factory.py`
-- `node_runner.py`
-- `agent_response_normalizer.py`
-
-## 7.6 Presentation 层
-
-目录：
-
-- `router_service/presentation/`
-
-职责：
-
-- 构造 snapshot
-- 发布 task/graph/session event
-- 生成前端展示文案
-
-禁止：
-
-- 反向修改 graph 语义
-
----
-
-## 8. 需要重建的上下游标准协议
-
-## 8.1 Router 输入协议
-
-目前 recommendation、proactive、普通对话三套上下文混在 message 里。
-
-建议改成正式命令对象：
+大模型规划出的只是“草稿节点”，它不具备执行能力。
 
 ```python
-class HandleUserMessageCommand(BaseModel):
-    session_id: str
-    cust_id: str
-    user_message: str
-    mode: Literal["free_dialog", "guided_selection", "proactive_recommendation"]
-    recommendation_context: RecommendationContext | None
-    proactive_selection_context: ProactiveSelectionContext | None
-    client_metadata: ClientMetadata | None
+class PlannedNodeDraft(BaseModel):
+    intent_code: str
+    title: str
+    source_fragment: str | None
+    slot_memory: dict[str, Any]
 ```
 
-这样 router 不需要再通过字符串前缀识别上下文来源。
+## 6.4 Router 中的轻量节点工厂：`IntentNodeFactory`
 
-## 8.2 Planner 输入协议
+这里的 Factory 必须是轻量的，不负责业务建模，只负责节点化。
 
-建议定义：
+输入：
+
+- `IntentCatalogEntry`
+- `PlannedNodeDraft`
+
+输出：
+
+- `ExecutableGraphNode`
 
 ```python
-class PlannerContext(BaseModel):
-    user_message: str
-    conversation_history: list[ConversationTurn]
-    long_term_memory: list[MemoryFact]
-    recommendation_context: RecommendationContext | None
-    proactive_selection: ProactiveSelectionContext | None
-    recognition_hint: RecognitionHint | None
-    shared_slot_context: SharedSlotContext | None
+class ExecutableGraphNode(BaseModel):
+    node_id: str
+    intent_code: str
+    title: str
+    slot_schema: list[SlotDefinition]
+    dispatch_profile: DispatchProfile
+    result_schema: dict[str, ResultFieldDefinition]
+    slot_memory: dict[str, Any]
+    result: dict[str, Any] = Field(default_factory=dict)
 ```
 
-这样：
+这里要注意：
 
-- 普通模式和推荐模式都是不同字段，不再混在 `recent_messages`
-- Prompt Builder 只负责序列化，不负责编造协议
+- `ExecutableGraphNode` 不包含业务对象
+- 只包含运行 graph 所需的最小节点元数据
 
-## 8.3 Agent 调用协议
+## 6.5 Router -> Agent 请求协议：`AgentInvocationRequest`
 
-建议所有 Agent 统一接收：
+Router 发给 agent 的东西应该尽量少，核心就是当前输入与槽位。
 
 ```python
 class AgentInvocationRequest(BaseModel):
-    session: SessionRef
-    task: TaskRef
-    intent: IntentExecutionProfile
-    message: CurrentMessage
+    session_id: str
+    task_id: str
+    node_id: str
+    intent_code: str
+    input: str
     slot_memory: dict[str, Any]
-    graph_context: GraphScopedContext
 ```
 
-统一返回：
+如果需要扩展，可以再加只读上下文：
+
+- `recent_messages`
+- `long_term_memory`
+
+但这些是辅助信息，不改变核心边界。
+
+### 6.5.1 Router 对 agent 的请求边界
+
+Router 发给 agent 的，本质上只有两类东西：
+
+- 当前用户输入
+- 当前节点可用的槽位输入
+
+Router 不应该在这里替 agent 组装复杂业务对象，例如：
+
+- account domain object
+- transfer order object
+- forex order object
+
+如果某个 agent 需要这些对象，应由 agent 自己去读取、组装和管理。
+
+## 6.6 Agent -> Router 返回协议：`AgentInvocationResponse`
+
+每个 agent 返回的应该是统一 envelope，不是统一业务字段。
 
 ```python
 class AgentInvocationResponse(BaseModel):
-    event: str
-    status: str
-    display_message: str
-    slot_updates: dict[str, Any]
-    context_outputs: dict[str, Any]
-    interaction: AgentInteraction | None
+    ishandover: bool
+    message: str
+    slot_updates: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
 ```
 
-重点：
+这里最关键的是：
 
-- `slot_updates` 用于更新节点槽位
-- `context_outputs` 用于 graph 条件评估
-- `display_message` 用于前端展示
+- `slot_updates` 是当前意图补回来的槽位
+- `result` 是这个意图自己的输出结果
 
-这样 graph runtime 不再解析业务 payload 的随意字段。
+不是：
+
+- `condition_outputs`
+- `graph_outputs`
+
+Router 后续 graph 条件判断，直接读节点 `result`。
+
+### 6.6.1 Router 对 `result` 的消费边界
+
+Router 可以做的事情只有：
+
+- 保存节点 `result` 作为 graph runtime state
+- 基于已注册的 `result_schema` 校验字段可用性
+- 在条件边评估时读取上游节点 `result`
+
+Router 不应该做的事情是：
+
+- 解释 `result` 背后的业务表结构
+- 依赖某个 agent 私有 payload 结构
+- 根据经验猜测一个字段是不是“余额”“剩余额度”“可用金额”
+
+### 6.6.2 `ishandover` 的语义
+
+`ishandover=true` 表示：
+
+- 当前 agent 本轮处理已经把控制权交回 Router
+- Router 此时可以读取：
+  - `slot_updates`
+  - `result`
+
+并推动 graph 前进。
+
+`ishandover=false` 表示：
+
+- 当前节点仍然处于 agent 多轮交互中
+- Router 不应推进后继节点
+
+### 6.6.3 节点“最终完成”与 `ishandover` 不是一回事
+
+后续如果存在“前端执行完成后再回调确认”的场景，可以在 Router 侧增加：
+
+- `WAITING_EXECUTION_ACK`
+
+并提供回调接口，例如：
+
+```python
+POST /api/router/v2/nodes/{node_id}/ack
+```
+
+也就是说：
+
+- `ishandover` 解决“当前 agent 阶段是否交回 Router”
+- callback flag 解决“节点最终是否被外部确认完成”
 
 ---
 
-## 9. 如何消除当前硬编码
+## 7. Graph 条件判断应如何工作
 
-## 9.1 `_CONTEXT_KEY_ALIASES`
+这是 `_CONTEXT_KEY_ALIASES` 的真正替代方案。
 
-### 根因
+## 7.1 条件依赖的不是“业务 payload”，而是“上游节点 result”
 
-- 缺少全局 canonical context schema
-- Agent 响应字段名不统一
-- Intent 没有正式声明输出上下文字段
+例如条件：
 
-### 改造
+- `balance > 20000`
 
-- 新增 `ContextSchemaRegistry`
-- 每个 `IntentSpec.response.context_outputs` 必须映射到 canonical keys
-- Graph runtime 只认 canonical key，不认原始 payload 字段名
+真实含义是：
 
-### 改造后
+- 等待上游余额查询节点 `ishandover=true`
+- 读取该节点 `result.balance`
+- 判断是否大于 `20000`
 
-运行时不再需要：
+也就是说：
+
+- 条件依赖的是“某个上游 intent 已经产出的标准化结果”
+- 不是依赖 Planner 临时猜出来的上下文字段
+- 也不是依赖 Router 从历史 payload 里二次推理出来的字段
+
+不是：
+
+- Router 去 agent payload 里猜 `available_balance`
+- 或 `remaining_balance`
+- 或 `left_balance`
+
+## 7.2 为什么 `_CONTEXT_KEY_ALIASES` 会出现
+
+因为当前系统里没有把这件事前置建模：
+
+- graph 条件写的字段
+- agent 返回给 Router 的结果字段
+- intent 注册时声明的输出字段
+
+三者没有统一。
+
+所以运行时才被迫写：
 
 - `_CONTEXT_KEY_ALIASES`
 - `_DEFAULT_INTENT_OUTPUT_KEYS`
 
-## 9.2 `if context_key == "balance"`
+## 7.3 正确解法
 
-### 根因
+### 注册阶段
 
-- 隐含前置节点的展示文案来自运行时猜测
+每个 intent 必须声明自己的 `graph.result_schema`
 
-### 改造
+例如：
 
-- 新增 `ContextProviderSpec`
-- 由 factory 编译得到“哪个 intent 可作为哪个 context key 的 provider”
-- provider 的默认 title 从 intent spec 或 graph profile 中取
-
-### 改造后
-
-运行时不再写：
-
-```python
-if context_key == "balance":
-    title = "查询账户余额"
+```json
+"graph": {
+  "result_schema": {
+    "balance": { "value_type": "number" }
+  }
+}
 ```
 
-## 9.3 `_cancel_url()`
+### agent 阶段
 
-### 根因
+agent 返回的 `result` 必须满足该 schema
 
-- 执行契约缺失显式 cancel 地址
+例如：
 
-### 改造
+```json
+{
+  "ishandover": true,
+  "message": "查询成功",
+  "slot_updates": {},
+  "result": {
+    "balance": 8000
+  }
+}
+```
 
-- `IntentSpec.execution.cancel_url` 必填
-- `Task` 在创建时带入 `cancel_url`
-- `StreamingAgentClient.cancel()` 只用显式地址
+### graph runtime 阶段
 
-## 9.4 推荐上下文字符串前缀
+graph 条件只允许引用注册过的结果字段：
 
-### 根因
+- `result.balance`
+- `result.due_amount`
+- `result.exchanged_amount`
 
-- Planner 缺少正式上下文对象
+这样就不再需要 runtime alias。
 
-### 改造
+## 7.4 对 legacy agent 的兼容
 
-- recommendation/proactive context 进入 `PlannerContext`
-- prompt serializer 结构化输出 JSON
+如果当前某些 agent 还不能立刻按统一 envelope 返回，那么兼容逻辑只能放在：
 
-### 改造后
+- agent 自己的 adapter
+- 或 router 的 dispatch adapter 边界层
 
-运行时不再依赖：
+不能继续往 graph runtime 里塞业务 alias 补丁。
 
-- `[FRONTEND_RECOMMENDATION_CONTEXT]`
-- `[PROACTIVE_RECOMMENDATION_SELECTION]`
+也就是说：
+
+- 兼容可以有
+- 但兼容层必须在 I/O 边界
+- 不能污染 graph 核心
 
 ---
 
-## 10. GraphRouterOrchestrator 的拆分蓝图
+## 8. 轻量 `IntentNodeFactory` 的职责
 
-建议最终不再保留一个 1933 行的 orchestrator。
+这里明确收缩职责，不再做重型编译器。
 
-可以拆成下面这些主类：
+`IntentNodeFactory` 只负责：
 
-### `ConversationApplicationService`
+1. 根据 `intent_code` 从 Router catalog 找到 `IntentCatalogEntry`
+2. 把 `PlannedNodeDraft` 节点化为 `ExecutableGraphNode`
+3. 为节点绑定：
+   - `slot_schema`
+   - `dispatch_profile`
+   - `result_schema`
+4. 初始化空的 `result`
+
+它不负责：
+
+- 业务数据加载
+- 领域对象构造
+- agent payload 解释
+- graph condition 评估
+
+一句话：
+
+**它只是把“识别出来的意图草稿”变成“可被 graph 调度的轻量节点”。**
+
+---
+
+## 9. GraphRouterOrchestrator 的拆分蓝图
+
+当前问题不只是类太大，而是职责错位。
+
+建议拆成以下模块。
+
+## 9.1 `ConversationApplicationService`
 
 职责：
 
-- 处理用户消息和动作命令
-- 协调 session、planning、execution、presentation
+- 接收用户消息和动作命令
+- 协调 planning / execution / session / presentation
 
-### `GraphPlanningService`
+它是薄应用服务。
+
+## 9.2 `IntentCatalogLoader`
 
 职责：
 
-- 调 recognizer / graph_builder / planner
-- 返回 `PlannedGraphResult`
+- 从数据库加载 `IntentRoutingSpec`
+- 刷新 Router 本地 catalog cache
 
-### `ExecutionGraphEngine`
+Router 知道有哪些 intent，只能通过它。
+
+## 9.3 `GraphPlanningService`
+
+职责：
+
+- 调 recognizer
+- 调 planner / graph_builder
+- 产出 `PlannedGraphDraft`
+
+## 9.4 `IntentNodeFactory`
+
+职责：
+
+- 把 graph draft 中的每个 `PlannedNodeDraft` 节点化
+
+## 9.5 `ExecutionGraphEngine`
 
 职责：
 
 - 纯图状态推进
-- 条件评估
-- ready node 决策
+- 判断哪个节点 ready
+- 判断条件是否成立
+- 计算 graph status
 
-### `NodeTaskFactory`
+这部分必须是纯执行引擎，不涉及：
 
-职责：
+- HTTP
+- prompt
+- session persistence
 
-- 把 GraphNode + CompiledIntent 变成 Task
-
-### `NodeExecutionService`
-
-职责：
-
-- 调 Agent
-- 处理 chunk
-- 合并 slot updates / context outputs
-
-### `PlannerContextBuilder`
+## 9.6 `NodeDispatchService`
 
 职责：
 
-- 统一构造 LLM 输入上下文
+- 根据 `dispatch_profile.run_url` 调 agent
+- 接收 `AgentInvocationResponse`
+- 更新：
+  - `slot_memory`
+  - `result`
+  - node 状态
 
-### `RouterEventPublisher`
+## 9.7 `RouterEventPublisher`
 
 职责：
 
-- 发 session/graph/node 事件
-- 构建前端 snapshot
+- 发布 session/node/graph 事件
+- 构造前端 snapshot
 
 ---
 
-## 11. 推荐的迁移步骤
+## 10. 无状态要求下的状态存储重构
 
-## Phase 1：先重构目录，不改行为
+如果服务必须无状态，那么当前 in-memory session store 必须被替换。
+
+## 10.1 Router 需要外置的状态
+
+Router 运行时需要外置存储：
+
+- session
+- graph
+- node
+- active task
+- pending graph
+- waiting ack 状态
+
+推荐：
+
+- Redis：做热态运行状态
+- Postgres：做持久化审计和恢复
+
+## 10.2 Admin 持有的状态
+
+Admin 持有：
+
+- `IntentRoutingSpec`
+- 发布版本
+- 激活状态
+
+## 10.3 Agent 持有的状态
+
+每个 agent 自己持有：
+
+- 自己的领域业务数据
+- 执行记录
+- 风控/订单/账务相关信息
+
+Router 不接管。
+
+---
+
+## 11. 如何消除当前硬编码
+
+## 11.1 `_CONTEXT_KEY_ALIASES`
+
+### 根因
+
+- graph 条件字段没有和意图输出字段在注册阶段对齐
+- agent 返回结果字段没有统一进入 `result`
+
+### 改造
+
+- 注册 `graph.result_schema`
+- agent 统一返回 `result`
+- graph 条件只引用已注册的 result 字段
+
+### 改造后
+
+删除：
+
+- `_CONTEXT_KEY_ALIASES`
+- `_DEFAULT_INTENT_OUTPUT_KEYS`
+
+## 11.2 `if context_key == "balance"`
+
+### 根因
+
+- runtime 在猜“哪个 intent 是某个条件字段的 provider”
+
+### 改造
+
+- 在 intent 路由元数据中明确声明 `result_schema`
+- planner 只能挂到合法 provider 节点
+- 如果需要隐含前置节点，provider title 从该 intent 的 metadata 中读取
+
+### 改造后
+
+runtime 不再写金融特定 if 分支。
+
+## 11.3 `_cancel_url()`
+
+### 根因
+
+- dispatch 契约没有显式 `cancel_url`
+
+### 改造
+
+- `dispatch.cancel_url` 明确注册
+- `NodeDispatchService` 只按显式字段调用
+
+## 11.4 recommendation 上下文字符串前缀
+
+### 根因
+
+- PlannerContext 没有正式对象模型
+
+### 改造
+
+- recommendation / proactive selection 全部进入结构化 `PlannerContext`
+- prompt serializer 只负责序列化
+
+---
+
+## 12. 迁移步骤
+
+## Phase 1：重构目录边界，不改行为
 
 目标：
 
-- 把 `backend/src` 平铺结构迁到 `services/` + `packages/`
-- 保持 import 兼容
-- 不改变业务行为
+- 从 `backend/src` 平铺结构迁到 `services/ + contracts/`
+- 保持现有 API 行为不变
 
 产出：
 
 - `admin-service`
 - `router-service`
-- `agent-runtime`
 - `agents/*`
-- `packages/*`
+- `contracts/*`
 
-## Phase 2：引入 `IntentSpec` 与 `IntentFactory`
+## Phase 2：引入 `IntentRoutingSpec`
 
 目标：
 
-- 扩展 admin 注册模型
-- 保持旧字段兼容
-- 用 factory 生成 `CompiledIntent`
+- admin 注册模型升级
+- 数据库存储 Router 可消费的最小路由元数据
+
+关键新增字段：
+
+- `graph.result_schema`
+- `dispatch.run_url`
+- `dispatch.cancel_url`
+
+## Phase 3：Router 通过数据库加载 catalog
+
+目标：
+
+- Router 不再从代码知道 intent
+- 启动和热刷新都只通过数据库读取
 
 产出：
 
-- `IntentSpec v2.1`
-- `CompiledIntent`
-- admin 侧 spec 校验器
+- `IntentCatalogLoader`
+- `Router catalog cache`
 
-## Phase 3：抽离 Execution Engine
+## Phase 4：落轻量 `IntentNodeFactory`
 
 目标：
 
-- 将图状态机从 orchestrator 中移出
-- 形成纯执行模块
+- planner 输出从 draft node 变成 executable node
+- 不引入重型业务编译器
+
+## Phase 5：统一 agent envelope
+
+目标：
+
+- Router -> Agent 统一输入协议
+- Agent -> Router 统一返回：
+  - `ishandover`
+  - `message`
+  - `slot_updates`
+  - `result`
+
+## Phase 6：抽离 ExecutionGraphEngine
+
+目标：
+
+- 将纯图执行逻辑从 orchestrator 中剥离
 
 首批迁移函数：
 
@@ -805,24 +912,16 @@ if context_key == "balance":
 - `_graph_status`
 - `_next_ready_node`
 
-## Phase 4：抽离 Planner Context
+## Phase 7：外置 Router 状态
 
 目标：
 
-- recommendation/free dialog/proactive 三类上下文结构化
-- 去掉字符串前缀协议
+- 去掉内存 session store
+- 让 Router 成为真正无状态服务
 
-## Phase 5：重建 Agent 契约
+## Phase 8：删除运行时补丁
 
-目标：
-
-- request/response 标准化
-- `cancel_url` 显式化
-- `context_outputs` 标准化
-
-## Phase 6：删掉运行时业务补丁
-
-在 Phase 2-5 完成后，再删除：
+在前述步骤完成后，删除：
 
 - `_CONTEXT_KEY_ALIASES`
 - `_DEFAULT_INTENT_OUTPUT_KEYS`
@@ -831,49 +930,34 @@ if context_key == "balance":
 
 ---
 
-## 12. 验收标准
+## 13. 验收标准
 
 改造完成后，至少满足：
 
 1. 新增一个 intent，不改 Router 核心执行代码。
-2. 新增一个条件依赖 intent，不改 graph runtime，只改 spec。
-3. Agent 返回字段改名，只改 `response.context_outputs` 映射。
-4. 推荐模式和普通模式用同一套 `PlannerContext`，不再靠字符串前缀混入。
-5. Router 的纯执行状态机逻辑不再出现在应用层 orchestrator 中。
-6. `GraphRouterOrchestrator` 若保留，应缩减成薄 facade，不超过 300-500 行。
-7. 所有 deployable service 都有独立目录和独立入口。
-
----
-
-## 13. 建议先做的三件事
-
-如果只做最重要、最能止血的三件事，建议顺序是：
-
-1. 先落 `IntentSpec` 扩展字段：
-   - `execution.cancel_url`
-   - `graph.produces_context`
-   - `response.context_outputs`
-   - `slots[].share_scope`
-
-2. 先抽 `ExecutionGraphEngine`
-   - 把图状态推进从 orchestrator 中剥离
-
-3. 再重构 PlannerContext
-   - 去掉 recommendation/proactive 的字符串前缀协议
-
-这样能最快减少硬编码继续扩散。
+2. 新增一个条件依赖 intent，不改 graph runtime，只改数据库中的 routing spec。
+3. agent 内部业务字段怎么命名，Router 不关心；Router 只消费 `result`。
+4. graph 条件只依赖上游节点 `result` 中已注册的字段。
+5. Router 与 agent 的边界清晰为：
+   - Router 传输入和槽位
+   - Agent 回 `ishandover + slot_updates + result`
+6. Router 不再依赖任何其他服务的内部代码。
+7. Router 状态外置，成为无状态服务。
+8. `GraphRouterOrchestrator` 被拆成薄应用服务，不再承载纯执行引擎和展示逻辑。
 
 ---
 
 ## 14. 最终判断
 
-这次 fix 分支不应再继续用“修一个现象、补一个 patch”的方式推进。
+这次 fix 分支的正确方向，不是继续给 Router 塞补丁，而是：
 
-正确方向是：
+1. 先把服务边界做对
+2. 再把数据库中的路由元数据做对
+3. 再把 Router-Agent 交互 envelope 做对
+4. 最后拆 Router 内部代码
 
-- 先重构服务目录边界
-- 再重构 intent 注册契约
-- 再通过 intent factory 编译成运行时对象
-- 最后把 router 拆成真正可维护的编排、规划、执行、展示分层
+一句话总结：
 
-只有这样，后续再加 100 个 intent，Router 核心代码才不会继续失控膨胀。
+**Agent 负责把一个意图做完整，Router 负责把多个意图组织起来。**
+
+只要这个边界不再被破坏，后续即使新增大量 intent 和 agent 服务，Router 核心代码也不会继续失控膨胀。
