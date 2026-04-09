@@ -12,6 +12,10 @@
 设计：引导式选择只是 `/chat/v2` 的一条可选入口，不替代自由对话。当前端已经拿到“推荐事项 + 完整要素”时，应允许绕过首轮自由文本识别，直接把结构化意图送进执行图；但如果用户又输入了修改说明，后续 agent 仍要支持多轮补充。
 实现：后端 `sessions_v2` 与 `v2_orchestrator` 已支持 `guidedSelection` payload；`/chat/v2` 新增独立“可选引导式选择”面板，默认提供 4 个推荐事项卡片，可选择、填写关键槽位并附加补充说明。若补充说明为空且槽位已齐，agent 直接执行；若有修改文本或槽位不全，则继续走 agent 内多轮补充。前端构建与后端回归已通过。
 
+### [x] T35 · 主动推荐执行分流设计补充
+设计：用户进一步澄清后，“主动推荐”不应等价于 `guidedSelection` 直达执行图。正确目标是：前端先把带完整要素和执行报文的推荐事项展示给用户；Router 仍然用 LLM 识别用户通过自然语言选中了哪些推荐项。如果用户没有修改，则 Router 不建 graph，而是把原始执行报文原封不动交给执行管理服务；如果用户有修改、补充、条件或顺序要求，则 Router 建 graph，再由 intent agent 多轮确认，最后交给执行管理服务和执行服务。
+实现：新增 `docs/proactive-recommendation-execution-design.md`，把目标架构、当前 demo 与目标架构的差距、Router 新增路由模式、执行管理服务职责、intent agent / executor 职责拆分，以及分阶段开发顺序写清楚；同时更新 `docs/graph-runtime-current-state-and-roadmap.md`，把当前“推荐上下文只是语义入口、尚未完成执行分流”的现状明确记录下来。
+
 ## 2026-04-07 V2 Graph Runtime
 
 ### [x] T21 · V2 动态执行图运行时

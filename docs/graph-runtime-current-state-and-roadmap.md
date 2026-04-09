@@ -20,6 +20,10 @@
 
 - `docs/v2.1-unified-graph-builder-design.md`
 
+如果你要看“主动推荐事项 + 原样执行 / 修改后进 graph + 执行管理服务”的专项设计，直接看：
+
+- `docs/proactive-recommendation-execution-design.md`
+
 ## 2. 当前目标边界
 
 当前 V2 graph runtime 的定位不是“全自动通用工作流引擎”，而是：
@@ -254,15 +258,28 @@ graph 的节点、边、顺序、条件都来自：
 - `cancel_graph`
 - `cancel_node`
 
-此外，`POST /api/router/v2/sessions/{session_id}/messages` 现在还支持可选的 `guidedSelection` 结构化负载：
+此外，`POST /api/router/v2/sessions/{session_id}/messages` 现在还支持两类与推荐场景相关的可选负载：
+
+1. `recommendationContext`
+2. `guidedSelection`
+
+其中：
+
+- `recommendationContext` 的定位是“把前端刚展示给用户的推荐候选项作为语义上下文传给 LLM”，仍然要走正常意图识别
+- `guidedSelection` 是更底层的结构化直达能力，当前仍保留在后端里，但它不再是主动推荐场景的最终目标形态
+
+`guidedSelection` 的结构目前是：
 
 - `selectedIntents[]`
 - 每个 selected intent 的 `intentCode`
 - `title`
 - `sourceFragment`
 - `slotMemory`
+当前更贴合产品方向的是：
 
-这条链路的定位不是替代自由输入，而是为“推荐事项已知、关键要素也已知”的场景提供一条可直达 graph 的入口。
+- 前端把推荐候选项放进对话区
+- 用户继续用自然语言表达“第一个”“第一个和第三个都要”“第二个改成给弟弟转500”
+- Router 结合 `recommendationContext` 做正常意图识别
 
 ### 6.2 前端能力
 
@@ -284,14 +301,13 @@ graph 的节点、边、顺序、条件都来自：
 
 但“跳过原因解释”仍然偏工程态，还不够面向普通用户。
 
-当前前端另外新增了一条可选的“引导式选择”入口：
+当前前端已经把“推荐事项”收敛成：
 
-- 默认保留自由对话输入为主入口
-- 右侧可勾选推荐事项卡片
-- 可以直接填写结构化槽位
-- 可以额外附加一段“补充或修改说明”
-- 当说明为空且所选事项要素齐全时，节点可直接执行
-- 当说明非空或要素不全时，仍然回到 agent 的多轮补充语义
+- 由按钮触发的一条对话内推荐消息
+- 推荐卡片展示在聊天区，而不是侧栏选择器
+- 用户仍然通过自然语言来选择、组合、修改这些推荐项
+- 前端只负责把推荐上下文随消息一起传给 Router
+- Router 仍然要做意图识别，而不是跳过识别直接执行
 
 ## 7. 当前已经完成的关键治理
 
@@ -341,19 +357,24 @@ graph 的节点、边、顺序、条件都来自：
 
 这说明当前 graph runtime 已经不只是“照着 LLM 输出执行”，而是开始对 graph 做语义可执行性修复。
 
-### 7.7 引导式选择与自由对话双入口已经并存
+### 7.7 推荐上下文与自由对话双入口已经并存
 
 当前 V2 已经不是单一入口：
 
 - `free dialog`
-- `guided selection`
+- `recommendation context`
 
 二者共享同一个 graph runtime、同一套 node/edge 状态机和同一套 agent 调度协议。
 
 区别只是首轮建图来源不同：
 
 - 自由对话由 LLM 识别/建图
-- 引导式选择由前端明确给出 selected intents 与结构化 slots
+- 推荐上下文由前端提供候选事项摘要，用户仍然用自然语言表达真正想要哪些事项
+
+但这里要明确：
+
+- 当前仓库只完成了“推荐语义入口”
+- 还没有完成“原样接受推荐时，直接交给执行管理服务”的后半段执行分流
 
 ## 8. 当前真实限制
 
@@ -420,7 +441,7 @@ graph 的节点、边、顺序、条件都来自：
 - 多个互不依赖的自动化节点不会并发跑满
 - 前台交互式 graph 仍然偏串行
 
-### 8.6 当前引导式推荐仍然是静态前端配置
+### 8.6 当前推荐仍然是静态前端配置
 
 当前 `/chat/v2` 里的推荐事项面板只是一个可选入口实验，推荐卡片本身仍然是前端静态配置，而不是：
 
@@ -428,7 +449,26 @@ graph 的节点、边、顺序、条件都来自：
 - 根据会话上下文动态排序
 - 根据注册表自动下发
 
-因此它现在验证的是“结构化入口 + graph runtime”的链路是否成立，而不是“推荐系统”本身。
+因此它现在验证的是“推荐上下文进入 Router 识别”的链路是否成立，而不是“推荐系统”本身。
+
+### 8.7 当前还没有执行管理服务 / 执行服务分层
+
+这是当前实现与目标需求之间最重要的差距。
+
+当前 demo 里：
+
+- intent agent 在完成要素确认后，会直接模拟业务成功
+
+但目标架构应该是：
+
+- Router 决定走 `direct_execute` 还是 `interactive_graph`
+- Intent Agent 只负责确认与补槽
+- Execution Manager 统一承接执行请求
+- 各执行服务完成真正业务调用
+
+这部分的专项设计已单独写在：
+
+- `docs/proactive-recommendation-execution-design.md`
 
 ## 9. 未来规划设计
 
