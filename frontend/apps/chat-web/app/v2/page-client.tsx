@@ -443,6 +443,15 @@ function mergeSnapshotFromEvent(
 
   const payload = event.payload ?? {};
   const next: BackendSnapshot = { ...previous };
+  const payloadGraph = payload.graph;
+  const knownPendingGraphId = previous.pending_graph?.graph_id ?? null;
+  const knownCurrentGraphId = previous.current_graph?.graph_id ?? null;
+  const shouldAcceptGraphPayload =
+    payloadGraph === undefined
+      ? false
+      : payloadGraph.graph_id === knownPendingGraphId ||
+        payloadGraph.graph_id === knownCurrentGraphId ||
+        (knownPendingGraphId === null && knownCurrentGraphId === null);
 
   if (payload.candidate_intents) {
     next.candidate_intents = payload.candidate_intents;
@@ -456,12 +465,14 @@ function mergeSnapshotFromEvent(
 
   if (eventName === "graph.proposed" || eventName === "graph.waiting_confirmation") {
     next.pending_graph = payload.graph ?? payload.pending_graph ?? next.pending_graph;
+    next.current_graph = null;
+    next.active_node_id = null;
     return next;
   }
 
   if (eventName === "graph.confirmed") {
     next.pending_graph = null;
-    if (payload.graph) {
+    if (payload.graph && shouldAcceptGraphPayload) {
       next.current_graph = payload.graph;
     }
     return next;
@@ -471,7 +482,7 @@ function mergeSnapshotFromEvent(
     if (previous.pending_graph && previous.pending_graph.graph_id === event.task_id) {
       next.pending_graph = null;
     }
-    if (payload.graph) {
+    if (payload.graph && shouldAcceptGraphPayload) {
       next.current_graph = payload.graph;
     }
     return next;
@@ -480,7 +491,7 @@ function mergeSnapshotFromEvent(
   if (payload.pending_graph) {
     next.pending_graph = payload.pending_graph;
   }
-  if (payload.graph) {
+  if (payload.graph && shouldAcceptGraphPayload) {
     next.current_graph = payload.graph;
   }
 
@@ -779,7 +790,7 @@ export default function ChatV2PageClient() {
 
   const currentGraph = snapshot?.current_graph ?? null;
   const pendingGraph = snapshot?.pending_graph ?? null;
-  const displayedGraph = currentGraph ?? pendingGraph;
+  const displayedGraph = pendingGraph ?? currentGraph;
   const activeNode =
     currentGraph?.nodes.find((node) => node.node_id === snapshot?.active_node_id) ??
     displayedGraph?.nodes.find((node) => node.node_id === snapshot?.active_node_id) ??

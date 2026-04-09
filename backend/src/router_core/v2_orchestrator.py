@@ -62,6 +62,13 @@ from router_core.v2_recommendation_router import (
 
 logger = logging.getLogger(__name__)
 
+PLANNING_RECENT_MESSAGE_PREFIXES = (
+    "user:",
+    "[FRONTEND_RECOMMENDATION_CONTEXT]",
+    "[PROACTIVE_RECOMMENDATION_CONTEXT]",
+    "[PROACTIVE_RECOMMENDATION_SELECTION]",
+)
+
 TERMINAL_NODE_STATUSES = {
     GraphNodeStatus.COMPLETED,
     GraphNodeStatus.FAILED,
@@ -363,6 +370,7 @@ class GraphRouterOrchestrator:
         else:
             recent_messages = recent_messages or []
             long_term_memory = long_term_memory or []
+        recent_messages = self._sanitize_recent_messages_for_planning(recent_messages)
         recent_messages = self._augment_recent_messages_with_recommendations(
             recent_messages,
             recommendation_context=recommendation_context,
@@ -1543,6 +1551,15 @@ class GraphRouterOrchestrator:
     def _build_session_context(self, session: GraphSessionState, task: Task | None = None) -> dict[str, Any]:
         long_term_memory = self.session_store.long_term_memory.recall(session.cust_id)
         return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
+
+    def _sanitize_recent_messages_for_planning(self, recent_messages: list[str]) -> list[str]:
+        if not recent_messages:
+            return []
+        return [
+            entry
+            for entry in recent_messages
+            if any(entry.startswith(prefix) for prefix in PLANNING_RECENT_MESSAGE_PREFIXES)
+        ]
 
     def _fallback_intent(self) -> IntentDefinition | None:
         getter = getattr(self.intent_catalog, "get_fallback_intent", None)

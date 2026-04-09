@@ -569,6 +569,45 @@ class _SingleNodeConfirmGraphBuilder:
         )()
 
 
+class _RecentMessagesRecordingGraphBuilder:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, long_term_memory, on_delta
+        self.calls.append(list(recent_messages))
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="识别到 1 个事项，直接执行",
+            status=GraphStatus.DRAFT,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="pay_gas_bill",
+                title="缴纳天然气费",
+                confidence=0.95,
+                position=0,
+                source_fragment="给燃气户号88001234交88元",
+                slot_memory={
+                    "gas_account_number": "88001234",
+                    "amount": "88",
+                },
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": recognition
+                or RecognitionResult(
+                    primary=[IntentMatch(intent_code="pay_gas_bill", confidence=0.95, reason="fixed")],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
+
+
 class _HistoryPrefillGraphBuilder:
     async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
         del intents, recent_messages, long_term_memory, recognition, on_delta
@@ -904,6 +943,44 @@ def test_v2_single_node_waiting_confirmation_from_unified_builder_stays_pending(
             assert snapshot["pending_graph"]["status"] == "waiting_confirmation"
             assert len(snapshot["pending_graph"]["nodes"]) == 1
             assert snapshot["current_graph"] is None
+
+    asyncio.run(run())
+
+
+def test_v2_new_graph_planning_ignores_assistant_execution_messages_in_recent_context() -> None:
+    builder = _RecentMessagesRecordingGraphBuilder()
+
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_ExplodingRecognizer(),
+            graph_builder=builder,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我处理一下这个事项"},
+            )
+            assert first_turn.status_code == 200
+            first_snapshot = first_turn.json()["snapshot"]
+            assert any("已为燃气户号 88001234 缴费 88 元" in message["content"] for message in first_snapshot["messages"])
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我处理一下这个事项"},
+            )
+            assert second_turn.status_code == 200
+
+            assert len(builder.calls) == 2
+            assert builder.calls[0] == ["user: 帮我处理一下这个事项"]
+            assert builder.calls[1] == [
+                "user: 帮我处理一下这个事项",
+                "user: 帮我处理一下这个事项",
+            ]
+            assert all(not entry.startswith("assistant:") for entry in builder.calls[1])
 
     asyncio.run(run())
 
