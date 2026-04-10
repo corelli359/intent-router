@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytest.skip("Legacy V1 router API coverage retired on dynamic graph runtime branch", allow_module_level=True)
+
 import asyncio
 import json
 from datetime import timedelta

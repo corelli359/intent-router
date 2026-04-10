@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from admin_api.dependencies import get_settings
 from admin_api.routes.intents import router as admin_router
 from router_api.dependencies import build_router_runtime, close_router_runtime, run_intent_catalog_refresh
-from router_api.routes.sessions import router as router_api_router
+from router_api.routes.sessions import router as graph_router_api_router
 
 
 def create_app() -> FastAPI:
@@ -56,7 +56,8 @@ def create_app() -> FastAPI:
         return {"status": "ok", "service": "admin-api", "app_name": settings.app_name}
 
     app.include_router(admin_router, prefix="/api")
-    app.include_router(router_api_router)
+    app.include_router(graph_router_api_router, prefix="/api/router")
+    app.include_router(graph_router_api_router, prefix="/api/router/v2")
     return app
 
 

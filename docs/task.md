@@ -20,6 +20,18 @@
 设计：自动测试要补齐“条件金额与执行金额分离”“推荐默认值与用户修改值优先级”“同 session 重复发送同一句复杂消息仍保持相同 graph 形态”三类高价值回归。
 实现：已补 `test_v2_graph_builder.py` 的条件金额/执行金额分离断言、`test_router_api_v2.py` 的 repeated-run stability 回归、`test_prompt_templates.py` 的 prompt 约束断言，以及 `test_v2_graph_runtime.py` 的 runtime engine 单测；同时补跑了 admin/repository/runtime 装配回归。
 
+### [x] T41 · `v2_orchestrator` 第二刀拆分为 `v2_presentation`
+设计：第一刀已经把纯图状态推进抽到 `v2_graph_runtime`；第二刀要把 graph/node/session 展示组装、recognition/graph_builder/node runtime 事件构造也移出 orchestrator，避免一个类同时承担应用服务和前端 payload 拼装职责。
+实现：新增 `router_core/v2_presentation.py`，落地 `GraphSnapshotPresenter` 与 `GraphEventPublisher`；`v2_orchestrator.py` 已把 graph message、graph payload、node payload、pending graph publish、graph cancelled、recognition/graph_builder delta、node runtime event 等职责委托给该模块；同时新增 `test_v2_presentation.py` 回归。
+
+### [x] T42 · Router 主入口收敛到单一 V2 Runtime
+设计：既然 fix 分支已经不保留 V1 为目标架构，那么 `/api/router` 就应该成为 canonical V2 入口，`/api/router/v2` 只保留兼容别名，前端 `/chat` 也应直接走新 runtime，而不是继续双栈运行两套 orchestrator。
+实现：`router_api/dependencies.py` 已收敛为单一 `GraphRouterOrchestrator` + 单一 `EventBroker` runtime；当前 canonical graph route 已收敛到 `router_api/routes/sessions.py`，由 `router_api/app.py` 与平台根 `app.py` 分别挂载到 `/api/router/*` 和 `/api/router/v2/*`；`frontend/apps/chat-web/app/page.tsx` 直接复用 V2 页面，`page-client.tsx` 默认改打 `/api/router`；本轮新增 `/api/router` 与 `/api/router/v2` 共享同一 session store 的 API 回归，并补跑 `test_v2_presentation.py`、`test_v2_graph_runtime.py`、`test_v2_graph_builder.py`、`test_router_api_v2.py`、`test_prompt_templates.py`、`test_admin_api_intents.py`、`test_sql_intent_repository.py`、`test_router_runtime.py`、`test_platform_app.py`，结果为 `48 passed`。
+
+### [x] T43 · Fix Branch 完整前后端回归
+设计：这轮改造不能只做增量单测，需要把当前 backend 全量测试、保留的历史回归，以及 chat-web 的类型检查和生产构建都跑完，确认 canonical `/api/router` 与 `/chat` 主入口已经可用。
+实现：已执行 `./.venv/bin/python -m pytest backend/tests -q -rs`，结果为 `103 passed, 7 skipped`；其中 3 个 skip 为显式退役的 V1 测试模块，另外 4 个 skip 为需真实外部环境变量才启用的集成/真 LLM 冒烟；前端已在 `frontend/apps/chat-web` 执行 `npm install`、`npm run typecheck` 与 `npm run build`，全部通过，`/chat` 与 `/chat/v2` 均完成生产构建。
+
 ## 2026-04-09 Guided Selection 与条件语义补强
 
 ### [x] T33 · V2 隐式条件依赖修复

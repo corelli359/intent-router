@@ -8,8 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from admin_api.dependencies import get_settings
 from router_api.dependencies import build_router_runtime, close_router_runtime, run_intent_catalog_refresh
-from router_api.routes.sessions import router as session_router
-from router_api.routes.sessions_v2 import router as session_router_v2
+from router_api.routes.sessions import router as graph_session_router
 
 
 def create_router_app() -> FastAPI:
@@ -59,8 +58,8 @@ def create_router_app() -> FastAPI:
     async def prefixed_health_v2() -> dict[str, str]:
         return await health()
 
-    app.include_router(session_router)
-    app.include_router(session_router_v2)
+    app.include_router(graph_session_router, prefix="/api/router")
+    app.include_router(graph_session_router, prefix="/api/router/v2")
     return app
 
 

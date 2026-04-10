@@ -854,6 +854,32 @@ Router 知道有哪些 intent，只能通过它。
 
 ---
 
+## 9.8 当前 fix 分支已落地的两刀
+
+这不是目标态的全部拆分，但已经形成了明确方向：
+
+- 第一刀已落地：`ExecutionGraphEngine`
+  - 当前实现为 [v2_graph_runtime.py](/root/intent-router/backend/src/router_core/v2_graph_runtime.py)
+  - 已承接 graph/node ready-block-skip 判定、条件匹配、graph status 归约、waiting/ready node 选择
+- 第二刀已落地：`GraphSnapshotPresenter + GraphEventPublisher`
+  - 当前实现为 [v2_presentation.py](/root/intent-router/backend/src/router_core/v2_presentation.py)
+  - 已承接 graph/node/session payload 组装、graph terminal message、recognition / graph_builder / node runtime 事件发布
+- 当前的 [v2_orchestrator.py](/root/intent-router/backend/src/router_core/v2_orchestrator.py) 仍然偏大，但已经从“状态推进 + 展示拼装 + 事件格式化 + API surface 假设”收缩为：
+  - 会话应用服务
+  - planning / execution 协调
+  - pending graph / waiting node 转向
+  - history prefill 与 recommendation 路由
+
+这意味着后续继续拆分时，应优先落在：
+
+- `GraphPlanningService`
+- `NodeDispatchService`
+- `SessionRepository / SessionStore adapter`
+
+而不是再把展示逻辑塞回 orchestrator。
+
+---
+
 ## 10. 无状态要求下的状态存储重构
 
 如果服务必须无状态，那么当前 in-memory session store 必须被替换。
@@ -1027,6 +1053,28 @@ runtime 不再写金融特定 if 分支。
 - `_condition_matches_from_condition`
 - `_graph_status`
 - `_next_ready_node`
+
+当前状态：
+
+- 已完成，并已落地为 `v2_graph_runtime.py`
+- 同时已追加第二刀 `v2_presentation.py`
+
+## Phase 6.5：收敛运行面为单一 V2 API Surface
+
+目标：
+
+- `/api/router` 成为 canonical V2 入口
+- `/api/router/v2` 仅保留兼容别名
+- `/chat` 直接复用 V2 前端
+- Router runtime 只构造一套 `GraphRouterOrchestrator`
+
+当前状态：
+
+- 已完成当前分支内的服务入口收敛
+- `router_api/routes/sessions.py` 已成为当前 canonical graph route，实现同一套图运行时协议
+- `router_api/app.py` 与平台根 `app.py` 将该路由同时挂载到 `/api/router/*` 与 `/api/router/v2/*`
+- `router_api/dependencies.py` 已收敛为单一 orchestrator / broker runtime
+- legacy V1 API 测试已显式退役，不再作为主运行面
 
 ## Phase 7：外置 Router 状态
 

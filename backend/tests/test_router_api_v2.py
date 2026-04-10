@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 
 from router_api.app import create_router_app
-from router_api.dependencies import get_event_broker_v2, get_orchestrator_v2
+from router_api.dependencies import (
+    get_event_broker,
+    get_event_broker_v2,
+    get_orchestrator,
+    get_orchestrator_v2,
+)
 from router_api.sse.broker import EventBroker
 
 
@@ -530,7 +535,9 @@ def _test_v2_app(
         agent_client=MockStreamingAgentClient(),
     )
     app = create_router_app()
+    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
     app.dependency_overrides[get_orchestrator_v2] = lambda: orchestrator
+    app.dependency_overrides[get_event_broker] = lambda: broker
     app.dependency_overrides[get_event_broker_v2] = lambda: broker
     return app, orchestrator
 
@@ -883,6 +890,30 @@ class _HistoryConditionalGraphBuilder:
                 "graph": graph,
             },
         )()
+
+
+def test_v2_main_prefix_alias_matches_primary_graph_runtime() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "先查余额，再给张三转账 200 元，卡号 6222020100049999999，尾号 1234"},
+            )
+            assert response.status_code == 200
+            pending_graph = response.json()["snapshot"]["pending_graph"]
+            assert pending_graph is not None
+            assert pending_graph["status"] == "waiting_confirmation"
+
+            alias_response = await client.get(f"/api/router/v2/sessions/{session_id}")
+            assert alias_response.status_code == 200
+            assert alias_response.json()["pending_graph"]["graph_id"] == pending_graph["graph_id"]
+
+    asyncio.run(run())
 
 
 def test_v2_multi_intent_graph_requires_confirmation_and_runs_sequentially() -> None:

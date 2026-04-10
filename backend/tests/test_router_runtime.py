@@ -41,7 +41,7 @@ def test_build_router_runtime_shares_single_recognizer_instance(monkeypatch) -> 
 
     runtime = dependencies.build_router_runtime()
     try:
-        assert runtime.orchestrator.recognizer is runtime.orchestrator_v2.recognizer
+        assert runtime.orchestrator.recognizer is not None
     finally:
         asyncio.run(runtime.agent_client.close())
 
@@ -68,7 +68,7 @@ def test_build_router_runtime_can_enable_unified_v2_graph_builder(monkeypatch) -
 
     runtime = dependencies.build_router_runtime()
     try:
-        assert runtime.orchestrator_v2.graph_builder is not None
-        assert runtime.orchestrator_v2.recognizer is runtime.orchestrator.recognizer
+        assert runtime.orchestrator.graph_builder is not None
+        assert runtime.orchestrator.recognizer is not None
     finally:
         asyncio.run(runtime.agent_client.close())

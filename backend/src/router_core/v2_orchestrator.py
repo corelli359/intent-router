@@ -48,6 +48,7 @@ from router_core.v2_domain import (
     SlotBindingState,
 )
 from router_core.v2_graph_runtime import GraphRuntimeEngine
+from router_core.v2_presentation import GraphEventPublisher, GraphSnapshotPresenter
 from router_core.v2_graph_semantics import repair_unexecutable_condition_edges
 from router_core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
 from router_core.v2_planner import (
@@ -151,6 +152,8 @@ class GraphRouterOrchestrator:
         context_builder: ContextBuilder | None = None,
         agent_client: AgentClient | None = None,
         runtime_engine: GraphRuntimeEngine | None = None,
+        presenter: GraphSnapshotPresenter | None = None,
+        event_publisher: GraphEventPublisher | None = None,
         config: GraphRouterOrchestratorConfig | None = None,
     ) -> None:
         self.publish_event = publish_event
@@ -164,6 +167,8 @@ class GraphRouterOrchestrator:
         self.context_builder = context_builder or ContextBuilder()
         self.agent_client = agent_client or StreamingAgentClient()
         self.runtime_engine = runtime_engine or GraphRuntimeEngine()
+        self.presenter = presenter or GraphSnapshotPresenter(self.runtime_engine)
+        self.event_publisher = event_publisher or GraphEventPublisher(self.publish_event, self.presenter)
         self.config = config or GraphRouterOrchestratorConfig()
         if self.intent_catalog is None:
             class _FallbackCatalog:
@@ -541,32 +546,12 @@ class GraphRouterOrchestrator:
         emit_events: bool,
     ) -> Any:
         if emit_events:
-            await self._publish(
-                TaskEvent(
-                    event="recognition.started",
-                    task_id="recognition",
-                    session_id=session.session_id,
-                    intent_code="recognition",
-                    status=TaskStatus.RUNNING,
-                    message="开始意图识别",
-                    payload={"cust_id": session.cust_id},
-                )
-            )
+            await self.event_publisher.publish_recognition_started(session)
 
         async def publish_recognition_delta(delta: str) -> None:
             if not emit_events or not delta:
                 return
-            await self._publish(
-                TaskEvent(
-                    event="recognition.delta",
-                    task_id="recognition",
-                    session_id=session.session_id,
-                    intent_code="recognition",
-                    status=TaskStatus.RUNNING,
-                    message=delta,
-                    payload={"cust_id": session.cust_id},
-                )
-            )
+            await self.event_publisher.publish_recognition_delta(session, delta=delta)
 
         recognition = await self.recognizer.recognize(
             message=content,
@@ -576,26 +561,7 @@ class GraphRouterOrchestrator:
             on_delta=publish_recognition_delta if emit_events else None,
         )
         if emit_events:
-            primary_intents = [match.intent_code for match in recognition.primary]
-            await self._publish(
-                TaskEvent(
-                    event="recognition.completed",
-                    task_id="recognition",
-                    session_id=session.session_id,
-                    intent_code="recognition",
-                    status=TaskStatus.COMPLETED,
-                    message=(
-                        f"意图识别完成: {', '.join(primary_intents)}"
-                        if primary_intents
-                        else "意图识别完成: 未命中主意图"
-                    ),
-                    payload={
-                        "cust_id": session.cust_id,
-                        "primary": [match.model_dump() for match in recognition.primary],
-                        "candidates": [match.model_dump() for match in recognition.candidates],
-                    },
-                )
-            )
+            await self.event_publisher.publish_recognition_completed(session, recognition=recognition)
         return recognition
 
     async def _build_graph_from_message(
@@ -609,32 +575,12 @@ class GraphRouterOrchestrator:
         emit_events: bool,
     ) -> GraphBuildResult:
         if emit_events:
-            await self._publish(
-                TaskEvent(
-                    event="graph_builder.started",
-                    task_id="graph_builder",
-                    session_id=session.session_id,
-                    intent_code="graph_builder",
-                    status=TaskStatus.RUNNING,
-                    message="开始统一识别与建图",
-                    payload={"cust_id": session.cust_id},
-                )
-            )
+            await self.event_publisher.publish_graph_builder_started(session)
 
         async def publish_graph_builder_delta(delta: str) -> None:
             if not emit_events or not delta:
                 return
-            await self._publish(
-                TaskEvent(
-                    event="graph_builder.delta",
-                    task_id="graph_builder",
-                    session_id=session.session_id,
-                    intent_code="graph_builder",
-                    status=TaskStatus.RUNNING,
-                    message=delta,
-                    payload={"cust_id": session.cust_id},
-                )
-            )
+            await self.event_publisher.publish_graph_builder_delta(session, delta=delta)
 
         if self.graph_builder is None:
             raise RuntimeError("graph_builder is not configured")
@@ -647,26 +593,7 @@ class GraphRouterOrchestrator:
             on_delta=publish_graph_builder_delta if emit_events else None,
         )
         if emit_events:
-            await self._publish(
-                TaskEvent(
-                    event="graph_builder.completed",
-                    task_id="graph_builder",
-                    session_id=session.session_id,
-                    intent_code="graph_builder",
-                    status=TaskStatus.COMPLETED,
-                    message="统一识别与建图完成",
-                    payload={
-                        "cust_id": session.cust_id,
-                        "primary": [match.model_dump() for match in result.recognition.primary],
-                        "candidates": [match.model_dump() for match in result.recognition.candidates],
-                        "graph": self._graph_payload(
-                            result.graph,
-                            include_actions=result.graph.status == GraphStatus.WAITING_CONFIRMATION,
-                            pending=result.graph.status == GraphStatus.WAITING_CONFIRMATION,
-                        ),
-                    },
-                )
-            )
+            await self.event_publisher.publish_graph_builder_completed(session, result=result)
         return result
 
     def _activate_graph(self, graph: ExecutionGraphState) -> None:
@@ -851,25 +778,16 @@ class GraphRouterOrchestrator:
             TaskStatus.FAILED: "node.failed",
         }.get(chunk.status, "node.message")
 
-        await self._publish(
-            TaskEvent(
-                event=event_name,
-                task_id=node.node_id,
-                session_id=session.session_id,
-                intent_code=node.intent_code,
-                status=chunk.status,
-                message=chunk.content,
-                ishandover=chunk.ishandover,
-                payload=self._normalize_interaction_payload(
-                    {
-                        **dict(chunk.payload),
-                        "cust_id": session.cust_id,
-                        "graph": self._graph_payload(graph),
-                        "node": self._node_payload(node),
-                    },
-                    source="agent",
-                ),
-            )
+        await self.event_publisher.publish_node_runtime_event(
+            session,
+            graph,
+            node,
+            task_status=chunk.status,
+            event=event_name,
+            message=chunk.content,
+            ishandover=chunk.ishandover,
+            payload=dict(chunk.payload),
+            source="agent",
         )
         await self._refresh_graph_state(session, graph)
         await self._emit_graph_progress(session)
@@ -889,17 +807,15 @@ class GraphRouterOrchestrator:
         node.output_payload = dict(payload or {})
         session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
         session.touch()
-        await self._publish(
-            TaskEvent(
-                event="node.failed",
-                task_id=node.node_id,
-                session_id=session.session_id,
-                intent_code=node.intent_code,
-                status=TaskStatus.FAILED,
-                message=message,
-                ishandover=True,
-                payload={"cust_id": session.cust_id, **(payload or {}), "graph": self._graph_payload(graph), "node": self._node_payload(node)},
-            )
+        await self.event_publisher.publish_node_runtime_event(
+            session,
+            graph,
+            node,
+            task_status=TaskStatus.FAILED,
+            event="node.failed",
+            message=message,
+            ishandover=True,
+            payload=payload,
         )
         await self._refresh_graph_state(session, graph)
         await self._emit_graph_progress(session)
@@ -913,16 +829,13 @@ class GraphRouterOrchestrator:
         graph = session.current_graph
         if graph is None:
             return
-        await self._publish(
-            TaskEvent(
-                event="node.resuming",
-                task_id=node.node_id,
-                session_id=session.session_id,
-                intent_code=node.intent_code,
-                status=TaskStatus.RESUMING,
-                message="恢复当前节点执行",
-                payload={"cust_id": session.cust_id, "graph": self._graph_payload(graph), "node": self._node_payload(node)},
-            )
+        await self.event_publisher.publish_node_runtime_event(
+            session,
+            graph,
+            node,
+            task_status=TaskStatus.RESUMING,
+            event="node.resuming",
+            message="恢复当前节点执行",
         )
         await self._run_node(session, graph, node, content)
         await self._drain_graph(session, content)
@@ -1088,87 +1001,26 @@ class GraphRouterOrchestrator:
 
         graph.touch(GraphStatus.CANCELLED)
         graph.actions = []
-        await self._publish(
-            TaskEvent(
-                event="graph.cancelled",
-                task_id=graph.graph_id,
-                session_id=session.session_id,
-                intent_code="graph",
-                status=TaskStatus.CANCELLED,
-                message="已取消执行图",
-                ishandover=True,
-                payload=self._normalize_interaction_payload(
-                    {"cust_id": session.cust_id, "graph": self._graph_payload(graph)},
-                    source="router",
-                ),
-            )
-        )
+        await self.event_publisher.publish_graph_cancelled(session, graph)
         session.pending_graph = None
 
     async def _publish_pending_graph(self, session: GraphSessionState) -> None:
         graph = session.pending_graph
         if graph is None:
             return
-        await self._publish(
-            TaskEvent(
-                event="graph.proposed",
-                task_id=graph.graph_id,
-                session_id=session.session_id,
-                intent_code="graph",
-                status=TaskStatus.WAITING_CONFIRMATION,
-                message="请确认执行图",
-                ishandover=False,
-                payload=self._normalize_interaction_payload(
-                    {
-                        "cust_id": session.cust_id,
-                        "graph": self._graph_payload(graph, include_actions=True, pending=True),
-                        "interaction": self._graph_interaction(graph, pending=True),
-                    },
-                    source="router",
-                ),
-            )
-        )
+        await self.event_publisher.publish_pending_graph(session, graph)
 
     async def _publish_graph_waiting_hint(self, session: GraphSessionState) -> None:
         graph = session.pending_graph
         if graph is None:
             return
-        await self._publish(
-            TaskEvent(
-                event="graph.waiting_confirmation",
-                task_id=graph.graph_id,
-                session_id=session.session_id,
-                intent_code="graph",
-                status=TaskStatus.WAITING_CONFIRMATION,
-                message="当前有待确认的执行图，请先确认或取消",
-                ishandover=False,
-                payload=self._normalize_interaction_payload(
-                    {
-                        "cust_id": session.cust_id,
-                        "graph": self._graph_payload(graph, include_actions=True, pending=True),
-                        "interaction": self._graph_interaction(graph, pending=True),
-                    },
-                    source="router",
-                ),
-            )
-        )
+        await self.event_publisher.publish_graph_waiting_hint(session, graph)
 
     async def _publish_no_match_hint(self, session: GraphSessionState) -> None:
         message = "暂未识别到明确事项，请换一种说法或补充更多上下文。"
         session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
         session.touch()
-        await self._publish(
-            TaskEvent(
-                event="graph.unrecognized",
-                task_id="graph",
-                session_id=session.session_id,
-                intent_code="graph",
-                status=TaskStatus.COMPLETED,
-                message=message,
-                ishandover=True,
-                payload={"cust_id": session.cust_id},
-            )
-        )
+        await self.event_publisher.publish_unrecognized(session, message=message)
         await self._publish_session_state(session, "session.idle")
 
     async def _publish_graph_state(
@@ -1182,32 +1034,13 @@ class GraphRouterOrchestrator:
         graph = session.pending_graph if event in {"graph.proposed", "graph.waiting_confirmation"} else session.current_graph
         if graph is None:
             return
-        resolved_status = status or self._task_status_for_graph(graph.status)
-        await self._publish(
-            TaskEvent(
-                event=event,
-                task_id=graph.graph_id,
-                session_id=session.session_id,
-                intent_code="graph",
-                status=resolved_status,
-                message=message,
-                ishandover=resolved_status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED},
-                payload=self._normalize_interaction_payload(
-                    {
-                        "cust_id": session.cust_id,
-                        "graph": self._graph_payload(
-                            graph,
-                            include_actions=graph.status == GraphStatus.WAITING_CONFIRMATION,
-                            pending=graph is session.pending_graph,
-                        ),
-                        "interaction": self._graph_interaction(
-                            graph,
-                            pending=graph is session.pending_graph,
-                        ),
-                    },
-                    source="router",
-                ),
-            )
+        await self.event_publisher.publish_graph_state(
+            session,
+            graph,
+            event=event,
+            message=message,
+            status=status,
+            pending=graph is session.pending_graph,
         )
 
     async def _publish_node_state(
@@ -1219,40 +1052,17 @@ class GraphRouterOrchestrator:
         event: str,
         message: str,
     ) -> None:
-        await self._publish(
-            TaskEvent(
-                event=event,
-                task_id=node.node_id,
-                session_id=session.session_id,
-                intent_code=node.intent_code,
-                status=task_status,
-                message=message,
-                payload={"cust_id": session.cust_id, "graph": self._graph_payload(graph), "node": self._node_payload(node)},
-            )
+        await self.event_publisher.publish_node_state(
+            session,
+            graph,
+            node,
+            task_status=task_status,
+            event=event,
+            message=message,
         )
 
     async def _publish_session_state(self, session: GraphSessionState, event: str) -> None:
-        payload = {
-            "cust_id": session.cust_id,
-            "active_node_id": session.active_node_id,
-            "candidate_intents": [match.model_dump() for match in session.candidate_intents],
-            "expires_at": session.expires_at.isoformat(),
-        }
-        if session.current_graph is not None:
-            payload["graph"] = self._graph_payload(session.current_graph)
-        if session.pending_graph is not None:
-            payload["pending_graph"] = self._graph_payload(session.pending_graph, include_actions=True, pending=True)
-        await self._publish(
-            TaskEvent(
-                event=event,
-                task_id="session",
-                session_id=session.session_id,
-                intent_code="session",
-                status=TaskStatus.RUNNING if session.active_node_id else TaskStatus.COMPLETED,
-                message="会话状态更新",
-                payload=payload,
-            )
-        )
+        await self.event_publisher.publish_session_state(session, event=event)
 
     async def _emit_graph_progress(self, session: GraphSessionState) -> None:
         graph = session.current_graph
@@ -1260,9 +1070,9 @@ class GraphRouterOrchestrator:
             return
         previous_status = graph.status
         graph.touch(self._graph_status(graph))
-        event_name = self._graph_event_name(graph.status)
-        message = self._graph_message(graph)
-        if self._should_append_graph_terminal_message(graph, previous_status):
+        event_name = self.presenter.graph_event_name(graph.status)
+        message = self.presenter.graph_message(graph)
+        if self.presenter.should_append_graph_terminal_message(graph, previous_status):
             session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
             session.touch()
         await self._publish_graph_state(session, event_name, message)
@@ -1299,7 +1109,7 @@ class GraphRouterOrchestrator:
             previous_status = previous_statuses.get(node.node_id)
             if previous_status == node.status or node.status != GraphNodeStatus.SKIPPED:
                 continue
-            message = self._skipped_node_message(node)
+            message = self.presenter.skipped_node_message(node)
             await self._publish_node_state(
                 session,
                 graph,
@@ -1475,7 +1285,7 @@ class GraphRouterOrchestrator:
         context = self._build_session_context(session, task=task)
         context.update(
             {
-                "graph": self._graph_payload(graph),
+                "graph": self.presenter.graph_payload(graph),
                 "graph_summary": graph.summary,
                 "completed_node_outputs": {
                     node.node_id: dict(node.output_payload)
@@ -1510,47 +1320,6 @@ class GraphRouterOrchestrator:
 
     def _task_status_for_graph(self, status: GraphStatus) -> TaskStatus:
         return self.runtime_engine.task_status_for_graph(status)
-
-    def _graph_event_name(self, status: GraphStatus) -> str:
-        if status == GraphStatus.COMPLETED:
-            return "graph.completed"
-        if status == GraphStatus.PARTIALLY_COMPLETED:
-            return "graph.partially_completed"
-        if status == GraphStatus.FAILED:
-            return "graph.failed"
-        if status == GraphStatus.CANCELLED:
-            return "graph.cancelled"
-        return "graph.updated"
-
-    def _graph_message(self, graph: ExecutionGraphState) -> str:
-        status = graph.status
-        condition_skips = self._condition_skipped_nodes(graph)
-        if status == GraphStatus.COMPLETED:
-            if condition_skips:
-                summaries = "；".join(
-                    f"节点「{node.title}」因条件未满足未执行"
-                    + (f"（{node.blocking_reason}）" if node.blocking_reason else "")
-                    for node in condition_skips
-                )
-                return f"执行图已完成：{summaries}"
-            return "执行图已完成"
-        if status == GraphStatus.PARTIALLY_COMPLETED:
-            return "执行图部分完成，存在已完成节点之外的未执行或异常终止节点"
-        if status == GraphStatus.FAILED:
-            return "执行图执行失败"
-        if status == GraphStatus.CANCELLED:
-            return "执行图已取消"
-        if status == GraphStatus.WAITING_USER_INPUT:
-            return "执行图等待用户补充信息"
-        if status == GraphStatus.WAITING_CONFIRMATION_NODE:
-            return "执行图等待节点确认"
-        return "执行图状态更新"
-
-    def _condition_skipped_nodes(self, graph: ExecutionGraphState) -> list[GraphNodeState]:
-        return self.runtime_engine.condition_skipped_nodes(graph)
-
-    def _all_skipped_nodes_are_condition_unmet(self, graph: ExecutionGraphState) -> bool:
-        return self.runtime_engine.all_skipped_nodes_are_condition_unmet(graph)
 
     def _guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:
         if guided_selection is None or not guided_selection.selected_intents:
@@ -1763,99 +1532,3 @@ class GraphRouterOrchestrator:
                     node.title = selected_item.title
                 if not node.source_fragment:
                     node.source_fragment = selected_item.title
-
-    def _should_append_graph_terminal_message(
-        self,
-        graph: ExecutionGraphState,
-        previous_status: GraphStatus,
-    ) -> bool:
-        if graph.status not in {
-            GraphStatus.COMPLETED,
-            GraphStatus.PARTIALLY_COMPLETED,
-            GraphStatus.FAILED,
-            GraphStatus.CANCELLED,
-        }:
-            return False
-        if previous_status == graph.status:
-            return False
-        return graph.status != GraphStatus.COMPLETED or bool(self._condition_skipped_nodes(graph))
-
-    def _skipped_node_message(self, node: GraphNodeState) -> str:
-        if node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value:
-            if node.blocking_reason:
-                return f"节点「{node.title}」未执行：条件不满足（{node.blocking_reason}）"
-            return f"节点「{node.title}」未执行：条件不满足"
-        if node.blocking_reason:
-            return f"节点「{node.title}」已跳过（{node.blocking_reason}）"
-        return f"节点「{node.title}」已跳过"
-
-    def _graph_payload(
-        self,
-        graph: ExecutionGraphState,
-        *,
-        include_actions: bool = False,
-        pending: bool = False,
-    ) -> dict[str, Any]:
-        payload = {
-            "graph_id": graph.graph_id,
-            "source_message": graph.source_message,
-            "summary": graph.summary,
-            "version": graph.version,
-            "status": graph.status.value,
-            "confirm_token": graph.confirm_token if pending else None,
-            "nodes": [self._node_payload(node) for node in graph.nodes],
-            "edges": [edge.model_dump(mode="json") for edge in graph.edges],
-        }
-        if include_actions:
-            payload["actions"] = [action.model_dump(mode="json") for action in graph.actions]
-        return payload
-
-    def _node_payload(self, node: GraphNodeState) -> dict[str, Any]:
-        return {
-            "node_id": node.node_id,
-            "intent_code": node.intent_code,
-            "title": node.title,
-            "confidence": node.confidence,
-            "position": node.position,
-            "source_fragment": node.source_fragment,
-            "status": node.status.value,
-            "task_id": node.task_id,
-            "depends_on": list(node.depends_on),
-            "blocking_reason": node.blocking_reason,
-            "skip_reason_code": node.skip_reason_code,
-            "relation_reason": node.relation_reason,
-            "slot_memory": dict(node.slot_memory),
-            "slot_bindings": [binding.model_dump(mode="json") for binding in node.slot_bindings],
-            "history_slot_keys": list(node.history_slot_keys),
-            "output_payload": dict(node.output_payload),
-            "updated_at": node.updated_at.isoformat(),
-        }
-
-    def _graph_interaction(self, graph: ExecutionGraphState, *, pending: bool) -> dict[str, Any]:
-        return {
-            "type": "graph_card",
-            "card_type": "dynamic_graph",
-            "title": "请确认执行图" if pending else "动态执行图",
-            "summary": graph.summary,
-            "version": graph.version,
-            "graph_id": graph.graph_id,
-            "confirm_token": graph.confirm_token if pending else None,
-            "nodes": [self._node_payload(node) for node in graph.nodes],
-            "edges": [edge.model_dump(mode="json") for edge in graph.edges],
-            "actions": [action.model_dump(mode="json") for action in graph.actions] if pending else [],
-        }
-
-    def _normalize_interaction_payload(self, payload: dict[str, Any], *, source: str) -> dict[str, Any]:
-        interaction = payload.get("interaction")
-        if not isinstance(interaction, dict):
-            return payload
-        normalized = dict(payload)
-        interaction_payload = dict(interaction)
-        interaction_payload.setdefault("source", source)
-        normalized["interaction"] = interaction_payload
-        return normalized
-
-    async def _publish(self, event: TaskEvent) -> None:
-        result = self.publish_event(event)
-        if result is not None and hasattr(result, "__await__"):
-            await result

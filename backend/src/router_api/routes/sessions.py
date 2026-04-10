@@ -11,10 +11,15 @@ from starlette.responses import StreamingResponse
 from router_api.dependencies import get_event_broker, get_orchestrator
 from router_api.sse.broker import EventBroker
 from router_core.domain import TaskEvent, TaskStatus
-from router_core.orchestrator import RouterOrchestrator
+from router_core.v2_domain import (
+    GuidedSelectionPayload,
+    ProactiveRecommendationPayload,
+    RecommendationContextPayload,
+)
+from router_core.v2_orchestrator import GraphRouterOrchestrator
 
 
-router = APIRouter(prefix="/api/router", tags=["router"])
+router = APIRouter(tags=["router"])
 
 
 class CreateSessionResponse(BaseModel):
@@ -30,13 +35,16 @@ class CreateSessionRequest(BaseModel):
 class MessageRequest(BaseModel):
     content: str | None = None
     message: str | None = None
+    guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
+    recommendation_context: RecommendationContextPayload | None = Field(default=None, alias="recommendationContext")
+    proactive_recommendation: ProactiveRecommendationPayload | None = Field(default=None, alias="proactiveRecommendation")
     cust_id: str | None = None
 
     @model_validator(mode="after")
     def normalize(self) -> "MessageRequest":
-        if self.content is None and self.message is None:
-            raise ValueError("content or message is required")
-        self.content = self.content or self.message
+        self.content = self.content or self.message or ""
+        if not self.content and (self.guided_selection is None or not self.guided_selection.selected_intents):
+            raise ValueError("content/message or guided_selection is required")
         return self
 
 
@@ -63,7 +71,7 @@ class ActionRequest(BaseModel):
 
 
 def _resolve_action_cust_id(
-    orchestrator: RouterOrchestrator,
+    orchestrator: GraphRouterOrchestrator,
     session_id: str,
     request: ActionRequest,
 ) -> str:
@@ -76,7 +84,7 @@ def _resolve_action_cust_id(
 
 
 def _resolve_message_cust_id(
-    orchestrator: RouterOrchestrator,
+    orchestrator: GraphRouterOrchestrator,
     session_id: str,
     request: MessageRequest,
 ) -> str:
@@ -96,7 +104,7 @@ def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: CreateSessionRequest | None = None,
-    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ) -> CreateSessionResponse:
     cust_id = request.cust_id if request and request.cust_id else "cust_demo"
     session = orchestrator.create_session(cust_id=cust_id, session_id=request.session_id if request else None)
@@ -106,7 +114,7 @@ async def create_session(
 @router.get("/sessions/{session_id}")
 async def get_session_snapshot(
     session_id: str,
-    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
     try:
         return orchestrator.snapshot(session_id)
@@ -118,14 +126,20 @@ async def get_session_snapshot(
 async def post_message(
     session_id: str,
     request: MessageRequest,
-    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
-    snapshot = await orchestrator.handle_user_message(
-        session_id=session_id,
-        cust_id=resolved_cust_id,
-        content=request.content or "",
-    )
+    try:
+        snapshot = await orchestrator.handle_user_message(
+            session_id=session_id,
+            cust_id=resolved_cust_id,
+            content=request.content or "",
+            guided_selection=request.guided_selection,
+            recommendation_context=request.recommendation_context,
+            proactive_recommendation=request.proactive_recommendation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
 
 
@@ -133,7 +147,7 @@ async def post_message(
 async def post_action(
     session_id: str,
     request: ActionRequest,
-    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
     try:
@@ -156,7 +170,7 @@ async def post_action_stream(
     session_id: str,
     request: ActionRequest,
     http_request: Request,
-    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
@@ -181,12 +195,10 @@ async def post_action_stream(
                 if processing_task.done() and queue.empty():
                     await processing_task
                     break
-
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
                     continue
-
                 yield _encode_sse(event.event, event.model_dump(mode="json"))
         finally:
             broker.unregister(session_id, queue)
@@ -211,7 +223,7 @@ async def post_message_stream(
     session_id: str,
     request: MessageRequest,
     http_request: Request,
-    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
@@ -223,6 +235,9 @@ async def post_message_stream(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
+                guided_selection=request.guided_selection,
+                recommendation_context=request.recommendation_context,
+                proactive_recommendation=request.proactive_recommendation,
             )
         )
         try:
@@ -232,12 +247,10 @@ async def post_message_stream(
                 if processing_task.done() and queue.empty():
                     await processing_task
                     break
-
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
                     continue
-
                 yield _encode_sse(event.event, event.model_dump(mode="json"))
         finally:
             broker.unregister(session_id, queue)
@@ -262,7 +275,6 @@ async def stream_events(
     session_id: str,
     request: Request,
     broker: EventBroker = Depends(get_event_broker),
-    orchestrator: RouterOrchestrator = Depends(get_orchestrator),
 ) -> StreamingResponse:
     async def event_generator():
         subscription = broker.subscribe(session_id)
