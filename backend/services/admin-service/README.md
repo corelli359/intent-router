@@ -5,7 +5,7 @@ Canonical admin API service. Owns intent registration CRUD and activation state.
 ## Local install
 
 ```bash
-python -m pip install backend/contracts/intent-registry backend/services/admin-service
+python -m pip install backend/services/admin-service
 ```
 
 ## Local run

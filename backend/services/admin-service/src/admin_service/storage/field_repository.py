@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from intent_registry_contracts.models import IntentFieldDefinition, IntentFieldRecord
+from admin_service.models.intent import IntentFieldDefinition, IntentFieldRecord
 
 
 class IntentFieldRepositoryError(Exception):

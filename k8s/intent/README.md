@@ -73,7 +73,6 @@ Reason:
 
 - Source is mounted into Minikube node at `/mnt/intent-router`.
 - Pods now install only their own local service package on startup.
-- `intent-admin-api` and `intent-router-api` additionally install `backend/contracts/intent-registry`.
 - Deployment startup no longer depends on `backend/src` or the monorepo root package.
 - New financial agents are deployed one by one instead of piggybacking on the legacy two-agent topology.
 - If cluster resources become tight later, the deployment script is the place to stop after the last healthy standalone rollout.

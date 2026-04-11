@@ -12,7 +12,6 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 - `backend/services/agents/gas-bill-agent`: gas bill payment agent source of truth
 - `backend/services/agents/forex-agent`: forex exchange agent source of truth
 - `backend/services/agents/fallback-agent`: fallback agent source of truth
-- `backend/contracts/intent-registry`: shared intent registration contract models
 - `frontend/`: chat web, admin web, shared packages
 - `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
@@ -43,9 +42,9 @@ Critical boundary:
 Current phase note:
 
 - This branch has completed the physical backend split.
-- `admin_service`, `router_service`, and `intent_registry_contracts` are now the canonical Python packages.
+- `admin_service` and `router_service` are the canonical service packages.
 - Built-in agents now have canonical per-service source trees under `backend/services/agents/*-agent/src`.
-- Services are physically isolated; there is no shared legacy `backend/src` package or aggregate agent shim package.
+- Services are physically isolated; there is no shared legacy `backend/src` package, shared contracts package, or aggregate agent shim package.
 
 ## Ingress Path Rules
 
@@ -116,7 +115,7 @@ Rationale:
 
 ## Local Development
 
-Install backend dependencies for the monorepo regression workspace:
+Install repo-level test tooling:
 
 ```bash
 python -m pip install -e .[dev]
@@ -125,7 +124,7 @@ python -m pip install -e .[dev]
 Run admin/router as independently installable services:
 
 ```bash
-python -m pip install -e backend/contracts/intent-registry -e backend/services/admin-service -e backend/services/router-service
+python -m pip install -e backend/services/admin-service -e backend/services/router-service
 python -m uvicorn admin_service.api.app:app --reload --port 8011
 python -m uvicorn router_service.api.app:app --reload --port 8012
 ```

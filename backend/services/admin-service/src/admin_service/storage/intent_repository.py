@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from intent_registry_contracts.models import IntentPayload, IntentRecord, IntentStatus
+from admin_service.models.intent import IntentPayload, IntentRecord, IntentStatus
 
 
 class IntentRepositoryError(Exception):
@@ -37,4 +37,3 @@ class IntentRepository(ABC):
     @abstractmethod
     def delete_intent(self, intent_code: str) -> None:
         raise NotImplementedError
-

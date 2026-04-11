@@ -70,11 +70,6 @@ class IntentFieldDefinition(BaseModel):
     validation_hint: str = Field(default="", max_length=1000)
 
 
-class IntentFieldRecord(IntentFieldDefinition):
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
-
-
 class IntentSlotDefinition(BaseModel):
     slot_key: str = Field(min_length=1, max_length=128)
     field_code: str = Field(default="", max_length=128)

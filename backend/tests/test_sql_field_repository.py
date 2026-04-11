@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from intent_registry_contracts.models import IntentFieldDefinition, SlotValueType
+from admin_service.models.intent import IntentFieldDefinition, SlotValueType
 from admin_service.storage.sql_field_repository import DatabaseIntentFieldRepository
 
 

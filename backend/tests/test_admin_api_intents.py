@@ -70,14 +70,6 @@ def _sample_payload(intent_code: str = "transfer_money") -> dict:
                 "overwrite_policy": "overwrite_if_new_nonempty",
             },
         ],
-        "graph_build_hints": {
-            "intent_scope_rule": "单次转账动作即使包含收款人、金额、卡号等要素，也只算一个 intent。",
-            "planner_notes": "只有明确表达两个独立转账动作时，才允许生成多个 transfer_money 节点。",
-            "single_node_examples": ["我要给我弟弟转500"],
-            "multi_node_examples": ["先给我媳妇儿转500，再给我弟弟转300"],
-            "confirm_policy": "auto",
-            "max_nodes_per_message": 4,
-        },
         "resume_policy": "resume_same_task",
     }
 
@@ -109,7 +101,6 @@ def test_intent_crud_and_status_filter_flow() -> None:
             assert create_response.json()["slot_schema"][0]["slot_key"] == "recipient_name"
             assert create_response.json()["slot_schema"][0]["field_code"] == "person_name"
             assert create_response.json()["slot_schema"][0]["role"] == "recipient_name"
-            assert create_response.json()["graph_build_hints"]["confirm_policy"] == "auto"
 
             list_response = await client.get("/api/admin/intents")
             assert list_response.status_code == 200

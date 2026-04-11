@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from intent_registry_contracts.models import IntentSlotDefinition, SlotValueType
+from router_service.models.intent import IntentSlotDefinition, SlotValueType
 
 
 _DIGIT_VALUE_TYPES = {

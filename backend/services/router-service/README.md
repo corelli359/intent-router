@@ -5,7 +5,7 @@ Canonical router API service. Owns intent recognition, graph planning, state orc
 ## Local install
 
 ```bash
-python -m pip install backend/contracts/intent-registry backend/services/router-service
+python -m pip install backend/services/router-service
 ```
 
 ## Local run

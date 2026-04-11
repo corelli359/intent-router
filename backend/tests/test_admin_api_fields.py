@@ -43,10 +43,6 @@ def _sample_intent() -> dict:
                 "required": True,
             }
         ],
-        "graph_build_hints": {
-            "intent_scope_rule": "单次转账动作只算一个 intent。",
-            "planner_notes": "只有明确表达多个动作时才拆图。",
-        },
         "resume_policy": "resume_same_task",
     }
 

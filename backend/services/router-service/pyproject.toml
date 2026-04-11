@@ -16,7 +16,6 @@ dependencies = [
   "pymysql>=1.1,<2.0",
   "langchain-core>=1.2,<2.0",
   "langchain-openai>=1.1,<2.0",
-  "intent-registry-contracts>=0.1.0",
 ]
 
 [tool.setuptools.packages.find]

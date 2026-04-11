@@ -9,7 +9,7 @@ from typing import Iterator
 from sqlalchemy import DateTime, String, Text, create_engine, inspect, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from intent_registry_contracts.models import IntentFieldDefinition, IntentFieldRecord, SlotValueType
+from admin_service.models.intent import IntentFieldDefinition, IntentFieldRecord, SlotValueType
 from admin_service.storage.field_repository import (
     IntentFieldAlreadyExistsError,
     IntentFieldNotFoundError,

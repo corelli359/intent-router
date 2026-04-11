@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from threading import RLock
 
-from intent_registry_contracts.models import IntentFieldDefinition, IntentFieldRecord
+from admin_service.models.intent import IntentFieldDefinition, IntentFieldRecord
 from admin_service.storage.field_repository import (
     IntentFieldAlreadyExistsError,
     IntentFieldNotFoundError,

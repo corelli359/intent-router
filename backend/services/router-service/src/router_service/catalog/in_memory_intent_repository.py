@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from threading import RLock
 
-from intent_registry_contracts.models import IntentPayload, IntentRecord, IntentStatus
+from router_service.models.intent import IntentPayload, IntentRecord, IntentStatus
 from router_service.catalog.intent_repository import (
     IntentAlreadyExistsError,
     IntentNotFoundError,
@@ -66,4 +66,3 @@ class InMemoryIntentRepository(IntentRepository):
             if intent_code not in self._store:
                 raise IntentNotFoundError(f"Intent not found: {intent_code}")
             del self._store[intent_code]
-

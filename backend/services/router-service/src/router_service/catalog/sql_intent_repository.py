@@ -9,7 +9,7 @@ from typing import Iterator
 from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from intent_registry_contracts.models import (
+from router_service.models.intent import (
     IntentFieldDefinition,
     IntentGraphBuildHints,
     IntentPayload,

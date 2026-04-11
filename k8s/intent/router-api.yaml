@@ -28,9 +28,7 @@ spec:
           args:
             - |
               set -e
-              python -m pip install --no-cache-dir \
-                /workspace/backend/contracts/intent-registry \
-                /workspace/backend/services/router-service
+              python -m pip install --no-cache-dir /workspace/backend/services/router-service
               python -m uvicorn router_service.api.app:app --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000

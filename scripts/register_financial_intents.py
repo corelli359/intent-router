@@ -46,7 +46,6 @@ def _base_payload(
     request_schema: dict[str, Any],
     field_mapping: dict[str, str],
     slot_schema: list[dict[str, Any]],
-    graph_build_hints: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "intent_code": intent_code,
@@ -59,7 +58,6 @@ def _base_payload(
         "request_schema": request_schema,
         "field_mapping": field_mapping,
         "slot_schema": slot_schema,
-        "graph_build_hints": graph_build_hints,
         "resume_policy": "resume_same_task",
     }
 
@@ -121,16 +119,6 @@ def build_payloads() -> list[dict[str, Any]]:
                     "allow_from_history": True,
                 },
             ],
-            graph_build_hints={
-                "intent_scope_rule": "单次信用卡账单或还款信息查询是一个 intent。",
-                "planner_notes": "卡号和手机号后4位都是槽位，不要拆成节点。用户问应还金额、最低还款、到期日时，仍然是同一个 intent。",
-                "single_node_examples": [
-                    "查一下我的信用卡还款信息",
-                    "帮我看看本期信用卡要还多少钱",
-                    "查下信用卡账单和最低还款",
-                ],
-                "confirm_policy": "auto",
-            },
         ),
         _base_payload(
             intent_code="pay_gas_bill",
@@ -177,16 +165,6 @@ def build_payloads() -> list[dict[str, Any]]:
                     "allow_from_history": False,
                 },
             ],
-            graph_build_hints={
-                "intent_scope_rule": "单次天然气费、燃气费或煤气费缴费动作是一个 intent。",
-                "planner_notes": "燃气户号和缴费金额都是槽位，不要拆成节点。用户说天然气费、燃气费、煤气费时都映射到同一个 intent。",
-                "single_node_examples": [
-                    "帮我交一下天然气费",
-                    "给燃气户号 88001234 交 88 元",
-                    "帮我缴一下燃气费",
-                ],
-                "confirm_policy": "auto",
-            },
         ),
         _base_payload(
             intent_code="exchange_forex",
@@ -242,16 +220,6 @@ def build_payloads() -> list[dict[str, Any]]:
                     "allow_from_history": False,
                 },
             ],
-            graph_build_hints={
-                "intent_scope_rule": "单次换外汇、购汇或结汇动作是一个 intent。",
-                "planner_notes": "币种和金额都是槽位，不要拆成节点。像“把人民币换成美元”“把美元换成人民币”都属于同一个 intent。",
-                "single_node_examples": [
-                    "把 1000 人民币换成美元",
-                    "我想把 500 美元换成人民币",
-                    "我要购汇，把人民币换成美元",
-                ],
-                "confirm_policy": "auto",
-            },
         ),
     ]
 

@@ -9,7 +9,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_PATHS = [
-    ROOT / "backend" / "contracts" / "intent-registry" / "src",
     ROOT / "backend" / "services" / "router-service" / "src",
 ]
 for path in PYTHON_PATHS:

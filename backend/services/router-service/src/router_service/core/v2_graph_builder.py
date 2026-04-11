@@ -7,7 +7,7 @@ from typing import Any, Iterable, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from intent_registry_contracts.models import GraphConfirmPolicy
+from router_service.models.intent import GraphConfirmPolicy
 from router_service.core.domain import IntentDefinition, IntentMatch
 from router_service.core.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompt_templates import (

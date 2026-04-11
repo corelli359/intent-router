@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from admin_service.api.dependencies import get_field_repository, get_intent_repository
 from admin_service.api.schemas import IntentCreateRequest, IntentListResponse, IntentResponse, IntentUpdateRequest
-from intent_registry_contracts.models import IntentFieldDefinition, IntentPayload, IntentSlotDefinition, IntentStatus
+from admin_service.models.intent import IntentFieldDefinition, IntentPayload, IntentSlotDefinition, IntentStatus
 from admin_service.storage.field_repository import IntentFieldNotFoundError, IntentFieldRepository
 from admin_service.storage.intent_repository import (
     IntentAlreadyExistsError,

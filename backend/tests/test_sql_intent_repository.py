@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from intent_registry_contracts.models import IntentPayload, IntentStatus  # noqa: E402
+from admin_service.models.intent import IntentPayload, IntentStatus  # noqa: E402
 from admin_service.storage.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
 
 
@@ -42,12 +42,6 @@ def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, 
                 "examples": ["foo"],
             }
         ],
-        graph_build_hints={
-            "intent_scope_rule": "默认单节点执行。",
-            "planner_notes": "除非用户明确表达多个动作，否则不要拆图。",
-            "confirm_policy": "auto",
-            "max_nodes_per_message": 4,
-        },
         resume_policy="resume_same_task",
     )
 
@@ -69,7 +63,6 @@ def test_database_repository_persists_records_across_instances(tmp_path: Path) -
     assert reloaded.get_intent("query_order_status").slot_schema[0].slot_key == "input"
     assert reloaded.get_intent("query_order_status").slot_schema[0].field_code == "free_text_input"
     assert reloaded.get_intent("query_order_status").slot_schema[0].role == "primary_input"
-    assert reloaded.get_intent("query_order_status").graph_build_hints.max_nodes_per_message == 4
 
 
 def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Path) -> None:
@@ -125,4 +118,3 @@ def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Pa
 
     assert record.slot_schema == []
     assert record.field_catalog == []
-    assert record.graph_build_hints.confirm_policy.value == "auto"

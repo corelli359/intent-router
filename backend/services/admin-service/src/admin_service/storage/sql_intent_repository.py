@@ -9,9 +9,8 @@ from typing import Iterator
 from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from intent_registry_contracts.models import (
+from admin_service.models.intent import (
     IntentFieldDefinition,
-    IntentGraphBuildHints,
     IntentPayload,
     IntentRecord,
     IntentSlotDefinition,
@@ -54,7 +53,6 @@ class IntentRow(Base):
     field_mapping_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     field_catalog_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     slot_schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    graph_build_hints_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     resume_policy: Mapped[str] = mapped_column(String(128), nullable=False, default="resume_same_task")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -109,7 +107,6 @@ class DatabaseIntentRepository(IntentRepository):
                 field_mapping_json=self._dump_json(payload.field_mapping),
                 field_catalog_json=self._dump_json([field.model_dump(mode="json") for field in payload.field_catalog]),
                 slot_schema_json=self._dump_json([slot.model_dump(mode="json") for slot in payload.slot_schema]),
-                graph_build_hints_json=self._dump_json(payload.graph_build_hints.model_dump(mode="json")),
                 resume_policy=payload.resume_policy,
                 created_at=now,
                 updated_at=now,
@@ -141,7 +138,6 @@ class DatabaseIntentRepository(IntentRepository):
             row.field_mapping_json = self._dump_json(payload.field_mapping)
             row.field_catalog_json = self._dump_json([field.model_dump(mode="json") for field in payload.field_catalog])
             row.slot_schema_json = self._dump_json([slot.model_dump(mode="json") for slot in payload.slot_schema])
-            row.graph_build_hints_json = self._dump_json(payload.graph_build_hints.model_dump(mode="json"))
             row.resume_policy = payload.resume_policy
             row.updated_at = utcnow()
 
@@ -181,7 +177,6 @@ class DatabaseIntentRepository(IntentRepository):
             field_mapping=self._load_json_str_dict(row.field_mapping_json),
             field_catalog=self._load_field_catalog(getattr(row, "field_catalog_json", "[]")),
             slot_schema=self._load_slot_schema(getattr(row, "slot_schema_json", "[]")),
-            graph_build_hints=self._load_graph_build_hints(getattr(row, "graph_build_hints_json", "{}")),
             resume_policy=row.resume_policy,
             created_at=self._ensure_aware(row.created_at),
             updated_at=self._ensure_aware(row.updated_at),
@@ -195,7 +190,6 @@ class DatabaseIntentRepository(IntentRepository):
         additions = {
             "field_catalog_json": "[]",
             "slot_schema_json": "[]",
-            "graph_build_hints_json": "{}",
         }
         missing = {name: default for name, default in additions.items() if name not in existing_columns}
         if not missing:
@@ -252,13 +246,6 @@ class DatabaseIntentRepository(IntentRepository):
             except Exception:
                 continue
         return slots
-
-    def _load_graph_build_hints(self, raw_value: str) -> IntentGraphBuildHints:
-        loaded = self._load_json_object(raw_value)
-        try:
-            return IntentGraphBuildHints.model_validate(loaded)
-        except Exception:
-            return IntentGraphBuildHints()
 
     def _ensure_aware(self, value: datetime) -> datetime:
         if value.tzinfo is None:

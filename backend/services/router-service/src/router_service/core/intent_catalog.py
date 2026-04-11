@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from intent_registry_contracts.models import IntentRecord, IntentStatus
+from router_service.models.intent import IntentRecord, IntentStatus
 from router_service.catalog.intent_repository import IntentRepository
 from router_service.core.domain import IntentDefinition
 

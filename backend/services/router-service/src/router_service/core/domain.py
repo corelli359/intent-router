@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from intent_registry_contracts.models import IntentFieldDefinition, IntentGraphBuildHints, IntentSlotDefinition
+from router_service.models.intent import IntentFieldDefinition, IntentGraphBuildHints, IntentSlotDefinition
 
 
 SESSION_TTL = timedelta(minutes=30)

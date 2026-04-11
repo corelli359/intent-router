@@ -27,9 +27,7 @@ spec:
           args:
             - |
               set -e
-              python -m pip install --no-cache-dir \
-                /workspace/backend/contracts/intent-registry \
-                /workspace/backend/services/admin-service
+              python -m pip install --no-cache-dir /workspace/backend/services/admin-service
               python -m uvicorn admin_service.api.app:app --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
