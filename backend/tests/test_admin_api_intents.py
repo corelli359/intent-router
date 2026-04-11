@@ -1,20 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 import httpx
 
-
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from admin_api.app import create_app  # noqa: E402
-from admin_api.dependencies import get_field_repository, get_intent_repository  # noqa: E402
+from admin_service.api.app import create_app  # noqa: E402
+from admin_service.api.dependencies import get_field_repository, get_intent_repository  # noqa: E402
 from admin_service.storage.in_memory_field_repository import InMemoryIntentFieldRepository  # noqa: E402
-from persistence.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
+from admin_service.storage.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
 
 
 def _shared_fields() -> list[dict]:

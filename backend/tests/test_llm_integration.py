@@ -9,21 +9,17 @@ from typing import Any
 import pytest
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_core.agent_client import StreamingAgentClient  # noqa: E402
-from router_core.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
-from router_core.domain import IntentMatch  # noqa: E402
-from router_core.llm_client import (  # noqa: E402
+from router_service.core.agent_client import StreamingAgentClient  # noqa: E402
+from router_service.core.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
+from router_service.core.domain import IntentMatch  # noqa: E402
+from router_service.core.llm_client import (  # noqa: E402
     IntentRecognitionMatchPayload,
     IntentRecognitionPayload,
     LangChainLLMClient,
 )
-from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
-from router_core.v2_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
-from router_core.v2_planner import (  # noqa: E402
+from router_service.core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
+from router_service.core.v2_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
+from router_service.core.v2_planner import (  # noqa: E402
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
 )

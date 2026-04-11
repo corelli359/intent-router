@@ -1,16 +1,8 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from models.intent import IntentPayload, IntentStatus  # noqa: E402
-from persistence.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
-from router_core.intent_catalog import RepositoryIntentCatalog  # noqa: E402
+from intent_registry_contracts.models import IntentPayload, IntentStatus  # noqa: E402
+from admin_service.storage.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
+from router_service.core.intent_catalog import RepositoryIntentCatalog  # noqa: E402
 
 
 def _payload(*, intent_code: str, status: IntentStatus) -> IntentPayload:

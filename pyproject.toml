@@ -27,7 +27,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = [
-  "backend/src",
   "backend/contracts/intent-registry/src",
   "backend/services/admin-service/src",
   "backend/services/router-service/src",

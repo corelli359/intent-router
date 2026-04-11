@@ -1,5 +1,0 @@
-from __future__ import annotations
-
-from transfer_money_agent.app import app, create_app
-from transfer_money_agent.app import get_transfer_money_service as get_cancel_appointment_service
-from transfer_money_agent.app import get_transfer_money_settings as get_cancel_appointment_settings

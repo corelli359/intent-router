@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
 from pathlib import Path
 
-
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from models.intent import IntentPayload, IntentStatus  # noqa: E402
-from persistence.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
+from intent_registry_contracts.models import IntentPayload, IntentStatus  # noqa: E402
+from admin_service.storage.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
 
 
 def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, is_fallback: bool = False) -> IntentPayload:

@@ -5,12 +5,8 @@ import sys
 from pathlib import Path
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_api.sse.broker import EventBroker  # noqa: E402
-from router_core.domain import TaskEvent, TaskStatus  # noqa: E402
+from router_service.api.sse.broker import EventBroker  # noqa: E402
+from router_service.core.domain import TaskEvent, TaskStatus  # noqa: E402
 
 
 def test_event_broker_emits_heartbeat_before_real_event() -> None:

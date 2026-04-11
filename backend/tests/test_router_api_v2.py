@@ -6,14 +6,14 @@ import httpx
 import sys
 from pathlib import Path
 
-from router_api.app import create_router_app
-from router_api.dependencies import (
+from router_service.api.app import create_router_app
+from router_service.api.dependencies import (
     get_event_broker,
     get_event_broker_v2,
     get_orchestrator,
     get_orchestrator_v2,
 )
-from router_api.sse.broker import EventBroker
+from router_service.api.sse.broker import EventBroker
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -21,10 +21,10 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from tests.support.mock_agent_client import MockStreamingAgentClient
-from router_core.agent_client import StreamingAgentClient
-from router_core.domain import IntentDefinition, IntentMatch
-from router_core.recognizer import RecognitionResult
-from router_core.v2_domain import (
+from router_service.core.agent_client import StreamingAgentClient
+from router_service.core.domain import IntentDefinition, IntentMatch
+from router_service.core.recognizer import RecognitionResult
+from router_service.core.v2_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
@@ -36,8 +36,8 @@ from router_core.v2_domain import (
     ProactiveRecommendationRouteDecision,
     ProactiveRecommendationRouteMode,
 )
-from router_core.v2_orchestrator import GraphRouterOrchestrator
-from router_core.v2_planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
+from router_service.core.v2_orchestrator import GraphRouterOrchestrator
+from router_service.core.v2_planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
 
 
 class _StaticCatalog:

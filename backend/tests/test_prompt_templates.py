@@ -4,11 +4,7 @@ import sys
 from pathlib import Path
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_core.prompt_templates import (  # noqa: E402
+from router_service.core.prompt_templates import (  # noqa: E402
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
     DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT,

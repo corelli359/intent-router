@@ -1,19 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 from typing import Any
 
 import httpx
 
-
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from intent_agents.account_balance_app import create_app, get_account_balance_service  # noqa: E402
-from intent_agents.account_balance_service import AccountBalanceAgentRequest, AccountBalanceAgentService  # noqa: E402
+from account_balance_agent.app import create_app, get_account_balance_service  # noqa: E402
+from account_balance_agent.service import AccountBalanceAgentRequest, AccountBalanceAgentService  # noqa: E402
 
 
 class FakeJsonRunner:

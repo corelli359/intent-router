@@ -4,11 +4,7 @@ import sys
 from pathlib import Path
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_core.v2_domain import (  # noqa: E402
+from router_service.core.v2_domain import (  # noqa: E402
     ExecutionGraphState,
     GraphCondition,
     GraphEdge,
@@ -17,7 +13,7 @@ from router_core.v2_domain import (  # noqa: E402
     GraphNodeStatus,
     GraphStatus,
 )
-from router_core.v2_graph_runtime import GraphRuntimeEngine  # noqa: E402
+from router_service.core.v2_graph_runtime import GraphRuntimeEngine  # noqa: E402
 
 
 def test_graph_runtime_engine_marks_condition_skip_as_completed_graph() -> None:

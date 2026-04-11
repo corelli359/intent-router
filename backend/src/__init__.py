@@ -1,2 +1,0 @@
-"""Intent router application packages."""
-

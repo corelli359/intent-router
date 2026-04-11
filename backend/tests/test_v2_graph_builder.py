@@ -7,13 +7,9 @@ from pathlib import Path
 import pytest
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_core.domain import IntentDefinition  # noqa: E402
-from router_core.v2_domain import GraphStatus, SlotBindingSource  # noqa: E402
-from router_core.v2_graph_builder import GraphDraftNormalizer, LLMIntentGraphBuilder, UnifiedGraphDraftPayload  # noqa: E402
+from router_service.core.domain import IntentDefinition  # noqa: E402
+from router_service.core.v2_domain import GraphStatus, SlotBindingSource  # noqa: E402
+from router_service.core.v2_graph_builder import GraphDraftNormalizer, LLMIntentGraphBuilder, UnifiedGraphDraftPayload  # noqa: E402
 
 
 class _StaticLLMClient:

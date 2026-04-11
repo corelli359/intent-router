@@ -5,12 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_core.domain import ChatMessage  # noqa: E402
-from router_core.memory_store import LongTermMemoryStore  # noqa: E402
+from router_service.core.domain import ChatMessage  # noqa: E402
+from router_service.core.memory_store import LongTermMemoryStore  # noqa: E402
 
 
 def test_long_term_memory_store_promotes_recent_messages_and_slots() -> None:

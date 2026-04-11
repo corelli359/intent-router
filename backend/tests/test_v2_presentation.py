@@ -6,13 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_core.domain import TaskEvent, TaskStatus  # noqa: E402
-from router_core.v2_domain import ExecutionGraphState, GraphNodeState, GraphNodeStatus, GraphStatus  # noqa: E402
-from router_core.v2_presentation import GraphEventPublisher, GraphSnapshotPresenter  # noqa: E402
+from router_service.core.domain import TaskEvent, TaskStatus  # noqa: E402
+from router_service.core.v2_domain import ExecutionGraphState, GraphNodeState, GraphNodeStatus, GraphStatus  # noqa: E402
+from router_service.core.v2_presentation import GraphEventPublisher, GraphSnapshotPresenter  # noqa: E402
 
 
 def test_graph_snapshot_presenter_reports_condition_skip_summary() -> None:
@@ -49,7 +45,7 @@ def test_graph_event_publisher_publishes_session_state_payload() -> None:
     publisher = GraphEventPublisher(events.append, presenter)
 
     async def run() -> None:
-        from router_core.v2_domain import GraphSessionState
+        from router_service.core.v2_domain import GraphSessionState
 
         session = GraphSessionState(session_id="s1", cust_id="cust_demo")
         graph = ExecutionGraphState(source_message="测试图", status=GraphStatus.RUNNING)
@@ -78,7 +74,7 @@ def test_graph_event_publisher_publishes_recognition_and_node_runtime_events() -
     publisher = GraphEventPublisher(events.append)
 
     async def run() -> None:
-        from router_core.v2_domain import GraphSessionState
+        from router_service.core.v2_domain import GraphSessionState
 
         session = GraphSessionState(session_id="s1", cust_id="cust_demo")
         graph = ExecutionGraphState(source_message="查余额后转账", status=GraphStatus.RUNNING)

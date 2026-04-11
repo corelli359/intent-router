@@ -25,4 +25,4 @@ python -m uvicorn account_balance_agent.app:app --reload --port 8101
 python -m uvicorn transfer_money_agent.app:app --reload --port 8102
 ```
 
-`backend/services/agents/intent_agents` is compatibility-only and is not a deployment unit.
+Each agent package is deployed and versioned independently; there is no aggregate agent shim layer.

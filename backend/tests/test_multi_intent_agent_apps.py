@@ -1,25 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 import httpx
 
-
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from intent_agents.credit_card_repayment_service import (  # noqa: E402
+from credit_card_repayment_agent.service import (  # noqa: E402
     CreditCardRepaymentAgentRequest,
     CreditCardRepaymentAgentService,
 )
-from intent_agents.credit_card_repayment_app import create_app as create_credit_card_repayment_app  # noqa: E402
-from intent_agents.forex_exchange_app import create_app as create_forex_exchange_app  # noqa: E402
-from intent_agents.forex_exchange_service import ForexExchangeAgentRequest, ForexExchangeAgentService  # noqa: E402
-from intent_agents.gas_bill_payment_app import create_app as create_gas_bill_payment_app  # noqa: E402
-from intent_agents.gas_bill_payment_service import (  # noqa: E402
+from credit_card_repayment_agent.app import create_app as create_credit_card_repayment_app  # noqa: E402
+from forex_agent.app import create_app as create_forex_exchange_app  # noqa: E402
+from forex_agent.service import ForexExchangeAgentRequest, ForexExchangeAgentService  # noqa: E402
+from gas_bill_agent.app import create_app as create_gas_bill_payment_app  # noqa: E402
+from gas_bill_agent.service import (  # noqa: E402
     GasBillPaymentAgentRequest,
     GasBillPaymentAgentService,
 )

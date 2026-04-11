@@ -8,14 +8,19 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_SRC = ROOT / "backend" / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
+PYTHON_PATHS = [
+    ROOT / "backend" / "contracts" / "intent-registry" / "src",
+    ROOT / "backend" / "services" / "router-service" / "src",
+]
+for path in PYTHON_PATHS:
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
 
-from config.settings import Settings  # noqa: E402
-from router_core.llm_client import LangChainLLMClient  # noqa: E402
-from router_core.domain import IntentDefinition  # noqa: E402
-from router_core.recognizer import LLMIntentRecognizer  # noqa: E402
+from router_service.settings import Settings  # noqa: E402
+from router_service.core.llm_client import LangChainLLMClient  # noqa: E402
+from router_service.core.domain import IntentDefinition  # noqa: E402
+from router_service.core.recognizer import LLMIntentRecognizer  # noqa: E402
 
 
 def _masked_key(api_key: str | None) -> str | None:

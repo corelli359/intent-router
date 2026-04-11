@@ -1,17 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
-
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from persistence.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
-from router_api import dependencies  # noqa: E402
+from router_service.catalog.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
+from router_service.api import dependencies  # noqa: E402
 
 
 class FakeLLMClient:

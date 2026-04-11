@@ -12,9 +12,7 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 - `backend/services/agents/gas-bill-agent`: gas bill payment agent source of truth
 - `backend/services/agents/forex-agent`: forex exchange agent source of truth
 - `backend/services/agents/fallback-agent`: fallback agent source of truth
-- `backend/services/agents/intent_agents`: transitional compatibility shims for legacy imports
 - `backend/contracts/intent-registry`: shared intent registration contract models
-- `backend/src`: transitional compatibility shims and legacy entry modules
 - `frontend/`: chat web, admin web, shared packages
 - `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
@@ -44,11 +42,10 @@ Critical boundary:
 
 Current phase note:
 
-- This branch has completed phase-1 backend split and phase-2 built-in agent split.
+- This branch has completed the physical backend split.
 - `admin_service`, `router_service`, and `intent_registry_contracts` are now the canonical Python packages.
-- `backend/src/admin_api`, `backend/src/router_api`, `backend/src/models`, `backend/src/persistence`, and `backend/src/config` are thin compatibility layers.
 - Built-in agents now have canonical per-service source trees under `backend/services/agents/*-agent/src`.
-- `backend/services/agents/intent_agents` and `backend/src/intent_agents` are compatibility shims only.
+- Services are physically isolated; there is no shared legacy `backend/src` package or aggregate agent shim package.
 
 ## Ingress Path Rules
 
@@ -78,9 +75,8 @@ Connection secrets must stay in local env files or shell env vars. This repo ign
 
 Router and agents support OpenAI-compatible model access via `langchain`:
 
-- Router recognizer: `router_core`
+- Router recognizer: `router_service.core`
 - Built-in agents now live under per-service directories in `backend/services/agents/*-agent/src`.
-- Legacy `intent_agents.*` imports continue to exist as compatibility shims.
 
 Minimum runtime env:
 
@@ -158,11 +154,7 @@ Run tests:
 pytest
 ```
 
-Compatibility note:
-
-- `backend/src/app.py` still exists as an aggregate app for local integration tests.
-- `backend/src/admin_entry.py` and `backend/src/router_entry.py` are legacy shims only.
-- Independent deployments should install and start canonical packages directly from their service directories.
+Independent deployments should install and start canonical packages directly from their service directories.
 
 Run frontends:
 
