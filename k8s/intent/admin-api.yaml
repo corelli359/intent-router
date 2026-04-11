@@ -19,8 +19,6 @@ spec:
           imagePullPolicy: IfNotPresent
           workingDir: /workspace
           env:
-            - name: PYTHONPATH
-              value: /workspace/backend/src
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
           command:
@@ -29,9 +27,10 @@ spec:
           args:
             - |
               set -e
-              rm -rf /workspace/build /workspace/backend/src/intent_router.egg-info
-              python -m pip install --no-cache-dir /workspace
-              python -m uvicorn admin_entry:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
+              python -m pip install --no-cache-dir \
+                /workspace/backend/contracts/intent-registry \
+                /workspace/backend/services/admin-service
+              python -m uvicorn admin_service.api.app:app --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
               name: http

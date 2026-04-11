@@ -1,3 +1,3 @@
-from __future__ import annotations
+"""Backward-compatible shim for account_balance_agent.app legacy alias."""
 
-from intent_agents.account_balance_app import app, create_app
+from account_balance_agent.app import *  # noqa: F401,F403

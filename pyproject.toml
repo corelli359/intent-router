@@ -25,11 +25,19 @@ dev = [
   "pytest>=8.3,<9.0",
 ]
 
-[tool.setuptools]
-package-dir = {"" = "backend/src"}
-
 [tool.setuptools.packages.find]
-where = ["backend/src"]
+where = [
+  "backend/src",
+  "backend/contracts/intent-registry/src",
+  "backend/services/admin-service/src",
+  "backend/services/router-service/src",
+  "backend/services/agents/account-balance-agent/src",
+  "backend/services/agents/transfer-money-agent/src",
+  "backend/services/agents/credit-card-repayment-agent/src",
+  "backend/services/agents/gas-bill-agent/src",
+  "backend/services/agents/forex-agent/src",
+  "backend/services/agents/fallback-agent/src",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

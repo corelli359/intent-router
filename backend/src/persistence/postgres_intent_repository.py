@@ -1,7 +1,3 @@
-from __future__ import annotations
+from admin_service.storage.postgres_intent_repository import DatabaseIntentRepository
 
-from persistence.sql_intent_repository import DatabaseIntentRepository
-
-
-class PostgresIntentRepository(DatabaseIntentRepository):
-    pass
+__all__ = ["DatabaseIntentRepository"]

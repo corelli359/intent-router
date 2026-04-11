@@ -22,6 +22,14 @@ Current agent split:
 - `intent-gas-bill-agent` handles `pay_gas_bill`
 - `intent-forex-agent` handles `exchange_forex`
 
+Current source of truth:
+
+- `intent-order-agent` starts from `backend/services/agents/account-balance-agent/src/account_balance_agent`
+- `intent-appointment-agent` starts from `backend/services/agents/transfer-money-agent/src/transfer_money_agent`
+- `intent-credit-card-agent` starts from `backend/services/agents/credit-card-repayment-agent/src/credit_card_repayment_agent`
+- `intent-gas-bill-agent` starts from `backend/services/agents/gas-bill-agent/src/gas_bill_agent`
+- `intent-forex-agent` starts from `backend/services/agents/forex-agent/src/forex_agent`
+
 Key boundary:
 
 - Router performs intent recognition, task orchestration, and dispatch only.
@@ -64,8 +72,9 @@ Reason:
 ## Operational Notes
 
 - Source is mounted into Minikube node at `/mnt/intent-router`.
-- Pods still install runtime dependencies on startup with `pip install /workspace`, but they now delete `/workspace/build` and `/workspace/backend/src/intent_router.egg-info` first.
-- This avoids concurrent wheel builds writing stale artifacts into the shared mounted source tree during rollout.
+- Pods now install only their own local service package on startup.
+- `intent-admin-api` and `intent-router-api` additionally install `backend/contracts/intent-registry`.
+- Deployment startup no longer depends on `backend/src` or the monorepo root package.
 - New financial agents are deployed one by one instead of piggybacking on the legacy two-agent topology.
 - If cluster resources become tight later, the deployment script is the place to stop after the last healthy standalone rollout.
 - Router reads active intent registry from admin-owned storage and refreshes cache periodically.

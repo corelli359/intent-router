@@ -210,6 +210,55 @@ backend/
     agent-sdk/   # 可选，且必须非常薄；如果组织不接受共享代码，可直接删除
 ```
 
+## 4.1 当前 Fix Branch 已落地现状
+
+当前分支已经先完成第一阶段物理拆分，实际目录如下：
+
+```text
+backend/
+  contracts/
+    intent-registry/
+      src/intent_registry_contracts/
+
+  services/
+    admin-service/
+      src/admin_service/
+
+    router-service/
+      src/router_service/
+
+    agents/
+      account-balance-agent/
+        src/account_balance_agent/
+      transfer-money-agent/
+        src/transfer_money_agent/
+      credit-card-repayment-agent/
+        src/credit_card_repayment_agent/
+      gas-bill-agent/
+        src/gas_bill_agent/
+      forex-agent/
+        src/forex_agent/
+      fallback-agent/
+        src/fallback_agent/
+      intent_agents/    # compatibility shim
+
+  src/
+    admin_api/        # compatibility shim
+    router_api/       # compatibility shim
+    models/           # compatibility shim
+    persistence/      # compatibility shim
+    config/           # compatibility shim
+    intent_agents/    # compatibility shim
+```
+
+说明：
+
+- `admin_service`、`router_service`、`intent_registry_contracts` 已成为当前代码源。
+- `backend/src/*` 仍保留，是为了现有测试与兼容导入不在本次迁移中整体中断；部署入口已切换到 canonical service package。
+- built-in agents 已进一步拆成每个 agent 一个目录，每个 canonical package 都不再依赖 `router_core`、`config.settings`、`models.intent` 等跨服务代码。
+- `backend/services/agents/intent_agents/` 当前只保留兼容 shim，用于承接旧导入路径。
+- 这次改造的目标是先完成“物理边界落地 + 兼容入口保留”，而不是一轮内把所有历史 import 全部删除。
+
 ### 4.1 `services/` 的含义
 
 这里每个目录都对应独立服务、独立团队、独立部署单元。

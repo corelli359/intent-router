@@ -1,1 +1,1 @@
-"""Standalone intent agent services used by the router over HTTP."""
+"""Legacy package shim for intent agents."""

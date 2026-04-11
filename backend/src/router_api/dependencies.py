@@ -1,207 +1,66 @@
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
-import logging
-
-from fastapi import Request
-
-from admin_api.dependencies import get_intent_repository
-from admin_api.dependencies import get_settings
-from router_api.sse.broker import EventBroker
-from router_core.agent_client import StreamingAgentClient
-from router_core.intent_catalog import RepositoryIntentCatalog
-from router_core.llm_client import LangChainLLMClient
-from router_core.prompt_templates import DEFAULT_RECOGNIZER_HUMAN_PROMPT, DEFAULT_RECOGNIZER_SYSTEM_PROMPT
-from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer
-from router_core.v2_graph_builder import LLMIntentGraphBuilder
-from router_core.v2_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
-from router_core.v2_planner import (
-    BasicTurnInterpreter,
-    LLMGraphTurnInterpreter,
-    LLMIntentGraphPlanner,
-    SequentialIntentGraphPlanner,
-)
-from router_core.v2_recommendation_router import (
-    LLMProactiveRecommendationRouter,
-    NullProactiveRecommendationRouter,
-)
+from router_service.api import dependencies as service_dependencies
 
 
-logger = logging.getLogger(__name__)
+RouterRuntime = service_dependencies.RouterRuntime
+get_event_broker = service_dependencies.get_event_broker
+get_event_broker_v2 = service_dependencies.get_event_broker_v2
+get_intent_catalog = service_dependencies.get_intent_catalog
+get_llm_client = service_dependencies.get_llm_client
+get_orchestrator = service_dependencies.get_orchestrator
+get_orchestrator_v2 = service_dependencies.get_orchestrator_v2
+get_router_runtime = service_dependencies.get_router_runtime
 
 
-@dataclass(slots=True)
-class RouterRuntime:
-    event_broker: EventBroker
-    llm_client: LangChainLLMClient | None
-    intent_catalog: RepositoryIntentCatalog
-    agent_client: StreamingAgentClient
-    orchestrator: GraphRouterOrchestrator
+def get_settings():
+    return service_dependencies.get_settings()
 
 
-def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
-    logger.warning(
-        "Router intent recognition requires LLM semantics "
-        "(backend=%s, llm_available=%s). Falling back to NullIntentRecognizer "
-        "so unmatched requests can be handled by the fallback intent/agent.",
-        recognizer_backend,
-        llm_available,
-    )
-    return NullIntentRecognizer()
+def get_intent_repository():
+    return service_dependencies.get_intent_repository()
 
 
-def build_router_runtime() -> RouterRuntime:
-    settings = get_settings()
-    event_broker = EventBroker(
-        heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
-        max_idle_seconds=settings.router_sse_max_idle_seconds,
-    )
-    llm_client = _build_llm_client()
-    intent_catalog = RepositoryIntentCatalog(get_intent_repository())
-    recognizer = (
-        LLMIntentRecognizer(
-            llm_client,
-            model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=NullIntentRecognizer(),
-            system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
-            human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
-        )
-        if llm_client is not None
-        else _warn_null_recognizer(
-            recognizer_backend=settings.recognizer_backend,
-            llm_available=False,
-        )
-    )
-    agent_client = StreamingAgentClient(http_timeout_seconds=settings.agent_http_timeout_seconds)
-    orchestrator = GraphRouterOrchestrator(
-        publish_event=event_broker.publish,
-        intent_catalog=intent_catalog,
-        recognizer=recognizer,
-        graph_builder=(
-            LLMIntentGraphBuilder(
-                llm_client,
-                model=settings.llm_model,
-                fallback_recognizer=recognizer,
-                fallback_planner=SequentialIntentGraphPlanner(),
-            )
-            if llm_client is not None and settings.router_v2_graph_build_mode == "unified"
-            else None
-        ),
-        planner=(
-            LLMIntentGraphPlanner(
-                llm_client,
-                model=settings.llm_model,
-                fallback=SequentialIntentGraphPlanner(),
-            )
-            if llm_client is not None
-            else SequentialIntentGraphPlanner()
-        ),
-        turn_interpreter=(
-            LLMGraphTurnInterpreter(
-                llm_client,
-                model=settings.llm_model,
-                fallback=BasicTurnInterpreter(),
-            )
-            if llm_client is not None
-            else BasicTurnInterpreter()
-        ),
-        recommendation_router=(
-            LLMProactiveRecommendationRouter(
-                llm_client,
-                model=settings.llm_model,
-                fallback=NullProactiveRecommendationRouter(),
-            )
-            if llm_client is not None
-            else NullProactiveRecommendationRouter()
-        ),
-        agent_client=agent_client,
-        config=GraphRouterOrchestratorConfig(
-            intent_switch_threshold=settings.router_intent_switch_threshold,
-            agent_timeout_seconds=settings.router_agent_timeout_seconds,
-        ),
-    )
-    return RouterRuntime(
-        event_broker=event_broker,
-        llm_client=llm_client,
-        intent_catalog=intent_catalog,
-        agent_client=agent_client,
-        orchestrator=orchestrator,
-    )
+def _build_llm_client():
+    return service_dependencies._build_llm_client()
 
 
-def _build_llm_client() -> LangChainLLMClient | None:
-    settings = get_settings()
-    if not settings.llm_connection_ready or settings.default_llm_model is None:
-        return None
-    return LangChainLLMClient(
-        base_url=settings.llm_api_base_url or "",
-        api_key=settings.llm_api_key,
-        default_model=settings.default_llm_model,
-        timeout_seconds=settings.llm_timeout_seconds,
-        rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),
-        rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),
-        extra_headers=settings.llm_headers,
-        structured_output_method=settings.llm_structured_output_method,
-    )
+def build_router_runtime():
+    original_get_settings = service_dependencies.get_settings
+    original_get_intent_repository = service_dependencies.get_intent_repository
+    original_build_llm_client = service_dependencies._build_llm_client
+    service_dependencies.get_settings = get_settings
+    service_dependencies.get_intent_repository = get_intent_repository
+    service_dependencies._build_llm_client = _build_llm_client
+    try:
+        return service_dependencies.build_router_runtime()
+    finally:
+        service_dependencies.get_settings = original_get_settings
+        service_dependencies.get_intent_repository = original_get_intent_repository
+        service_dependencies._build_llm_client = original_build_llm_client
 
 
-def get_router_runtime(request: Request) -> RouterRuntime:
-    runtime = getattr(request.app.state, "router_runtime", None)
-    if runtime is None:
-        runtime = build_router_runtime()
-        request.app.state.router_runtime = runtime
-    return runtime
+def close_router_runtime(runtime):
+    return service_dependencies.close_router_runtime(runtime)
 
 
-def get_event_broker(request: Request) -> EventBroker:
-    return get_router_runtime(request).event_broker
+def run_intent_catalog_refresh(*args, **kwargs):
+    return service_dependencies.run_intent_catalog_refresh(*args, **kwargs)
 
 
-def get_llm_client(request: Request) -> LangChainLLMClient | None:
-    return get_router_runtime(request).llm_client
-
-
-def get_intent_catalog(request: Request) -> RepositoryIntentCatalog:
-    return get_router_runtime(request).intent_catalog
-
-
-def get_orchestrator(request: Request) -> GraphRouterOrchestrator:
-    return get_router_runtime(request).orchestrator
-
-
-def get_event_broker_v2(request: Request) -> EventBroker:
-    return get_event_broker(request)
-
-
-def get_orchestrator_v2(request: Request) -> GraphRouterOrchestrator:
-    return get_orchestrator(request)
-
-
-async def close_router_runtime(runtime: RouterRuntime) -> None:
-    await runtime.agent_client.close()
-
-
-async def run_intent_catalog_refresh(
-    stop_event: asyncio.Event,
-    *,
-    catalog: RepositoryIntentCatalog,
-    refresh_interval_seconds: float,
-) -> None:
-    consecutive_failures = 0
-    while not stop_event.is_set():
-        try:
-            await asyncio.to_thread(catalog.refresh_now)
-            consecutive_failures = 0
-        except Exception as exc:
-            consecutive_failures += 1
-            logger.warning("intent catalog refresh failed: %s", exc)
-            if consecutive_failures >= 3:
-                logger.error(
-                    "intent catalog refresh has failed %s consecutive times",
-                    consecutive_failures,
-                )
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=refresh_interval_seconds)
-        except asyncio.TimeoutError:
-            continue
+__all__ = [
+    "RouterRuntime",
+    "_build_llm_client",
+    "build_router_runtime",
+    "close_router_runtime",
+    "get_event_broker",
+    "get_event_broker_v2",
+    "get_intent_catalog",
+    "get_intent_repository",
+    "get_llm_client",
+    "get_orchestrator",
+    "get_orchestrator_v2",
+    "get_router_runtime",
+    "get_settings",
+    "run_intent_catalog_refresh",
+]

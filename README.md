@@ -4,7 +4,17 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 
 ## Project Structure
 
-- `backend/`: FastAPI services, router core, admin API, tests
+- `backend/services/admin-service`: admin service source of truth
+- `backend/services/router-service`: router service source of truth
+- `backend/services/agents/account-balance-agent`: account balance agent source of truth
+- `backend/services/agents/transfer-money-agent`: transfer money agent source of truth
+- `backend/services/agents/credit-card-repayment-agent`: credit card repayment agent source of truth
+- `backend/services/agents/gas-bill-agent`: gas bill payment agent source of truth
+- `backend/services/agents/forex-agent`: forex exchange agent source of truth
+- `backend/services/agents/fallback-agent`: fallback agent source of truth
+- `backend/services/agents/intent_agents`: transitional compatibility shims for legacy imports
+- `backend/contracts/intent-registry`: shared intent registration contract models
+- `backend/src`: transitional compatibility shims and legacy entry modules
 - `frontend/`: chat web, admin web, shared packages
 - `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
@@ -31,6 +41,14 @@ Critical boundary:
 - Router does not execute business intent logic itself.
 - When no active business intent matches, router dispatches to fallback agent.
 - The default Minikube stack ships built-in demo agents for order status and appointment cancellation; register/deploy fallback separately when needed.
+
+Current phase note:
+
+- This branch has completed phase-1 backend split and phase-2 built-in agent split.
+- `admin_service`, `router_service`, and `intent_registry_contracts` are now the canonical Python packages.
+- `backend/src/admin_api`, `backend/src/router_api`, `backend/src/models`, `backend/src/persistence`, and `backend/src/config` are thin compatibility layers.
+- Built-in agents now have canonical per-service source trees under `backend/services/agents/*-agent/src`.
+- `backend/services/agents/intent_agents` and `backend/src/intent_agents` are compatibility shims only.
 
 ## Ingress Path Rules
 
@@ -61,7 +79,8 @@ Connection secrets must stay in local env files or shell env vars. This repo ign
 Router and agents support OpenAI-compatible model access via `langchain`:
 
 - Router recognizer: `router_core`
-- Built-in agents: `intent_agents.account_balance_app`, `intent_agents.transfer_money_app`, `intent_agents.credit_card_repayment_app`, `intent_agents.gas_bill_payment_app`, `intent_agents.forex_exchange_app`, `intent_agents.fallback_app`
+- Built-in agents now live under per-service directories in `backend/services/agents/*-agent/src`.
+- Legacy `intent_agents.*` imports continue to exist as compatibility shims.
 
 Minimum runtime env:
 
@@ -84,6 +103,7 @@ Intent lifecycle:
 - Admin activates/deactivates intents explicitly.
 - Router recognizes only active non-fallback intents.
 - Fallback intent is excluded from recognizer candidates and dispatched only when no match is selected.
+- Shared field semantics can now be managed in Admin under `/api/admin/fields`; intent registration may reference these global fields through `slot_schema[].field_code`.
 
 ## Deployment Requirements
 
@@ -100,28 +120,36 @@ Rationale:
 
 ## Local Development
 
-Install backend dependencies:
+Install backend dependencies for the monorepo regression workspace:
 
 ```bash
 python -m pip install -e .[dev]
 ```
 
-Run split backend services:
+Run admin/router as independently installable services:
 
 ```bash
-uvicorn admin_entry:app --app-dir backend/src --reload --port 8011
-uvicorn router_entry:app --app-dir backend/src --reload --port 8012
+python -m pip install -e backend/contracts/intent-registry -e backend/services/admin-service -e backend/services/router-service
+python -m uvicorn admin_service.api.app:app --reload --port 8011
+python -m uvicorn router_service.api.app:app --reload --port 8012
 ```
 
-Run built-in agents:
+Run built-in agents as independently installable services:
 
 ```bash
-uvicorn intent_agents.account_balance_app:app --app-dir backend/src --reload --port 8101
-uvicorn intent_agents.transfer_money_app:app --app-dir backend/src --reload --port 8102
-uvicorn intent_agents.credit_card_repayment_app:app --app-dir backend/src --reload --port 8103
-uvicorn intent_agents.gas_bill_payment_app:app --app-dir backend/src --reload --port 8104
-uvicorn intent_agents.forex_exchange_app:app --app-dir backend/src --reload --port 8105
-uvicorn intent_agents.fallback_app:app --app-dir backend/src --reload --port 8106
+python -m pip install -e backend/services/agents/account-balance-agent
+python -m pip install -e backend/services/agents/transfer-money-agent
+python -m pip install -e backend/services/agents/credit-card-repayment-agent
+python -m pip install -e backend/services/agents/gas-bill-agent
+python -m pip install -e backend/services/agents/forex-agent
+python -m pip install -e backend/services/agents/fallback-agent
+
+python -m uvicorn account_balance_agent.app:app --reload --port 8101
+python -m uvicorn transfer_money_agent.app:app --reload --port 8102
+python -m uvicorn credit_card_repayment_agent.app:app --reload --port 8103
+python -m uvicorn gas_bill_agent.app:app --reload --port 8104
+python -m uvicorn forex_agent.app:app --reload --port 8105
+python -m uvicorn fallback_agent.app:app --reload --port 8106
 ```
 
 Run tests:
@@ -133,7 +161,8 @@ pytest
 Compatibility note:
 
 - `backend/src/app.py` still exists as an aggregate app for local integration tests.
-- Deployment entrypoints should use `admin_entry:app` and `router_entry:app`.
+- `backend/src/admin_entry.py` and `backend/src/router_entry.py` are legacy shims only.
+- Independent deployments should install and start canonical packages directly from their service directories.
 
 Run frontends:
 

@@ -1,5 +1,7 @@
-from __future__ import annotations
+"""Backward-compatible shim for account_balance_agent.service legacy alias."""
 
-from intent_agents.account_balance_service import AccountBalanceAgentRequest as OrderStatusAgentRequest
-from intent_agents.account_balance_service import AccountBalanceAgentService as OrderStatusAgentService
-from intent_agents.account_balance_service import AccountBalanceResolution as OrderStatusResolution
+from account_balance_agent.service import AccountBalanceAgentRequest as OrderStatusAgentRequest
+from account_balance_agent.service import AccountBalanceAgentService as OrderStatusAgentService
+from account_balance_agent.service import AccountBalanceResolution as OrderStatusResolution
+
+__all__ = ["OrderStatusAgentRequest", "OrderStatusAgentService", "OrderStatusResolution"]

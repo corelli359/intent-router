@@ -6,10 +6,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from admin_api.dependencies import get_settings
-from admin_api.routes.intents import router as admin_router
-from router_api.dependencies import build_router_runtime, close_router_runtime, run_intent_catalog_refresh
-from router_api.routes.sessions import router as graph_router_api_router
+from admin_service.api.dependencies import get_settings
+from admin_service.api.routes.intents import router as admin_router
+from router_service.api.dependencies import build_router_runtime, close_router_runtime, run_intent_catalog_refresh
+from router_service.api.routes.sessions import router as graph_router_api_router
 
 
 def create_app() -> FastAPI:

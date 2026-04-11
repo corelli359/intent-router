@@ -25,6 +25,8 @@ class RecognitionResult:
 
 
 def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
+    field_catalog = getattr(intent, "field_catalog", []) or []
+    graph_build_hints = getattr(intent, "graph_build_hints", None)
     return {
         "intent_code": intent.intent_code,
         "name": intent.name,
@@ -34,8 +36,16 @@ def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
         "dispatch_priority": intent.dispatch_priority,
         "primary_threshold": intent.primary_threshold,
         "candidate_threshold": intent.candidate_threshold,
+        "field_catalog": [
+            field.model_dump(mode="json") if hasattr(field, "model_dump") else dict(field)
+            for field in field_catalog
+        ],
         "slot_schema": [slot.model_dump(mode="json") for slot in intent.slot_schema],
-        "graph_build_hints": intent.graph_build_hints.model_dump(mode="json"),
+        "graph_build_hints": (
+            graph_build_hints.model_dump(mode="json")
+            if hasattr(graph_build_hints, "model_dump")
+            else dict(graph_build_hints or {})
+        ),
     }
 
 

@@ -32,6 +32,30 @@
 设计：这轮改造不能只做增量单测，需要把当前 backend 全量测试、保留的历史回归，以及 chat-web 的类型检查和生产构建都跑完，确认 canonical `/api/router` 与 `/chat` 主入口已经可用。
 实现：已执行 `./.venv/bin/python -m pytest backend/tests -q -rs`，结果为 `103 passed, 7 skipped`；其中 3 个 skip 为显式退役的 V1 测试模块，另外 4 个 skip 为需真实外部环境变量才启用的集成/真 LLM 冒烟；前端已在 `frontend/apps/chat-web` 执行 `npm install`、`npm run typecheck` 与 `npm run build`，全部通过，`/chat` 与 `/chat/v2` 均完成生产构建。
 
+### [x] T44 · 后端物理目录拆分 Phase 1
+设计：先把后端从 `backend/src` 的单包结构拆成 `contracts / admin-service / router-service / agents` 四块实体目录，同时保留兼容入口，避免一刀切迁移导致测试、脚本和部署命令同时失效。第一阶段重点是物理边界落地，不在同一轮强行完成所有历史 import 删除。
+实现：已新增 `backend/contracts/intent-registry/src/intent_registry_contracts`、`backend/services/admin-service/src/admin_service`、`backend/services/router-service/src/router_service`、`backend/services/agents/intent_agents`；`backend/src/admin_api`、`backend/src/router_api`、`backend/src/models`、`backend/src/persistence`、`backend/src/config`、`backend/src/intent_agents` 已改为兼容 shim；`pyproject.toml` 与 `backend/tests/conftest.py` 已更新到新目录；本轮已验证 `.venv` editable install，可直接导入 `admin_service / router_service / intent_registry_contracts`，并补跑 `test_admin_api_intents.py`、`test_multi_intent_agent_apps.py`、`test_platform_app.py`、`test_router_api_v2.py`、`test_sql_intent_repository.py`。
+
+### [x] T45 · Built-in Agent 物理目录拆分 Phase 2
+设计：`agents` 不能再是一个总目录下的大包，否则 deployment 虽然独立，源码边界依然是假的。第二阶段要把内置 agent 继续拆成每个服务一个目录、一个 canonical package，并切断它们对 `router_core/config/models` 这类跨服务实现代码的 import。
+实现：已新增 `backend/services/agents/account-balance-agent/src/account_balance_agent`、`transfer-money-agent/src/transfer_money_agent`、`credit-card-repayment-agent/src/credit_card_repayment_agent`、`gas-bill-agent/src/gas_bill_agent`、`forex-agent/src/forex_agent`、`fallback-agent/src/fallback_agent`；其中 canonical agent package 已改为自包含实现，本地 `support.py / slot_utils.py / finance_utils.py` 不再依赖 `router_core`、`config.settings`、`models.intent`；`backend/services/agents/intent_agents` 与 `backend/src/intent_agents` 已收敛为兼容 shim；`pyproject.toml` 与 `backend/tests/conftest.py` 已纳入新的 agent `src` 路径；K8s agent manifest 与 README 本地启动命令均已切到 canonical service path；本轮补跑 `test_account_balance_agent.py`、`test_transfer_money_agent.py`、`test_multi_intent_agent_apps.py`、`test_intent_agent_services.py`、`test_router_api_v2.py`、`test_platform_app.py`、`test_admin_api_intents.py`、`test_sql_intent_repository.py`，均通过。
+
+### [x] T46 · 服务级打包与部署入口解耦
+设计：只做目录拆分还不够，如果 K8s 仍然 `pip install /workspace` 再从 `backend/src` 起服务，那么部署边界依然是假的。第三阶段要让 `intent-registry`、`admin-service`、`router-service`、各内置 agent 都拥有自己的本地打包元数据，并让部署入口直接指向 canonical package。
+实现：已新增 `backend/contracts/intent-registry/pyproject.toml`、`backend/services/admin-service/pyproject.toml`、`backend/services/router-service/pyproject.toml` 与各 agent 的本地 `pyproject.toml`；K8s `admin-api.yaml`、`router-api.yaml`、`order-agent.yaml`、`appointment-agent.yaml`、`credit-card-repayment-agent.yaml`、`gas-bill-agent.yaml`、`forex-agent.yaml` 已改为只安装各自服务目录，不再安装整仓库，也不再依赖 `backend/src` 入口；同时修正各服务的本地 `.env` 搜索逻辑，避免新增本地 `pyproject.toml` 后丢失仓库根环境配置。
+
+### [x] T47 · Slot Schema / 公共字段语义分层设计
+设计：如果未来存在大量动态注册的 intent，Router 就不能依赖静态 intent 代码模型。`slot_schema` 必须从“只有字段名的平面列表”升级为“公共字段语义 + 意图内槽位角色”两层设计：Admin 统一维护公共字段语义库，intent 注册时通过 `field_code + role` 复用字段并声明当前意图内的业务角色；Router 只消费动态注册文档并映射为自己的 read model，不因新增 intent 发版。
+实现：已新增 `docs/slot-schema-field-catalog-design.md`，明确 `field_catalog`、`slot_schema.field_code`、`slot_schema.role`、Admin/Router/Agent 边界、注册文档形态、海量 intent 场景下的动态消费方式，以及后续分阶段落地路径。
+
+### [x] T48 · 注册文档补齐 `field_catalog / field_code / role`
+设计：设计稿确认后，第一步不重写 runtime，而是先让 intent 注册文档、持久化和 Router-LMM 输入真正具备“公共字段语义 + 意图内槽位角色”的表达能力。这样 Admin 可以开始严谨注册字段语义，Router 也能把 `field_catalog`、`slot_schema.field_code`、`slot_schema.role` 一并喂给 LLM，但仍保持现有 graph runtime 执行行为不变，降低改造风险。
+实现：已在注册模型中新增 `IntentFieldDefinition`、`IntentPayload.field_catalog`、`IntentSlotDefinition.field_code / role / allow_from_context / prompt_hint`，并补充 `slot_key` 唯一性与 `field_code` 引用校验；Admin/Router 的 SQL repository 已新增 `field_catalog_json` 持久化与兼容补列；`IntentDefinition`、`intent_catalog`、`recognizer`、`v2_planner` 与 prompt 已把 `field_catalog` 和 slot 角色语义带入 LLM 输入；补充了 admin API、SQL repository、prompt 相关回归测试。
+
+### [x] T49 · Admin 字段语义中心落地
+设计：既然共性字段的事实来源应在 Admin，那么下一步不能继续要求每个 intent 自带完整 `field_catalog` 才能注册。应先在 Admin 内新增独立的字段语义中心，由字段 CRUD 管理公共字段；intent 注册时优先按 `slot_schema[].field_code` 去字段中心解析并回填展开后的 `field_catalog`，Router 仍保持读取 intent 文档，不同步改执行链路。
+实现：已新增 `IntentFieldRecord`、`IntentFieldRepository`、`InMemoryIntentFieldRepository`、`DatabaseIntentFieldRepository`，以及 `/api/admin/fields` CRUD 路由；intent create/update 路径现已接入字段中心解析 `field_code`，当字段在 Admin 已注册时会自动展开进 intent 的 `field_catalog`，字段仍被 intent 引用时禁止删除；补充了 `test_admin_api_fields.py`、`test_sql_field_repository.py`，并回归验证 admin intent/field 相关测试通过。
+
 ## 2026-04-09 Guided Selection 与条件语义补强
 
 ### [x] T33 · V2 隐式条件依赖修复

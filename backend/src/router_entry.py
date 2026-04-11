@@ -1,4 +1,3 @@
 from __future__ import annotations
 
-from router_api.app import app
-
+from router_service.api.app import app

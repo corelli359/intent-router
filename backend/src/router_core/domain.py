@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from intent_registry_contracts.models import IntentFieldDefinition
 from models.intent import IntentGraphBuildHints, IntentSlotDefinition
 
 
@@ -70,6 +71,7 @@ class IntentDefinition(BaseModel):
     candidate_threshold: float = 0.5
     request_schema: dict[str, Any] = Field(default_factory=dict)
     field_mapping: dict[str, str] = Field(default_factory=dict)
+    field_catalog: list[IntentFieldDefinition] = Field(default_factory=list)
     slot_schema: list[IntentSlotDefinition] = Field(default_factory=list)
     graph_build_hints: IntentGraphBuildHints = Field(default_factory=IntentGraphBuildHints)
     resume_policy: str = "resume_same_task"

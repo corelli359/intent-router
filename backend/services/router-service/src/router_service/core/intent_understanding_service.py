@@ -1,0 +1,157 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from router_service.core.llm_client import llm_exception_is_retryable
+from router_service.core.recognizer import IntentRecognizer, RecognitionResult
+from router_service.core.v2_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
+from router_service.core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
+from router_service.core.v2_planner import TurnDecisionPayload, TurnInterpreter
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class TurnInterpretationResult:
+    decision: TurnDecisionPayload
+    recognition: RecognitionResult
+
+
+class IntentUnderstandingService:
+    def __init__(
+        self,
+        *,
+        intent_catalog: Any,
+        recognizer: IntentRecognizer,
+        graph_builder: IntentGraphBuilder | None,
+        turn_interpreter: TurnInterpreter,
+        event_publisher: Any,
+    ) -> None:
+        self.intent_catalog = intent_catalog
+        self.recognizer = recognizer
+        self.graph_builder = graph_builder
+        self.turn_interpreter = turn_interpreter
+        self.event_publisher = event_publisher
+
+    @property
+    def has_graph_builder(self) -> bool:
+        return self.graph_builder is not None
+
+    async def recognize_message(
+        self,
+        session: GraphSessionState,
+        content: str,
+        *,
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        emit_events: bool,
+    ) -> RecognitionResult:
+        if emit_events:
+            await self.event_publisher.publish_recognition_started(session)
+
+        async def publish_recognition_delta(delta: str) -> None:
+            if not emit_events or not delta:
+                return
+            await self.event_publisher.publish_recognition_delta(session, delta=delta)
+
+        recognition = await self.recognizer.recognize(
+            message=content,
+            intents=self.intent_catalog.list_active(),
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+            on_delta=publish_recognition_delta if emit_events else None,
+        )
+        if emit_events:
+            await self.event_publisher.publish_recognition_completed(session, recognition=recognition)
+        return recognition
+
+    async def build_graph_from_message(
+        self,
+        session: GraphSessionState,
+        content: str,
+        *,
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        recognition: RecognitionResult | None,
+        emit_events: bool,
+    ) -> GraphBuildResult:
+        if emit_events:
+            await self.event_publisher.publish_graph_builder_started(session)
+
+        async def publish_graph_builder_delta(delta: str) -> None:
+            if not emit_events or not delta:
+                return
+            await self.event_publisher.publish_graph_builder_delta(session, delta=delta)
+
+        if self.graph_builder is None:
+            raise RuntimeError("graph_builder is not configured")
+        result = await self.graph_builder.build(
+            message=content,
+            intents=self.intent_catalog.list_active(),
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+            recognition=recognition,
+            on_delta=publish_graph_builder_delta if emit_events else None,
+        )
+        if emit_events:
+            await self.event_publisher.publish_graph_builder_completed(session, result=result)
+        return result
+
+    async def interpret_pending_graph_turn(
+        self,
+        session: GraphSessionState,
+        *,
+        content: str,
+        pending_graph: ExecutionGraphState,
+    ) -> TurnInterpretationResult:
+        try:
+            recognition = await self.recognize_message(
+                session,
+                content,
+                recent_messages=[],
+                long_term_memory=[],
+                emit_events=False,
+            )
+        except Exception as exc:
+            if not llm_exception_is_retryable(exc):
+                raise
+            logger.warning("Pending graph recognition unavailable, falling back to conservative wait", exc_info=True)
+            recognition = RecognitionResult(primary=[], candidates=[])
+        decision = await self.turn_interpreter.interpret_pending_graph(
+            message=content,
+            pending_graph=pending_graph,
+            recognition=recognition,
+        )
+        return TurnInterpretationResult(decision=decision, recognition=recognition)
+
+    async def interpret_waiting_node_turn(
+        self,
+        session: GraphSessionState,
+        *,
+        waiting_node: GraphNodeState,
+        current_graph: ExecutionGraphState,
+        content: str,
+    ) -> TurnInterpretationResult:
+        try:
+            recognition = await self.recognize_message(
+                session,
+                content,
+                recent_messages=[],
+                long_term_memory=[],
+                emit_events=False,
+            )
+        except Exception as exc:
+            if not llm_exception_is_retryable(exc):
+                raise
+            logger.warning("Waiting node recognition unavailable, continuing current node conservatively", exc_info=True)
+            recognition = RecognitionResult(primary=[], candidates=[])
+        decision = await self.turn_interpreter.interpret_waiting_node(
+            message=content,
+            waiting_node=waiting_node,
+            current_graph=current_graph,
+            recognition=recognition,
+        )
+        return TurnInterpretationResult(decision=decision, recognition=recognition)

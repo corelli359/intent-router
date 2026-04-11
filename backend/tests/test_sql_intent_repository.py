@@ -25,11 +25,23 @@ def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, 
         dispatch_priority=100,
         request_schema={"type": "object", "required": ["input"]},
         field_mapping={"input": "$message.current"},
+        field_catalog=[
+            {
+                "field_code": "free_text_input",
+                "label": "输入文本",
+                "semantic_definition": "当前意图接收的一段自由文本输入",
+                "value_type": "string",
+                "examples": ["foo"],
+            }
+        ],
         slot_schema=[
             {
                 "slot_key": "input",
+                "field_code": "free_text_input",
+                "role": "primary_input",
                 "label": "输入",
                 "description": "必填输入参数",
+                "semantic_definition": "当前意图的主输入文本",
                 "value_type": "string",
                 "required": True,
                 "aliases": ["输入"],
@@ -59,7 +71,10 @@ def test_database_repository_persists_records_across_instances(tmp_path: Path) -
     assert [intent.intent_code for intent in all_intents] == ["query_order_status", "fallback_general"]
     assert [intent.intent_code for intent in active_intents] == ["query_order_status", "fallback_general"]
     assert reloaded.get_intent("fallback_general").is_fallback is True
+    assert reloaded.get_intent("query_order_status").field_catalog[0].field_code == "free_text_input"
     assert reloaded.get_intent("query_order_status").slot_schema[0].slot_key == "input"
+    assert reloaded.get_intent("query_order_status").slot_schema[0].field_code == "free_text_input"
+    assert reloaded.get_intent("query_order_status").slot_schema[0].role == "primary_input"
     assert reloaded.get_intent("query_order_status").graph_build_hints.max_nodes_per_message == 4
 
 
@@ -115,4 +130,5 @@ def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Pa
     record = repository.get_intent("transfer_money")
 
     assert record.slot_schema == []
+    assert record.field_catalog == []
     assert record.graph_build_hints.confirm_policy.value == "auto"

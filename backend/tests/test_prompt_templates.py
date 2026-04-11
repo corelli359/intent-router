@@ -39,6 +39,7 @@ def test_recognizer_prompt_explicitly_prevents_single_action_over_split() -> Non
 
     assert len(messages) == 2
     assert "只返回一个 intent" in messages[0].content
+    assert "field_catalog" in messages[0].content
     assert "我要给我弟弟转500" in messages[1].content
     assert "已注册意图清单" in messages[1].content
 
@@ -58,8 +59,8 @@ def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
 
     assert len(messages) == 2
     assert "needs_confirmation=false" in messages[0].content
-    assert "slot_schema 和 graph_build_hints" in messages[0].content
-    assert "semantic_definition" in messages[0].content
+    assert "field_catalog、slot_schema 和 graph_build_hints" in messages[0].content
+    assert "field_code、role、semantic_definition" in messages[0].content
     assert "条件阈值只能进入 edge.condition.right_value" in messages[0].content
     assert "summary" in messages[1].content
     assert '"slot_memory": {}' in messages[1].content
@@ -103,6 +104,7 @@ def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
 
     assert len(messages) == 2
     assert "slot_schema 是强约束" in messages[0].content
+    assert "field_catalog" in messages[0].content
     assert "请尽量输出 node.slot_bindings" in messages[0].content
     assert "条件阈值只能进入 edge.condition.right_value" in messages[0].content
     assert '"primary_intents"' in messages[1].content
