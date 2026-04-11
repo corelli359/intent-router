@@ -14,15 +14,15 @@
 
 如果你要单独看“当前 V2 一条消息会经过几次 LLM、每次 LLM 分别负责什么”，直接看：
 
-- `docs/v2-llm-call-flow.md`
+- `docs/archive/reference-notes/v2-llm-call-flow.md`
 
 如果你要看下一阶段把“意图识别 + graph factory”合并成一次 LLM 的 V2.1 设计，直接看：
 
-- `docs/v2.1-unified-graph-builder-design.md`
+- `docs/archive/reference-notes/v2.1-unified-graph-builder-design.md`
 
 如果你要看“主动推荐事项 + 原样执行 / 修改后进 graph + 执行管理服务”的专项设计，直接看：
 
-- `docs/proactive-recommendation-execution-design.md`
+- `docs/archive/reference-notes/proactive-recommendation-execution-design.md`
 
 ## 2. 当前目标边界
 
@@ -476,7 +476,7 @@ graph 的节点、边、顺序、条件都来自：
 
 这部分的专项设计已单独写在：
 
-- `docs/proactive-recommendation-execution-design.md`
+- `docs/archive/reference-notes/proactive-recommendation-execution-design.md`
 
 ## 9. 未来规划设计
 
