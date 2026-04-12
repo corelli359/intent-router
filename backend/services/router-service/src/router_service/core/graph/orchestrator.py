@@ -51,6 +51,7 @@ from router_service.core.recommendation_router import (
     NullProactiveRecommendationRouter,
     ProactiveRecommendationRouter,
 )
+from router_service.core.graph.action_flow import GraphActionFlow
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.state_sync import GraphStateSync
 from router_service.core.graph.message_flow import GraphMessageFlow
@@ -99,6 +100,7 @@ class GraphRouterOrchestrator:
         slot_resolution_service: SlotResolutionService | None = None,
         graph_compiler: GraphCompiler | None = None,
         state_sync: GraphStateSync | None = None,
+        action_flow: GraphActionFlow | None = None,
         message_flow: GraphMessageFlow | None = None,
     ) -> None:
         self.publish_event = publish_event
@@ -144,6 +146,20 @@ class GraphRouterOrchestrator:
             planner=self.planner,
             understanding_service=self.understanding_service,
             slot_resolution_service=self.slot_resolution_service,
+        )
+        self.action_flow = action_flow or GraphActionFlow(
+            session_store=self.session_store,
+            agent_client=self.agent_client,
+            event_publisher=self.event_publisher,
+            snapshot_session=self.snapshot,
+            get_waiting_node=self._get_waiting_node,
+            get_task=self._get_task,
+            activate_graph=self._activate_graph,
+            drain_graph=self._drain_graph,
+            publish_node_state=self._publish_node_state,
+            refresh_graph_state=self._refresh_graph_state,
+            emit_graph_progress=self._emit_graph_progress,
+            publish_graph_state=self._publish_graph_state,
         )
         self.message_flow = message_flow or GraphMessageFlow(
             session_store=self.session_store,
@@ -235,21 +251,15 @@ class GraphRouterOrchestrator:
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> GraphRouterSnapshot:
-        session = self.session_store.get_or_create(session_id, cust_id)
-        if source not in {None, "router", "graph"}:
-            raise ValueError(f"Unsupported action source: {source}")
-
-        if action_code in {"confirm_graph", "confirm_plan"}:
-            await self._confirm_pending_graph(session, graph_id=task_id, confirm_token=confirm_token)
-            return self.snapshot(session.session_id)
-        if action_code in {"cancel_graph", "cancel_plan"}:
-            await self._cancel_pending_graph(session, graph_id=task_id, confirm_token=confirm_token)
-            return self.snapshot(session.session_id)
-        if action_code == "cancel_node":
-            await self._cancel_current_node(session, reason=(payload or {}).get("reason") or "用户取消当前节点")
-            return self.snapshot(session.session_id)
-
-        raise ValueError(f"Unsupported action_code: {action_code}")
+        return await self.action_flow.handle_action(
+            session_id=session_id,
+            cust_id=cust_id,
+            action_code=action_code,
+            source=source,
+            task_id=task_id,
+            confirm_token=confirm_token,
+            payload=payload,
+        )
 
     async def _route_new_message(
         self,
@@ -691,40 +701,10 @@ class GraphRouterOrchestrator:
         await self.message_flow.handle_waiting_node_turn(session, waiting_node, content)
 
     async def _cancel_current_node(self, session: GraphSessionState, *, reason: str) -> None:
-        graph = session.current_graph
-        node = self._get_waiting_node(session)
-        if graph is None or node is None:
-            raise ValueError("No waiting node to cancel")
-        task = self._get_task(session, node.task_id)
-        if task is not None and task.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.WAITING_CONFIRMATION}:
-            try:
-                await self.agent_client.cancel(session.session_id, task.task_id, task.agent_url)
-            except Exception as exc:
-                logger.warning("Failed to cancel node task %s: %s", task.task_id, exc)
-            task.touch(TaskStatus.CANCELLED)
-        node.touch(GraphNodeStatus.CANCELLED, blocking_reason=reason)
-        await self._publish_node_state(session, graph, node, TaskStatus.CANCELLED, "node.cancelled", reason)
-        await self._refresh_graph_state(session, graph)
-        await self._emit_graph_progress(session)
+        await self.action_flow.cancel_current_node(session, reason=reason)
 
     async def _cancel_current_graph(self, session: GraphSessionState, *, reason: str) -> None:
-        graph = session.current_graph
-        if graph is None:
-            return
-        for node in graph.nodes:
-            if node.status in TERMINAL_NODE_STATUSES:
-                continue
-            task = self._get_task(session, node.task_id)
-            if task is not None and task.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.WAITING_CONFIRMATION}:
-                try:
-                    await self.agent_client.cancel(session.session_id, task.task_id, task.agent_url)
-                except Exception as exc:
-                    logger.warning("Failed to cancel graph task %s: %s", task.task_id, exc)
-                task.touch(TaskStatus.CANCELLED)
-            node.touch(GraphNodeStatus.CANCELLED, blocking_reason=reason)
-        graph.touch(GraphStatus.CANCELLED)
-        session.active_node_id = None
-        await self._publish_graph_state(session, "graph.cancelled", reason, status=TaskStatus.CANCELLED)
+        await self.action_flow.cancel_current_graph(session, reason=reason)
 
     async def _confirm_pending_graph(
         self,
@@ -733,19 +713,11 @@ class GraphRouterOrchestrator:
         graph_id: str | None,
         confirm_token: str | None,
     ) -> None:
-        graph = session.pending_graph
-        if graph is None or graph.status != GraphStatus.WAITING_CONFIRMATION:
-            raise ValueError("No pending graph to confirm")
-        if graph_id not in {None, "session", graph.graph_id}:
-            raise ValueError("Invalid graph id for confirmation")
-        if confirm_token is not None and confirm_token != graph.confirm_token:
-            raise ValueError("Invalid graph confirm token")
-
-        session.pending_graph = None
-        session.current_graph = graph
-        self._activate_graph(graph)
-        await self._publish_graph_state(session, "graph.confirmed", "执行图已确认，开始执行")
-        await self._drain_graph(session, graph.source_message)
+        await self.action_flow.confirm_pending_graph(
+            session,
+            graph_id=graph_id,
+            confirm_token=confirm_token,
+        )
 
     async def _cancel_pending_graph(
         self,
@@ -754,18 +726,11 @@ class GraphRouterOrchestrator:
         graph_id: str | None,
         confirm_token: str | None,
     ) -> None:
-        graph = session.pending_graph
-        if graph is None or graph.status != GraphStatus.WAITING_CONFIRMATION:
-            raise ValueError("No pending graph to cancel")
-        if graph_id not in {None, "session", graph.graph_id}:
-            raise ValueError("Invalid graph id for cancellation")
-        if confirm_token is not None and confirm_token != graph.confirm_token:
-            raise ValueError("Invalid graph confirm token")
-
-        graph.touch(GraphStatus.CANCELLED)
-        graph.actions = []
-        await self.event_publisher.publish_graph_cancelled(session, graph)
-        session.pending_graph = None
+        await self.action_flow.cancel_pending_graph(
+            session,
+            graph_id=graph_id,
+            confirm_token=confirm_token,
+        )
 
     async def _publish_pending_graph(self, session: GraphSessionState) -> None:
         await self.state_sync.publish_pending_graph(session)
