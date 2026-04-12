@@ -11,6 +11,8 @@ from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingS
 
 @dataclass(slots=True)
 class UnderstandingValidationResult:
+    """Router-facing validation result that combines extraction and validation output."""
+
     slot_memory: dict[str, Any]
     slot_bindings: list[SlotBindingState]
     history_slot_keys: list[str]
@@ -23,11 +25,14 @@ class UnderstandingValidationResult:
 
 
 class UnderstandingValidator:
+    """Coordinate slot extraction and slot validation for one graph node."""
+
     def __init__(
         self,
         slot_extractor: SlotExtractor | None = None,
         slot_validator: SlotValidator | None = None,
     ) -> None:
+        """Initialize the validator with pluggable extractor and validator components."""
         self.slot_extractor = slot_extractor or SlotExtractor()
         self.slot_validator = slot_validator or SlotValidator()
 
@@ -40,6 +45,7 @@ class UnderstandingValidator:
         current_message: str,
         long_term_memory: list[str] | None = None,
     ) -> UnderstandingValidationResult:
+        """Extract then validate slots for one node before agent dispatch."""
         extraction = await self.slot_extractor.extract(
             intent=intent,
             node=node,
@@ -61,6 +67,7 @@ class UnderstandingValidator:
         return self._compose(validation)
 
     def _compose(self, validation: SlotValidationResult) -> UnderstandingValidationResult:
+        """Convert the low-level slot validation result into the router-facing result model."""
         return UnderstandingValidationResult(
             slot_memory=validation.slot_memory,
             slot_bindings=validation.slot_bindings,

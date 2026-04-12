@@ -315,6 +315,7 @@ DEFAULT_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT = (
 
 
 def build_recognizer_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    """Build the generic two-message prompt used by recognizer-like LLM chains."""
     return ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -324,20 +325,25 @@ def build_recognizer_prompt(*, system_prompt: str, human_prompt: str) -> ChatPro
 
 
 def build_graph_planner_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    """Build the prompt used by the graph planner chain."""
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
 def build_turn_interpreter_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    """Build the prompt used by the pending-graph and waiting-node interpreter chain."""
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
 def build_unified_graph_builder_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    """Build the prompt used by the unified graph builder chain."""
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
 def build_proactive_recommendation_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    """Build the prompt used by the proactive recommendation router chain."""
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
 def build_slot_extractor_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    """Build the prompt used by the slot extraction chain."""
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)

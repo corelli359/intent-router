@@ -195,6 +195,7 @@ class GraphRuntimeEngine:
         return waiting_nodes[0]
 
     def condition_skipped_nodes(self, graph: ExecutionGraphState) -> list[GraphNodeState]:
+        """Return nodes skipped only because their runtime condition was not met."""
         return [
             node
             for node in graph.nodes

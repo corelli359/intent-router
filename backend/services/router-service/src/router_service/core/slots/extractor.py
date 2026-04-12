@@ -46,6 +46,8 @@ _CURRENCY_TOKENS = {
 
 
 class SlotExtractionItemPayload(BaseModel):
+    """One extracted slot candidate returned by heuristics or the LLM."""
+
     slot_key: str
     value: Any | None = None
     source: SlotBindingSource = SlotBindingSource.USER_MESSAGE
@@ -54,12 +56,15 @@ class SlotExtractionItemPayload(BaseModel):
 
 
 class SlotExtractionPayload(BaseModel):
+    """Structured LLM payload for slot extraction results."""
+
     slots: list[SlotExtractionItemPayload] = Field(default_factory=list)
     ambiguous_slot_keys: list[str] = Field(default_factory=list, alias="ambiguousSlotKeys")
 
     @model_validator(mode="before")
     @classmethod
     def normalize_payload(cls, value: Any) -> Any:
+        """Normalize alternate field names returned by different extraction prompts."""
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
@@ -80,6 +85,8 @@ class SlotExtractionPayload(BaseModel):
 
 @dataclass(slots=True)
 class SlotExtractionResult:
+    """Merged slot extraction result used by downstream slot validation."""
+
     slot_memory: dict[str, Any]
     slot_bindings: list[SlotBindingState]
     history_slot_keys: list[str]
@@ -87,6 +94,8 @@ class SlotExtractionResult:
 
 
 class SlotExtractor:
+    """Extract slot candidates from node context using heuristics plus optional LLM help."""
+
     def __init__(
         self,
         llm_client: JsonLLMClient | None = None,
@@ -95,6 +104,7 @@ class SlotExtractor:
         system_prompt_template: str = DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT,
         human_prompt_template: str = DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
     ) -> None:
+        """Initialize the extractor and compile the optional LLM prompt template."""
         self.llm_client = llm_client
         self.model = model
         self.prompt = build_slot_extractor_prompt(
@@ -111,6 +121,7 @@ class SlotExtractor:
         current_message: str,
         long_term_memory: list[str] | None = None,
     ) -> SlotExtractionResult:
+        """Extract slot candidates from seed bindings, heuristics, and optional LLM output."""
         slot_schema = intent.slot_schema
         slot_defs_by_key = {slot.slot_key: slot for slot in slot_schema}
         history_text = "\n".join(entry for entry in (long_term_memory or []) if entry)
@@ -212,6 +223,7 @@ class SlotExtractor:
         history_text: str,
         from_history: bool,
     ) -> tuple[SlotBindingState | None, bool]:
+        """Validate one existing node binding before reusing it in the current turn."""
         source = binding.source if binding is not None else SlotBindingSource.USER_MESSAGE
         if source == SlotBindingSource.RECOMMENDATION:
             if not slot_def.allow_from_recommendation:
@@ -276,6 +288,7 @@ class SlotExtractor:
         source_fragment: str,
         existing_slot_memory: dict[str, Any],
     ) -> SlotExtractionPayload | None:
+        """Call the slot extraction LLM and normalize its JSON output."""
         if self.llm_client is None:
             return None
         try:
@@ -310,6 +323,7 @@ class SlotExtractor:
         intent: IntentDefinition,
         text: str,
     ) -> list[SlotExtractionItemPayload]:
+        """Run deterministic regex and lexical heuristics over one text fragment."""
         if not text:
             return []
         items: list[SlotExtractionItemPayload] = []
@@ -325,6 +339,7 @@ class SlotExtractor:
         slot_def: IntentSlotDefinition,
         text: str,
     ) -> SlotExtractionItemPayload | None:
+        """Extract one slot value from text according to the slot's semantic type."""
         value: Any | None = None
         source_text: str | None = None
 
@@ -396,6 +411,7 @@ class SlotExtractor:
         slot_def: IntentSlotDefinition,
         text: str,
     ) -> tuple[Any | None, str | None]:
+        """Extract currency-like string slots such as source or target currency."""
         slot_signature = " ".join(
             part.lower()
             for part in (
@@ -427,6 +443,7 @@ class SlotExtractor:
         slot_def: IntentSlotDefinition,
         text: str,
     ) -> tuple[Any | None, str | None]:
+        """Extract generic string slots with special handling for currency semantics."""
         slot_signature = " ".join(
             part.lower()
             for part in (
@@ -448,6 +465,7 @@ class SlotExtractor:
         slot_def: IntentSlotDefinition,
         text: str,
     ) -> re.Match[str] | None:
+        """Find an account-like identifier using slot-specific regex patterns."""
         slot_signature = " ".join(
             part.lower()
             for part in (
@@ -484,6 +502,7 @@ class SlotExtractor:
         slot_def: IntentSlotDefinition,
         text: str,
     ) -> re.Match[str] | None:
+        """Find phone-last4 values using recipient-aware and self-aware regex patterns."""
         slot_signature = " ".join(
             part.lower()
             for part in (
@@ -537,6 +556,7 @@ class SlotExtractor:
         history_text: str,
         allow_replace_existing_user_message: bool,
     ) -> None:
+        """Merge extracted items into slot memory while enforcing overwrite and source rules."""
         for item in items:
             slot_def = slot_defs_by_key.get(item.slot_key)
             if slot_def is None or item.value is None:
@@ -595,6 +615,7 @@ class SlotExtractor:
         incoming: SlotExtractionItemPayload,
         allow_replace_existing_user_message: bool,
     ) -> bool:
+        """Decide whether an incoming extracted value may replace an existing binding."""
         if incoming.value is None:
             return False
         if slot_def.overwrite_policy == SlotOverwritePolicy.ALWAYS_OVERWRITE:
@@ -608,6 +629,7 @@ class SlotExtractor:
         return existing.value != incoming.value
 
     def _combined_text(self, *parts: str | None) -> str:
+        """Join distinct non-empty text fragments in stable order."""
         ordered_parts: list[str] = []
         for part in parts:
             cleaned = (part or "").strip()
@@ -623,6 +645,7 @@ class SlotExtractor:
         value: Any,
         grounding_text: str,
     ) -> bool:
+        """Apply grounding checks, including currency-specific fallback matching."""
         if slot_value_grounded(slot_def=slot_def, value=value, grounding_text=grounding_text):
             return True
         if slot_def.value_type != SlotValueType.STRING:

@@ -11,6 +11,8 @@ from router_service.core.shared.domain import IntentDefinition, IntentDomain
 
 @dataclass(frozen=True, slots=True)
 class CatalogSnapshot:
+    """Immutable snapshot of active intents, fallback intent, and domain views."""
+
     active: tuple[IntentDefinition, ...] = ()
     fallback: IntentDefinition | None = None
     priorities: dict[str, int] = field(default_factory=dict)
@@ -18,6 +20,7 @@ class CatalogSnapshot:
 
 
 def build_intent_domains(intents: Iterable[IntentDefinition]) -> dict[str, IntentDomain]:
+    """Group active leaf intents into domain-level routing views."""
     domain_groups: dict[str, list[IntentDefinition]] = defaultdict(list)
     for intent in intents:
         if not intent.is_leaf_intent or intent.is_fallback:
@@ -53,31 +56,40 @@ def build_intent_domains(intents: Iterable[IntentDefinition]) -> dict[str, Inten
 
 
 class RepositoryIntentCatalog:
+    """Read-optimized catalog facade backed by the admin intent repository."""
+
     def __init__(self, repository: IntentRepository) -> None:
+        """Initialize the catalog with an empty snapshot."""
         self.repository = repository
         self._snapshot = CatalogSnapshot()
 
     def list_active(self) -> list[IntentDefinition]:
+        """Return all currently active routable leaf intents."""
         return list(self._snapshot.active)
 
     def list_active_domains(self) -> list[IntentDomain]:
+        """Return all active domains derived from active leaf intents."""
         return list(self._snapshot.domains.values())
 
     def list_active_leaf_intents(self, domain_code: str) -> list[IntentDefinition]:
+        """Return the active leaf intents under one domain."""
         domain = self._snapshot.domains.get(domain_code)
         if domain is None:
             return []
         return list(domain.leaf_intents)
 
     def priorities(self) -> dict[str, int]:
+        """Return dispatch priorities by intent code."""
         return dict(self._snapshot.priorities)
 
     def get_fallback_intent(self) -> IntentDefinition | None:
+        """Return a deep-copied fallback intent when one is configured."""
         if self._snapshot.fallback is None:
             return None
         return self._snapshot.fallback.model_copy(deep=True)
 
     def refresh_now(self) -> list[IntentDefinition]:
+        """Refresh the catalog snapshot from the repository."""
         active_records = self.repository.list_intents(IntentStatus.ACTIVE)
         routable_intents: list[IntentDefinition] = []
         fallback_intents: list[IntentDefinition] = []
@@ -103,6 +115,7 @@ class RepositoryIntentCatalog:
         return list(self._snapshot.active)
 
     def _to_definition(self, record: IntentRecord) -> IntentDefinition:
+        """Convert an admin record into the runtime intent definition model."""
         return IntentDefinition(
             intent_code=record.intent_code,
             name=record.name,

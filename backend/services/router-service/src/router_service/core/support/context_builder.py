@@ -6,6 +6,8 @@ from router_service.core.shared.domain import ChatMessage, Task
 
 
 class SessionLike(Protocol):
+    """Minimal session protocol required to build recognition and task context."""
+
     session_id: str
     cust_id: str
     messages: list[ChatMessage]
@@ -15,6 +17,7 @@ class ContextBuilder:
     """Builds context windows for recognition and task resumption."""
 
     def build_recent_messages(self, session: SessionLike, limit: int = 15) -> list[str]:
+        """Return the most recent chat messages in `role: content` format."""
         recent = session.messages[-limit:]
         return [f"{message.role}: {message.content}" for message in recent]
 
@@ -24,6 +27,7 @@ class ContextBuilder:
         task: Task | None,
         long_term_memory: list[str],
     ) -> dict[str, object]:
+        """Assemble the base context payload used by recognizers and agents."""
         base = {
             "session_id": session.session_id,
             "cust_id": session.cust_id,

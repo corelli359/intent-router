@@ -69,12 +69,17 @@ TERMINAL_NODE_STATUSES = {
 
 @dataclass(slots=True)
 class GraphRouterOrchestratorConfig:
+    """Runtime knobs controlling intent switching and agent timeout behavior."""
+
     intent_switch_threshold: float = 0.80
     agent_timeout_seconds: float = 60.0
 
 
 class _NoopIntentRecognizer:
+    """Recognizer fallback that always returns an empty result."""
+
     async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        """Return an empty recognition result without performing any semantic work."""
         return RecognitionResult(primary=[], candidates=[])
 
 
@@ -111,6 +116,7 @@ class GraphRouterOrchestrator:
         action_flow: GraphActionFlow | None = None,
         message_flow: GraphMessageFlow | None = None,
     ) -> None:
+        """Assemble the orchestrator and lazily wire all default collaborators."""
         self.publish_event = publish_event
         self.session_store = session_store or GraphSessionStore()
         self.intent_catalog = intent_catalog
@@ -127,10 +133,14 @@ class GraphRouterOrchestrator:
         self.config = config or GraphRouterOrchestratorConfig()
         if self.intent_catalog is None:
             class _FallbackCatalog:
+                """Minimal catalog used when no intent catalog dependency is provided."""
+
                 def list_active(self) -> list[IntentDefinition]:
+                    """Return an empty active intent list."""
                     return []
 
                 def get_fallback_intent(self) -> IntentDefinition | None:
+                    """Return no fallback intent."""
                     return None
 
             self.intent_catalog = _FallbackCatalog()
@@ -188,6 +198,7 @@ class GraphRouterOrchestrator:
         )
 
     def create_session(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
+        """Create a new graph session in the backing session store."""
         return self.session_store.create(cust_id=cust_id, session_id=session_id)
 
     def snapshot(self, session_id: str) -> GraphRouterSnapshot:
@@ -214,6 +225,7 @@ class GraphRouterOrchestrator:
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
     ) -> GraphRouterSnapshot:
+        """Delegate one user message turn into the message-flow state machine."""
         return await self.message_flow.handle_user_message(
             session_id,
             cust_id,
@@ -230,6 +242,7 @@ class GraphRouterOrchestrator:
         content: str,
         proactive_recommendation: ProactiveRecommendationPayload,
     ) -> None:
+        """Delegate proactive recommendation turns into the message flow."""
         await self.message_flow.handle_proactive_recommendation_turn(
             session,
             content=content,
@@ -243,6 +256,7 @@ class GraphRouterOrchestrator:
         content: str,
         guided_selection: GuidedSelectionPayload,
     ) -> None:
+        """Delegate guided-selection turns into the message flow."""
         await self.message_flow.handle_guided_selection_turn(
             session,
             content=content,
@@ -260,6 +274,7 @@ class GraphRouterOrchestrator:
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> GraphRouterSnapshot:
+        """Delegate one explicit graph action into the action-flow state machine."""
         return await self.action_flow.handle_action(
             session_id=session_id,
             cust_id=cust_id,
@@ -283,6 +298,7 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         skip_history_prefill: bool = False,
     ) -> None:
+        """Delegate free-form message routing into the message flow."""
         await self.message_flow.route_new_message(
             session,
             content,
@@ -302,6 +318,7 @@ class GraphRouterOrchestrator:
         content: str,
         guided_selection: GuidedSelectionPayload,
     ) -> None:
+        """Delegate guided-selection routing into the message flow."""
         await self.message_flow.route_guided_selection(
             session,
             content=content,
@@ -316,6 +333,7 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload,
         selected_items: list[ProactiveRecommendationItem],
     ) -> None:
+        """Delegate proactive interactive graph routing into the message flow."""
         await self.message_flow.route_proactive_interactive_graph(
             session,
             content=content,
@@ -332,6 +350,7 @@ class GraphRouterOrchestrator:
         long_term_memory: list[str],
         emit_events: bool,
     ) -> Any:
+        """Delegate message recognition into the understanding service."""
         return await self.understanding_service.recognize_message(
             session,
             content,
@@ -350,6 +369,7 @@ class GraphRouterOrchestrator:
         recognition: RecognitionResult | None,
         emit_events: bool,
     ) -> GraphBuildResult:
+        """Delegate unified graph building into the understanding service."""
         return await self.understanding_service.build_graph_from_message(
             session,
             content,
@@ -360,6 +380,7 @@ class GraphRouterOrchestrator:
         )
 
     def _activate_graph(self, graph: ExecutionGraphState) -> None:
+        """Delegate graph activation into the runtime engine."""
         self.runtime_engine.activate_graph(graph)
 
     async def _drain_graph(self, session: GraphSessionState, seed_input: str) -> None:
@@ -611,6 +632,7 @@ class GraphRouterOrchestrator:
         *,
         payload: dict[str, Any] | None = None,
     ) -> None:
+        """Mark one node as failed and publish the corresponding runtime events."""
         task.touch(TaskStatus.FAILED)
         node.touch(GraphNodeStatus.FAILED)
         node.output_payload = dict(payload or {})
@@ -723,6 +745,7 @@ class GraphRouterOrchestrator:
         await self._drain_graph(session, content)
 
     async def _handle_pending_graph_turn(self, session: GraphSessionState, content: str) -> None:
+        """Delegate pending-graph follow-up turns into the message flow."""
         await self.message_flow.handle_pending_graph_turn(session, content)
 
     async def _handle_waiting_node_turn(
@@ -731,12 +754,15 @@ class GraphRouterOrchestrator:
         waiting_node: GraphNodeState,
         content: str,
     ) -> None:
+        """Delegate waiting-node follow-up turns into the message flow."""
         await self.message_flow.handle_waiting_node_turn(session, waiting_node, content)
 
     async def _cancel_current_node(self, session: GraphSessionState, *, reason: str) -> None:
+        """Delegate current-node cancellation into the action flow."""
         await self.action_flow.cancel_current_node(session, reason=reason)
 
     async def _cancel_current_graph(self, session: GraphSessionState, *, reason: str) -> None:
+        """Delegate current-graph cancellation into the action flow."""
         await self.action_flow.cancel_current_graph(session, reason=reason)
 
     async def _confirm_pending_graph(
@@ -746,6 +772,7 @@ class GraphRouterOrchestrator:
         graph_id: str | None,
         confirm_token: str | None,
     ) -> None:
+        """Delegate pending-graph confirmation into the action flow."""
         await self.action_flow.confirm_pending_graph(
             session,
             graph_id=graph_id,
@@ -759,6 +786,7 @@ class GraphRouterOrchestrator:
         graph_id: str | None,
         confirm_token: str | None,
     ) -> None:
+        """Delegate pending-graph cancellation into the action flow."""
         await self.action_flow.cancel_pending_graph(
             session,
             graph_id=graph_id,
@@ -766,12 +794,15 @@ class GraphRouterOrchestrator:
         )
 
     async def _publish_pending_graph(self, session: GraphSessionState) -> None:
+        """Delegate pending-graph publication into the state-sync layer."""
         await self.state_sync.publish_pending_graph(session)
 
     async def _publish_graph_waiting_hint(self, session: GraphSessionState) -> None:
+        """Delegate pending-graph waiting hints into the state-sync layer."""
         await self.state_sync.publish_graph_waiting_hint(session)
 
     async def _publish_no_match_hint(self, session: GraphSessionState) -> None:
+        """Delegate the no-match hint into the state-sync layer."""
         await self.state_sync.publish_no_match_hint(session)
 
     async def _publish_graph_state(
@@ -782,6 +813,7 @@ class GraphRouterOrchestrator:
         *,
         status: TaskStatus | None = None,
     ) -> None:
+        """Delegate graph-state publication into the state-sync layer."""
         await self.state_sync.publish_graph_state(session, event, message, status=status)
 
     async def _publish_node_state(
@@ -793,30 +825,39 @@ class GraphRouterOrchestrator:
         event: str,
         message: str,
     ) -> None:
+        """Delegate node-state publication into the state-sync layer."""
         await self.state_sync.publish_node_state(session, graph, node, task_status, event, message)
 
     async def _publish_session_state(self, session: GraphSessionState, event: str) -> None:
+        """Delegate session-state publication into the state-sync layer."""
         await self.state_sync.publish_session_state(session, event)
 
     async def _emit_graph_progress(self, session: GraphSessionState) -> None:
+        """Delegate graph-progress emission into the state-sync layer."""
         await self.state_sync.emit_graph_progress(session)
 
     def _refresh_node_states(self, graph: ExecutionGraphState) -> None:
+        """Delegate node-state recomputation into the state-sync layer."""
         self.state_sync.refresh_node_states(graph)
 
     def _condition_matches_from_condition(self, source: GraphNodeState, condition: GraphCondition | None) -> bool:
+        """Delegate condition evaluation into the state-sync/runtime layers."""
         return self.state_sync.condition_matches_from_condition(source, condition)
 
     def _graph_status(self, graph: ExecutionGraphState) -> GraphStatus:
+        """Delegate graph-status aggregation into the state-sync/runtime layers."""
         return self.state_sync.graph_status(graph)
 
     def _next_ready_node(self, graph: ExecutionGraphState) -> GraphNodeState | None:
+        """Delegate ready-node lookup into the state-sync/runtime layers."""
         return self.state_sync.next_ready_node(graph)
 
     def _get_waiting_node(self, session: GraphSessionState) -> GraphNodeState | None:
+        """Delegate waiting-node lookup into the state-sync/runtime layers."""
         return self.state_sync.get_waiting_node(session)
 
     def _get_task(self, session: GraphSessionState, task_id: str | None) -> Task | None:
+        """Return one task from the session by id when it exists."""
         if task_id is None:
             return None
         for task in session.tasks:
@@ -825,6 +866,7 @@ class GraphRouterOrchestrator:
         return None
 
     async def _refresh_graph_state(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
+        """Delegate graph-state recomputation into the state-sync layer."""
         await self.state_sync.refresh_graph_state(session, graph)
 
     def _apply_history_prefill_policy(
@@ -837,6 +879,7 @@ class GraphRouterOrchestrator:
         recent_messages: list[str],
         long_term_memory: list[str],
     ) -> None:
+        """Delegate history slot prefill into the state-sync/slot-resolution layers."""
         self.state_sync.apply_history_prefill_policy(
             session,
             graph,
@@ -852,6 +895,7 @@ class GraphRouterOrchestrator:
         *,
         long_term_memory: list[str],
     ) -> dict[str, Any]:
+        """Delegate historical slot lookup into the state-sync/slot-resolution layers."""
         return self.state_sync.history_slot_values(
             session,
             long_term_memory=long_term_memory,
@@ -865,6 +909,7 @@ class GraphRouterOrchestrator:
         source_text: str | None,
         confidence: float,
     ) -> list[SlotBindingState]:
+        """Delegate structured slot-binding creation into the state-sync layer."""
         return self.state_sync.structured_slot_bindings(
             slot_memory=slot_memory,
             source=source,
@@ -879,6 +924,7 @@ class GraphRouterOrchestrator:
         preferred_sources: dict[str, SlotBindingSource] | None = None,
         source_text: str | None = None,
     ) -> None:
+        """Delegate node slot-binding reconstruction into the state-sync layer."""
         self.state_sync.rebuild_node_slot_bindings(
             node,
             preferred_sources=preferred_sources,
@@ -913,27 +959,33 @@ class GraphRouterOrchestrator:
         return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
 
     def _sanitize_recent_messages_for_planning(self, recent_messages: list[str]) -> list[str]:
+        """Delegate planning-message sanitization into the message flow."""
         return self.message_flow.sanitize_recent_messages_for_planning(recent_messages)
 
     def _fallback_intent(self) -> IntentDefinition | None:
+        """Return the configured fallback intent from the catalog when available."""
         getter = getattr(self.intent_catalog, "get_fallback_intent", None)
         if getter is None:
             return None
         return getter()
 
     def _node_status_for_task_status(self, status: TaskStatus) -> GraphNodeStatus:
+        """Delegate task-to-node status translation into the state-sync/runtime layers."""
         return self.state_sync.node_status_for_task_status(status)
 
     def _task_status_for_graph(self, status: GraphStatus) -> TaskStatus:
+        """Delegate graph-to-task status translation into the state-sync/runtime layers."""
         return self.state_sync.task_status_for_graph(status)
 
     def _guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:
+        """Delegate guided-selection display rendering into the graph compiler."""
         return self.graph_compiler.guided_selection_display_content(guided_selection)
 
     def _guided_selection_from_proactive_items(
         self,
         selected_items: list[ProactiveRecommendationItem],
     ) -> GuidedSelectionPayload:
+        """Delegate proactive-item conversion into a guided-selection payload."""
         return self.graph_compiler.guided_selection_from_proactive_items(selected_items)
 
     def _augment_recent_messages_with_recommendations(
@@ -942,6 +994,7 @@ class GraphRouterOrchestrator:
         *,
         recommendation_context: RecommendationContextPayload | None,
     ) -> list[str]:
+        """Delegate recommendation-context augmentation into the graph compiler."""
         return self.graph_compiler.augment_recent_messages_with_recommendations(
             recent_messages,
             recommendation_context=recommendation_context,
@@ -954,6 +1007,7 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload,
         selected_items: list[ProactiveRecommendationItem],
     ) -> list[str]:
+        """Delegate proactive-selection augmentation into the graph compiler."""
         return self.graph_compiler.augment_recent_messages_with_proactive_selection(
             recent_messages,
             proactive_recommendation=proactive_recommendation,
@@ -961,27 +1015,32 @@ class GraphRouterOrchestrator:
         )
 
     def _recommendation_context_summary(self, recommendation_context: RecommendationContextPayload) -> str:
+        """Delegate recommendation-context rendering into the graph compiler."""
         return self.graph_compiler.recommendation_context_summary(recommendation_context)
 
     def _proactive_recommendation_context_summary(
         self,
         proactive_recommendation: ProactiveRecommendationPayload,
     ) -> str:
+        """Delegate proactive recommendation rendering into the graph compiler."""
         return self.graph_compiler.proactive_recommendation_context_summary(proactive_recommendation)
 
     def _proactive_selection_summary(
         self,
         selected_items: list[ProactiveRecommendationItem],
     ) -> str:
+        """Delegate proactive selection rendering into the graph compiler."""
         return self.graph_compiler.proactive_selection_summary(selected_items)
 
     def _guided_selection_summary(self, guided_selection: GuidedSelectionPayload) -> str:
+        """Delegate guided-selection summary rendering into the graph compiler."""
         return self.graph_compiler.guided_selection_summary(guided_selection)
 
     def _recognition_from_proactive_items(
         self,
         selected_items: list[ProactiveRecommendationItem],
     ) -> RecognitionResult:
+        """Delegate proactive-item recognition synthesis into the graph compiler."""
         return self.graph_compiler.recognition_from_proactive_items(selected_items)
 
     def _apply_proactive_slot_defaults(
@@ -992,6 +1051,7 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload | None,
         intents_by_code: dict[str, IntentDefinition],
     ) -> None:
+        """Delegate proactive slot-default injection into the state-sync layer."""
         self.state_sync.apply_proactive_slot_defaults(
             graph,
             selected_items=selected_items,

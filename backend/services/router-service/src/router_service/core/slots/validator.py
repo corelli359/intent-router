@@ -20,6 +20,8 @@ _CURRENCY_TOKENS = {
 
 @dataclass(slots=True)
 class SlotValidationResult:
+    """Validated slot state plus dispatch permission and user prompt information."""
+
     slot_memory: dict[str, Any]
     slot_bindings: list[SlotBindingState]
     history_slot_keys: list[str]
@@ -32,6 +34,8 @@ class SlotValidationResult:
 
 
 class SlotValidator:
+    """Validate extracted slot candidates before the router dispatches a node."""
+
     def validate(
         self,
         *,
@@ -45,6 +49,7 @@ class SlotValidator:
         current_message: str,
         long_term_memory: list[str] | None = None,
     ) -> SlotValidationResult:
+        """Validate extracted slots against grounding, history rules, and required fields."""
         slot_defs_by_key = {slot.slot_key: slot for slot in intent.slot_schema}
         binding_by_key = {binding.slot_key: binding for binding in slot_bindings}
         grounding_text = self._combined_text(graph_source_message, node_source_fragment, current_message)
@@ -127,6 +132,7 @@ class SlotValidator:
         grounding_text: str,
         history_text: str,
     ) -> bool:
+        """Check whether one binding source/value pair may be trusted for dispatch."""
         if value is None:
             return False
         if isinstance(value, str) and not value.strip():
@@ -157,6 +163,7 @@ class SlotValidator:
         ambiguous_slot_keys: list[str],
         invalid_slot_keys: list[str],
     ) -> str | None:
+        """Build the user-facing follow-up prompt for missing or invalid slots."""
         labels_by_key = {
             slot.slot_key: slot.label or slot.description or slot.slot_key
             for slot in intent.slot_schema
@@ -176,6 +183,7 @@ class SlotValidator:
         return "；".join(parts)
 
     def _combined_text(self, *parts: str | None) -> str:
+        """Join distinct non-empty text fragments in stable order."""
         ordered_parts: list[str] = []
         for part in parts:
             cleaned = (part or "").strip()
@@ -185,6 +193,7 @@ class SlotValidator:
         return "\n".join(ordered_parts)
 
     def _value_is_grounded(self, *, slot_def, value: Any, grounding_text: str) -> bool:
+        """Apply grounding logic, including currency-specific fallback matching."""
         if slot_value_grounded(slot_def=slot_def, value=value, grounding_text=grounding_text):
             return True
         if slot_def.value_type != SlotValueType.STRING:

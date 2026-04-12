@@ -20,11 +20,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class RecognitionResult:
+    """Primary and candidate intent matches returned by recognition."""
+
     primary: list[IntentMatch]
     candidates: list[IntentMatch]
 
 
 def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
+    """Convert one intent definition into the JSON payload consumed by the LLM prompt."""
     field_catalog = getattr(intent, "field_catalog", []) or []
     graph_build_hints = getattr(intent, "graph_build_hints", None)
     return {
@@ -54,6 +57,8 @@ def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
 
 
 class IntentRecognizer(Protocol):
+    """Protocol for components that can recognize intents from free-form messages."""
+
     async def recognize(
         self,
         message: str,
@@ -61,7 +66,9 @@ class IntentRecognizer(Protocol):
         recent_messages: list[str],
         long_term_memory: list[str],
         on_delta: Callable[[str], Awaitable[None]] | None = None,
-    ) -> RecognitionResult: ...
+    ) -> RecognitionResult:
+        """Recognize primary and candidate intents from one message."""
+        ...
 
 
 class NullIntentRecognizer:
@@ -75,10 +82,13 @@ class NullIntentRecognizer:
         long_term_memory: list[str],
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RecognitionResult:
+        """Return an empty recognition result without attempting semantic routing."""
         return RecognitionResult(primary=[], candidates=[])
 
 
 class LLMIntentRecognizer:
+    """LLM-backed recognizer that emits primary and candidate intent matches."""
+
     def __init__(
         self,
         llm_client: JsonLLMClient,
@@ -88,6 +98,7 @@ class LLMIntentRecognizer:
         system_prompt_template: str = DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
         human_prompt_template: str = DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     ) -> None:
+        """Initialize the recognizer and compile the selected prompt template."""
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or NullIntentRecognizer()
@@ -104,6 +115,7 @@ class LLMIntentRecognizer:
         long_term_memory: list[str],
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RecognitionResult:
+        """Run LLM-based recognition and bucket matches by configured thresholds."""
         active_intents = [intent for intent in intents if intent.status == "active"]
         if not active_intents:
             return RecognitionResult(primary=[], candidates=[])
@@ -162,6 +174,7 @@ class LLMIntentRecognizer:
             seen_codes.add(intent_code)
 
         def _sort_key(match: IntentMatch) -> tuple[int, float]:
+            """Sort higher-priority and higher-confidence matches first."""
             intent = definitions_by_code[match.intent_code]
             return (intent.dispatch_priority, match.confidence)
 

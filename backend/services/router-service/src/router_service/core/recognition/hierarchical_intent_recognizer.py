@@ -11,6 +11,8 @@ from router_service.core.recognition.recognizer import IntentRecognizer, Recogni
 
 
 class HierarchicalIntentRecognizer:
+    """Two-stage recognizer that routes by domain first, then by leaf intent."""
+
     def __init__(
         self,
         *,
@@ -19,6 +21,7 @@ class HierarchicalIntentRecognizer:
         fallback: IntentRecognizer,
         intent_catalog: Any | None = None,
     ) -> None:
+        """Initialize the hierarchical recognizer with domain, leaf, and fallback routers."""
         self.domain_router = domain_router
         self.leaf_router = leaf_router
         self.fallback = fallback
@@ -32,6 +35,7 @@ class HierarchicalIntentRecognizer:
         long_term_memory: list[str],
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RecognitionResult:
+        """Recognize intents by first narrowing down candidate domains."""
         active_intents = [
             intent
             for intent in intents
@@ -92,6 +96,7 @@ class HierarchicalIntentRecognizer:
         recent_messages: list[str],
         long_term_memory: list[str],
     ) -> RecognitionResult:
+        """Aggregate leaf recognition results across matched domains."""
         domain_index = {domain.domain_code: domain for domain in domains}
         dispatch_priorities = {
             intent.intent_code: intent.dispatch_priority
@@ -101,6 +106,7 @@ class HierarchicalIntentRecognizer:
         best_by_code: dict[str, tuple[bool, float, str]] = {}
 
         async def _merge_domain_matches(matches: list[DomainMatch], *, domain_is_primary: bool) -> None:
+            """Merge leaf matches produced under one bucket of domain matches."""
             for domain_match in matches:
                 domain = domain_index.get(domain_match.domain_code)
                 if domain is None:
@@ -138,6 +144,7 @@ class HierarchicalIntentRecognizer:
                 candidates.append(match)
 
         def _sort_key(match: IntentMatch) -> tuple[int, float, str]:
+            """Sort higher-priority and higher-confidence matches first."""
             return (
                 dispatch_priorities.get(match.intent_code, 0),
                 match.confidence,
@@ -156,6 +163,7 @@ class HierarchicalIntentRecognizer:
         domain_match: DomainMatch,
         produce_primary: bool,
     ) -> None:
+        """Merge one batch of leaf matches into the best-by-code accumulator."""
         for leaf_match in leaf_matches:
             confidence = round(min(domain_match.confidence, leaf_match.confidence), 2)
             reason = (
@@ -172,6 +180,7 @@ class HierarchicalIntentRecognizer:
         candidate: tuple[bool, float, str],
         current: tuple[bool, float, str],
     ) -> bool:
+        """Return whether one aggregated match should replace the current best match."""
         candidate_primary, candidate_confidence, _ = candidate
         current_primary, current_confidence, _ = current
         if candidate_primary != current_primary:
@@ -179,6 +188,7 @@ class HierarchicalIntentRecognizer:
         return candidate_confidence > current_confidence
 
     def _resolve_domains(self, active_intents: list[IntentDefinition]) -> list[IntentDomain]:
+        """Resolve domain views from active intents or the shared catalog."""
         domains = list(build_intent_domains(active_intents).values())
         if domains:
             return domains
@@ -195,6 +205,7 @@ class HierarchicalIntentRecognizer:
         long_term_memory: list[str],
         on_delta: Callable[[str], Awaitable[None]] | None,
     ) -> RecognitionResult:
+        """Delegate recognition to the fallback recognizer when hierarchy is unavailable."""
         return await self.fallback.recognize(
             message=message,
             intents=intents,

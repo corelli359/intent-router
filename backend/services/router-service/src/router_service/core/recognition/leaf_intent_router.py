@@ -8,7 +8,10 @@ from router_service.core.recognition.recognizer import IntentMatch, IntentRecogn
 
 
 class LeafIntentRouter:
+    """Route within one domain's leaf intents using direct or model-based recognition."""
+
     def __init__(self, recognizer: IntentRecognizer) -> None:
+        """Initialize the leaf router with the underlying recognizer."""
         self.recognizer = recognizer
 
     async def route(
@@ -21,6 +24,7 @@ class LeafIntentRouter:
         allow_direct_single_leaf: bool = True,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RecognitionResult:
+        """Recognize leaf intents, optionally short-circuiting single-leaf domains."""
         leaf_intents = list(intents)
         if not leaf_intents:
             return RecognitionResult(primary=[], candidates=[])

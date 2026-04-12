@@ -15,10 +15,14 @@ from router_service.core.graph.runtime import GraphRuntimeEngine
 
 
 class GraphSnapshotPresenter:
+    """Convert graph runtime objects into user-facing event payloads and messages."""
+
     def __init__(self, runtime_engine: GraphRuntimeEngine | None = None) -> None:
+        """Initialize the presenter with a runtime engine for derived graph facts."""
         self.runtime_engine = runtime_engine or GraphRuntimeEngine()
 
     def graph_event_name(self, status: GraphStatus) -> str:
+        """Map graph status to the canonical SSE event name."""
         if status == GraphStatus.COMPLETED:
             return "graph.completed"
         if status == GraphStatus.PARTIALLY_COMPLETED:
@@ -30,6 +34,7 @@ class GraphSnapshotPresenter:
         return "graph.updated"
 
     def graph_message(self, graph: ExecutionGraphState) -> str:
+        """Build the user-facing graph summary message for the current graph status."""
         status = graph.status
         condition_skips = self.runtime_engine.condition_skipped_nodes(graph)
         if status == GraphStatus.COMPLETED:
@@ -58,6 +63,7 @@ class GraphSnapshotPresenter:
         graph: ExecutionGraphState,
         previous_status: GraphStatus,
     ) -> bool:
+        """Return whether the graph transition should append an assistant message."""
         if graph.status not in {
             GraphStatus.COMPLETED,
             GraphStatus.PARTIALLY_COMPLETED,
@@ -70,6 +76,7 @@ class GraphSnapshotPresenter:
         return graph.status != GraphStatus.COMPLETED or bool(self.runtime_engine.condition_skipped_nodes(graph))
 
     def skipped_node_message(self, node: GraphNodeState) -> str:
+        """Build the user-facing message for a skipped node."""
         if node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value:
             if node.blocking_reason:
                 return f"节点「{node.title}」未执行：条件不满足（{node.blocking_reason}）"
@@ -85,6 +92,7 @@ class GraphSnapshotPresenter:
         include_actions: bool = False,
         pending: bool = False,
     ) -> dict[str, Any]:
+        """Serialize one graph into the API/SSE payload shape."""
         payload = {
             "graph_id": graph.graph_id,
             "source_message": graph.source_message,
@@ -100,6 +108,7 @@ class GraphSnapshotPresenter:
         return payload
 
     def node_payload(self, node: GraphNodeState) -> dict[str, Any]:
+        """Serialize one node into the API/SSE payload shape."""
         return {
             "node_id": node.node_id,
             "intent_code": node.intent_code,
@@ -121,6 +130,7 @@ class GraphSnapshotPresenter:
         }
 
     def graph_interaction(self, graph: ExecutionGraphState, *, pending: bool) -> dict[str, Any]:
+        """Build the frontend-oriented interaction payload for one graph card."""
         return {
             "type": "graph_card",
             "card_type": "dynamic_graph",
@@ -135,6 +145,7 @@ class GraphSnapshotPresenter:
         }
 
     def normalize_interaction_payload(self, payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+        """Ensure interaction payloads carry a source marker for the frontend/client."""
         interaction = payload.get("interaction")
         if not isinstance(interaction, dict):
             return payload
@@ -146,22 +157,27 @@ class GraphSnapshotPresenter:
 
 
 class GraphEventPublisher:
+    """Publish graph, node, and session events in the normalized SSE event shape."""
+
     def __init__(
         self,
         publish_event: Callable[[TaskEvent], Any],
         presenter: GraphSnapshotPresenter | None = None,
         runtime_engine: GraphRuntimeEngine | None = None,
     ) -> None:
+        """Initialize the event publisher and its presenter/runtime helpers."""
         self.publish_event = publish_event
         self.presenter = presenter or GraphSnapshotPresenter(runtime_engine=runtime_engine)
         self.runtime_engine = runtime_engine or self.presenter.runtime_engine
 
     async def publish(self, event: TaskEvent) -> None:
+        """Publish one event, supporting both sync and async publisher callbacks."""
         result = self.publish_event(event)
         if result is not None and hasattr(result, "__await__"):
             await result
 
     async def publish_recognition_started(self, session: GraphSessionState) -> None:
+        """Publish the start of a recognition phase."""
         await self.publish(
             TaskEvent(
                 event="recognition.started",
@@ -175,6 +191,7 @@ class GraphEventPublisher:
         )
 
     async def publish_recognition_delta(self, session: GraphSessionState, *, delta: str) -> None:
+        """Publish one streamed recognition delta token or fragment."""
         if not delta:
             return
         await self.publish(
@@ -190,6 +207,7 @@ class GraphEventPublisher:
         )
 
     async def publish_recognition_completed(self, session: GraphSessionState, *, recognition: Any) -> None:
+        """Publish the completed recognition result."""
         primary_intents = [match.intent_code for match in recognition.primary]
         await self.publish(
             TaskEvent(
@@ -212,6 +230,7 @@ class GraphEventPublisher:
         )
 
     async def publish_graph_builder_started(self, session: GraphSessionState) -> None:
+        """Publish the start of the unified graph builder phase."""
         await self.publish(
             TaskEvent(
                 event="graph_builder.started",
@@ -225,6 +244,7 @@ class GraphEventPublisher:
         )
 
     async def publish_graph_builder_delta(self, session: GraphSessionState, *, delta: str) -> None:
+        """Publish one streamed delta from the unified graph builder."""
         if not delta:
             return
         await self.publish(
@@ -240,6 +260,7 @@ class GraphEventPublisher:
         )
 
     async def publish_graph_builder_completed(self, session: GraphSessionState, *, result: Any) -> None:
+        """Publish the completed unified graph builder result."""
         await self.publish(
             TaskEvent(
                 event="graph_builder.completed",
@@ -271,6 +292,7 @@ class GraphEventPublisher:
         status: TaskStatus | None = None,
         pending: bool = False,
     ) -> None:
+        """Publish one graph-level state update."""
         resolved_status = status or self.runtime_engine.task_status_for_graph(graph.status)
         await self.publish(
             TaskEvent(
@@ -309,6 +331,7 @@ class GraphEventPublisher:
         payload: dict[str, Any] | None = None,
         source: str | None = None,
     ) -> None:
+        """Publish one node-level runtime event with graph and node payload context."""
         event_payload: dict[str, Any] = {
             "cust_id": session.cust_id,
             **(payload or {}),
@@ -340,6 +363,7 @@ class GraphEventPublisher:
         event: str,
         message: str,
     ) -> None:
+        """Publish a simplified node state transition event."""
         await self.publish_node_runtime_event(
             session,
             graph,
@@ -350,6 +374,7 @@ class GraphEventPublisher:
         )
 
     async def publish_session_state(self, session: GraphSessionState, *, event: str) -> None:
+        """Publish a session-level state update."""
         payload: dict[str, Any] = {
             "cust_id": session.cust_id,
             "active_node_id": session.active_node_id,
@@ -377,6 +402,7 @@ class GraphEventPublisher:
         )
 
     async def publish_unrecognized(self, session: GraphSessionState, *, message: str) -> None:
+        """Publish the router's no-match outcome."""
         await self.publish(
             TaskEvent(
                 event="graph.unrecognized",
@@ -391,6 +417,7 @@ class GraphEventPublisher:
         )
 
     async def publish_pending_graph(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
+        """Publish a newly proposed pending graph that requires confirmation."""
         await self.publish(
             TaskEvent(
                 event="graph.proposed",
@@ -412,6 +439,7 @@ class GraphEventPublisher:
         )
 
     async def publish_graph_waiting_hint(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
+        """Publish a reminder that a pending graph still awaits confirmation."""
         await self.publish(
             TaskEvent(
                 event="graph.waiting_confirmation",
@@ -433,6 +461,7 @@ class GraphEventPublisher:
         )
 
     async def publish_graph_cancelled(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
+        """Publish cancellation of a pending or current graph."""
         await self.publish(
             TaskEvent(
                 event="graph.cancelled",

@@ -9,16 +9,21 @@ from pydantic import BaseModel, Field, model_validator
 
 
 def utcnow() -> datetime:
+    """Return the current UTC timestamp for intent records."""
     return datetime.now(timezone.utc)
 
 
 class IntentStatus(str, Enum):
+    """Lifecycle status for admin-managed intents."""
+
     ACTIVE = "active"
     INACTIVE = "inactive"
     GRAYSCALE = "grayscale"
 
 
 class SlotValueType(str, Enum):
+    """Canonical semantic value types for slots and fields."""
+
     STRING = "string"
     NUMBER = "number"
     INTEGER = "integer"
@@ -33,24 +38,32 @@ class SlotValueType(str, Enum):
 
 
 class SlotOverwritePolicy(str, Enum):
+    """Policy controlling how new slot values replace existing values."""
+
     OVERWRITE_IF_NEW_NONEMPTY = "overwrite_if_new_nonempty"
     KEEP_ORIGINAL = "keep_original"
     ALWAYS_OVERWRITE = "always_overwrite"
 
 
 class SlotBindingScope(str, Enum):
+    """Where a slot value is expected to participate inside graph execution."""
+
     NODE_INPUT = "node_input"
     CONDITION_OPERAND = "condition_operand"
     SHARED_PREFILL = "shared_prefill"
 
 
 class SlotConfirmationPolicy(str, Enum):
+    """When the router should ask the user to confirm a slot value."""
+
     NEVER = "never"
     WHEN_AMBIGUOUS = "when_ambiguous"
     ALWAYS = "always"
 
 
 class GraphConfirmPolicy(str, Enum):
+    """When the router should require graph-level confirmation before execution."""
+
     AUTO = "auto"
     ALWAYS = "always"
     MULTI_NODE_ONLY = "multi_node_only"
@@ -58,6 +71,8 @@ class GraphConfirmPolicy(str, Enum):
 
 
 class IntentFieldDefinition(BaseModel):
+    """Definition of one reusable semantic field in the intent catalog."""
+
     field_code: str = Field(min_length=1, max_length=128)
     label: str = Field(default="", max_length=128)
     semantic_definition: str = Field(default="", max_length=2000)
@@ -71,6 +86,8 @@ class IntentFieldDefinition(BaseModel):
 
 
 class IntentSlotDefinition(BaseModel):
+    """Definition of one runtime slot exposed by an intent."""
+
     slot_key: str = Field(min_length=1, max_length=128)
     field_code: str = Field(default="", max_length=128)
     role: str = Field(default="", max_length=128)
@@ -92,12 +109,15 @@ class IntentSlotDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_slot_definition(self) -> "IntentSlotDefinition":
+        """Ensure required slots carry enough semantic description for extraction."""
         if self.required and not (self.semantic_definition or self.field_code or self.description):
             raise ValueError("required slot must define semantic_definition, field_code, or description")
         return self
 
 
 class IntentGraphBuildHints(BaseModel):
+    """Planner-facing hints used when constructing execution graphs for an intent."""
+
     intent_scope_rule: str = Field(default="", max_length=2000)
     planner_notes: str = Field(default="", max_length=2000)
     single_node_examples: list[str] = Field(default_factory=list)
@@ -108,6 +128,8 @@ class IntentGraphBuildHints(BaseModel):
 
 
 class IntentPayload(BaseModel):
+    """Admin payload describing one intent and its routing/execution metadata."""
+
     intent_code: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=256)
     description: str = Field(min_length=1, max_length=4000)
@@ -131,6 +153,7 @@ class IntentPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> "IntentPayload":
+        """Validate agent URL and internal consistency between fields and slots."""
         scheme = urlparse(self.agent_url.strip()).scheme.lower()
         if scheme not in {"http", "https"}:
             raise ValueError("agent_url must use http:// or https://")
@@ -146,5 +169,7 @@ class IntentPayload(BaseModel):
 
 
 class IntentRecord(IntentPayload):
+    """Persisted intent payload enriched with creation and update timestamps."""
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def extract_json_value(raw_text: str) -> Any:
+    """Extract the first valid JSON object or array from raw LLM output text."""
     text = raw_text.strip()
     if not text:
         raise ValueError("LLM response is empty")
@@ -40,6 +41,8 @@ def extract_json_value(raw_text: str) -> Any:
 
 
 class IntentRecognitionMatchPayload(BaseModel):
+    """Structured LLM payload for a single intent recognition match."""
+
     intent_code: str
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = "llm returned a match"
@@ -47,6 +50,7 @@ class IntentRecognitionMatchPayload(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_match(cls, value: Any) -> Any:
+        """Normalize alternate confidence field names returned by different prompts/models."""
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
@@ -60,11 +64,14 @@ class IntentRecognitionMatchPayload(BaseModel):
 
 
 class IntentRecognitionPayload(BaseModel):
+    """Structured LLM payload for a batch of intent recognition matches."""
+
     matches: list[IntentRecognitionMatchPayload] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
     def normalize_payload(cls, value: Any) -> Any:
+        """Normalize alternate top-level list keys returned by different prompts/models."""
         if isinstance(value, list):
             return {"matches": value}
         if isinstance(value, dict) and "matches" not in value:
@@ -78,6 +85,8 @@ class IntentRecognitionPayload(BaseModel):
 
 
 class JsonLLMClient(Protocol):
+    """Protocol for LLM clients capable of returning parsed JSON responses."""
+
     async def run_json(
         self,
         *,
@@ -85,15 +94,20 @@ class JsonLLMClient(Protocol):
         variables: dict[str, Any],
         model: str | None = None,
         on_delta: AsyncDeltaCallback | None = None,
-    ) -> Any: ...
+    ) -> Any:
+        """Run one prompt and return a parsed JSON-compatible Python value."""
+        ...
 
 
 def llm_exception_is_retryable(exc: Exception) -> bool:
+    """Return whether an exception should be retried as a transient LLM failure."""
     return getattr(exc, "status_code", None) == 429
 
 
 @dataclass(slots=True)
 class LangChainLLMClient:
+    """LangChain-based JSON LLM client with rate-limit aware retry handling."""
+
     base_url: str
     default_model: str
     api_key: str | None = None
@@ -112,10 +126,12 @@ class LangChainLLMClient:
         model: str | None = None,
         on_delta: AsyncDeltaCallback | None = None,
     ) -> Any:
+        """Run one prompt, stream its raw text, and extract JSON from the result."""
         response_text = await self._stream_prompt(prompt, variables, model=model, on_delta=on_delta)
         return extract_json_value(response_text)
 
     def _create_model(self, model: str | None = None) -> ChatOpenAI:
+        """Create the configured ChatOpenAI client instance for one request."""
         return ChatOpenAI(
             model_name=model or self.default_model,
             temperature=0,
@@ -134,6 +150,7 @@ class LangChainLLMClient:
         model: str | None = None,
         on_delta: AsyncDeltaCallback | None = None,
     ) -> str:
+        """Stream one prompt with retry handling and return the accumulated text."""
         last_error: Exception | None = None
         for attempt in range(self.rate_limit_max_retries + 1):
             try:
@@ -163,6 +180,7 @@ class LangChainLLMClient:
         model: str | None = None,
         on_delta: AsyncDeltaCallback | None = None,
     ) -> str:
+        """Execute one non-retried streaming prompt call."""
         chain = prompt | self._create_model(model)
         chunks: list[str] = []
         async for chunk in chain.astream(variables):
@@ -175,11 +193,13 @@ class LangChainLLMClient:
         return "".join(chunks)
 
     def _should_retry_rate_limit(self, exc: Exception, *, attempt: int) -> bool:
+        """Return whether one failed attempt should be retried as a rate-limit error."""
         if attempt >= self.rate_limit_max_retries:
             return False
         return llm_exception_is_retryable(exc)
 
     def _rate_limit_retry_delay(self, exc: Exception, *, attempt: int) -> float:
+        """Derive the next retry delay from provider metadata or local backoff."""
         body = getattr(exc, "body", None)
         if isinstance(body, dict):
             error = body.get("error")
@@ -197,6 +217,7 @@ class LangChainLLMClient:
         return min(self.rate_limit_retry_delay_seconds * (attempt + 1), self.timeout_seconds)
 
     def _chunk_text(self, content: Any) -> str:
+        """Normalize streamed chunk content into plain text."""
         if isinstance(content, str):
             return content
         if isinstance(content, list):

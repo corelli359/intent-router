@@ -4,4 +4,4 @@ from router_service.catalog.sql_intent_repository import DatabaseIntentRepositor
 
 
 class PostgresIntentRepository(DatabaseIntentRepository):
-    pass
+    """Compatibility alias for deployments that want an explicit Postgres repository name."""

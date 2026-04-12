@@ -25,10 +25,12 @@ from router_service.catalog.intent_repository import (
 
 
 def utcnow() -> datetime:
+    """Return the current UTC timestamp for persisted rows."""
     return datetime.now(timezone.utc)
 
 
 def normalize_database_url(database_url: str) -> str:
+    """Normalize SQLAlchemy URLs, including automatic MySQL driver selection."""
     normalized = database_url.strip()
     if normalized.startswith("mysql://"):
         return normalized.replace("mysql://", "mysql+pymysql://", 1)
@@ -36,10 +38,14 @@ def normalize_database_url(database_url: str) -> str:
 
 
 class Base(DeclarativeBase):
+    """Declarative SQLAlchemy base for catalog tables."""
+
     pass
 
 
 class IntentRow(Base):
+    """ORM row mapping for the intent registry table."""
+
     __tablename__ = "intent_registry"
 
     intent_code: Mapped[str] = mapped_column(String(128), primary_key=True)
@@ -67,7 +73,10 @@ class IntentRow(Base):
 
 
 class DatabaseIntentRepository(IntentRepository):
+    """SQLAlchemy-backed repository for persisted intent definitions."""
+
     def __init__(self, database_url: str) -> None:
+        """Create the SQLAlchemy engine, session factory, and initial schema."""
         self.database_url = normalize_database_url(database_url)
         connect_args = {}
         if self.database_url.startswith("sqlite:///"):
@@ -81,6 +90,7 @@ class DatabaseIntentRepository(IntentRepository):
         self._ensure_compatible_schema()
 
     def list_intents(self, status: IntentStatus | None = None) -> list[IntentRecord]:
+        """List persisted intents, optionally filtered by status."""
         with self._session() as session:
             statement = select(IntentRow).order_by(IntentRow.created_at.asc(), IntentRow.intent_code.asc())
             if status is not None:
@@ -89,6 +99,7 @@ class DatabaseIntentRepository(IntentRepository):
             return [self._to_record(row) for row in rows]
 
     def get_intent(self, intent_code: str) -> IntentRecord:
+        """Fetch one persisted intent record by code."""
         with self._session() as session:
             row = session.get(IntentRow, intent_code)
             if row is None:
@@ -96,6 +107,7 @@ class DatabaseIntentRepository(IntentRepository):
             return self._to_record(row)
 
     def create_intent(self, payload: IntentPayload) -> IntentRecord:
+        """Insert a new intent into the database."""
         with self._session() as session:
             existing = session.get(IntentRow, payload.intent_code)
             if existing is not None:
@@ -131,6 +143,7 @@ class DatabaseIntentRepository(IntentRepository):
             return self._to_record(row)
 
     def update_intent(self, intent_code: str, payload: IntentPayload) -> IntentRecord:
+        """Update an existing database row from the provided payload."""
         with self._session() as session:
             row = session.get(IntentRow, intent_code)
             if row is None:
@@ -167,6 +180,7 @@ class DatabaseIntentRepository(IntentRepository):
             return self._to_record(row)
 
     def delete_intent(self, intent_code: str) -> None:
+        """Delete one intent row from the database."""
         with self._session() as session:
             row = session.get(IntentRow, intent_code)
             if row is None:
@@ -176,6 +190,7 @@ class DatabaseIntentRepository(IntentRepository):
 
     @contextmanager
     def _session(self) -> Iterator[Session]:
+        """Yield a SQLAlchemy session with rollback-on-error semantics."""
         session = self._session_factory()
         try:
             yield session
@@ -186,6 +201,7 @@ class DatabaseIntentRepository(IntentRepository):
             session.close()
 
     def _to_record(self, row: IntentRow) -> IntentRecord:
+        """Convert one ORM row into the public Pydantic record model."""
         return IntentRecord(
             intent_code=row.intent_code,
             name=row.name,
@@ -212,6 +228,7 @@ class DatabaseIntentRepository(IntentRepository):
         )
 
     def _ensure_compatible_schema(self) -> None:
+        """Backfill columns required by the current router schema when upgrading."""
         inspector = inspect(self._engine)
         if "intent_registry" not in inspector.get_table_names():
             return
@@ -241,25 +258,30 @@ class DatabaseIntentRepository(IntentRepository):
                 )
 
     def _dump_json(self, value: object) -> str:
+        """Serialize a Python value into stable UTF-8 JSON text."""
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
     def _load_json_object(self, raw_value: str) -> dict[str, object]:
+        """Load a JSON object column defensively, falling back to an empty dict."""
         loaded = json.loads(raw_value or "{}")
         if isinstance(loaded, dict):
             return loaded
         return {}
 
     def _load_json_list(self, raw_value: str) -> list[str]:
+        """Load a JSON array column as a list of strings."""
         loaded = json.loads(raw_value or "[]")
         if isinstance(loaded, list):
             return [str(item) for item in loaded]
         return []
 
     def _load_json_str_dict(self, raw_value: str) -> dict[str, str]:
+        """Load a JSON object column as a string-to-string map."""
         loaded = self._load_json_object(raw_value)
         return {str(key): str(value) for key, value in loaded.items()}
 
     def _load_field_catalog(self, raw_value: str) -> list[IntentFieldDefinition]:
+        """Parse field catalog JSON into validated field definitions."""
         loaded = json.loads(raw_value or "[]")
         if not isinstance(loaded, list):
             return []
@@ -272,6 +294,7 @@ class DatabaseIntentRepository(IntentRepository):
         return fields
 
     def _load_slot_schema(self, raw_value: str) -> list[IntentSlotDefinition]:
+        """Parse slot schema JSON into validated slot definitions."""
         loaded = json.loads(raw_value or "[]")
         if not isinstance(loaded, list):
             return []
@@ -284,6 +307,7 @@ class DatabaseIntentRepository(IntentRepository):
         return slots
 
     def _load_graph_build_hints(self, raw_value: str) -> IntentGraphBuildHints:
+        """Parse graph build hints JSON with a safe empty fallback."""
         loaded = self._load_json_object(raw_value)
         try:
             return IntentGraphBuildHints.model_validate(loaded)
@@ -291,11 +315,13 @@ class DatabaseIntentRepository(IntentRepository):
             return IntentGraphBuildHints()
 
     def _ensure_aware(self, value: datetime) -> datetime:
+        """Normalize naive timestamps to UTC-aware timestamps."""
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value
 
     def _coerce_bool(self, value: object) -> bool:
+        """Coerce legacy database truthy values into a strict boolean."""
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):

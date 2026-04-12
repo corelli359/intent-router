@@ -35,12 +35,16 @@ logger = logging.getLogger(__name__)
 
 
 class GraphDraftIntentPayload(BaseModel):
+    """Unified-builder payload for one recognized intent candidate."""
+
     intent_code: str
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = "llm returned a match"
 
 
 class GraphDraftConditionPayload(BaseModel):
+    """Unified-builder payload for one conditional edge expression."""
+
     expected_statuses: list[str] = Field(default_factory=lambda: ["completed"])
     left_key: str | None = None
     operator: Literal[">", ">=", "==", "<", "<="] | None = None
@@ -48,6 +52,8 @@ class GraphDraftConditionPayload(BaseModel):
 
 
 class GraphDraftNodePayload(BaseModel):
+    """Unified-builder payload for one graph node."""
+
     intent_code: str
     title: str = ""
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -57,6 +63,8 @@ class GraphDraftNodePayload(BaseModel):
 
 
 class GraphDraftSlotBindingPayload(BaseModel):
+    """Unified-builder payload for one slot binding attached to a node."""
+
     slot_key: str
     value: Any | None = None
     source: SlotBindingSource = SlotBindingSource.USER_MESSAGE
@@ -65,6 +73,8 @@ class GraphDraftSlotBindingPayload(BaseModel):
 
 
 class GraphDraftEdgePayload(BaseModel):
+    """Unified-builder payload for one graph edge."""
+
     source_index: int = Field(ge=0)
     target_index: int = Field(ge=0)
     relation_type: GraphEdgeType = GraphEdgeType.SEQUENTIAL
@@ -73,6 +83,8 @@ class GraphDraftEdgePayload(BaseModel):
 
 
 class UnifiedGraphDraftPayload(BaseModel):
+    """Structured output expected from the unified graph builder model."""
+
     summary: str = ""
     needs_confirmation: bool = False
     primary_intents: list[GraphDraftIntentPayload] = Field(default_factory=list)
@@ -86,11 +98,15 @@ GraphDraftNodePayload.model_rebuild()
 
 @dataclass(slots=True)
 class GraphBuildResult:
+    """Unified graph builder output containing recognition plus the proposed graph."""
+
     recognition: RecognitionResult
     graph: ExecutionGraphState
 
 
 class IntentGraphBuilder(Protocol):
+    """Protocol for components that can build a graph directly from one message."""
+
     async def build(
         self,
         *,
@@ -100,10 +116,14 @@ class IntentGraphBuilder(Protocol):
         long_term_memory: list[str],
         recognition: RecognitionResult | None = None,
         on_delta: AsyncDeltaCallback | None = None,
-    ) -> GraphBuildResult: ...
+    ) -> GraphBuildResult:
+        """Build a graph directly from one user message."""
+        ...
 
 
 class GraphDraftNormalizer:
+    """Normalize unified-builder payloads into runtime recognition and graph objects."""
+
     def normalize(
         self,
         *,
@@ -113,6 +133,7 @@ class GraphDraftNormalizer:
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
     ) -> GraphBuildResult:
+        """Convert unified-builder output into runtime-safe recognition and graph state."""
         recognition = self._normalize_recognition(payload=payload, intents_by_code=intents_by_code)
         graph = self._normalize_graph(
             payload=payload,
@@ -130,6 +151,7 @@ class GraphDraftNormalizer:
         payload: UnifiedGraphDraftPayload,
         intents_by_code: dict[str, IntentDefinition],
     ) -> RecognitionResult:
+        """Normalize unified-builder recognition buckets with threshold enforcement."""
         primary: list[IntentMatch] = []
         candidates: list[IntentMatch] = []
         seen_codes: set[str] = set()
@@ -164,6 +186,7 @@ class GraphDraftNormalizer:
             seen_codes.add(item.intent_code)
 
         def _sort_key(match: IntentMatch) -> tuple[int, float]:
+            """Sort higher-priority and higher-confidence matches first."""
             intent = intents_by_code[match.intent_code]
             return (intent.dispatch_priority, match.confidence)
 
@@ -181,6 +204,7 @@ class GraphDraftNormalizer:
         recent_messages: list[str],
         long_term_memory: list[str],
     ) -> ExecutionGraphState:
+        """Normalize unified-builder graph payload into executable graph state."""
         confidence_by_code = {match.intent_code: match.confidence for match in recognition.primary}
         allowed_intents = set(confidence_by_code)
 
@@ -303,6 +327,7 @@ class GraphDraftNormalizer:
         history_slot_keys: list[str],
         default_confidence: float,
     ) -> list[SlotBindingState]:
+        """Normalize node slot bindings while preserving history-derived provenance."""
         if not slot_memory:
             return []
 
@@ -349,6 +374,7 @@ class GraphDraftNormalizer:
         intents_by_code: dict[str, IntentDefinition],
         history_slot_usage: list[tuple[str, list[str]]],
     ) -> bool:
+        """Decide whether the normalized graph should wait for explicit confirmation."""
         if not graph.nodes:
             return False
         confirm_policies = {
@@ -367,6 +393,8 @@ class GraphDraftNormalizer:
         return payload.needs_confirmation or len(graph.nodes) > 1
 
 class LLMIntentGraphBuilder:
+    """LLM-backed builder that jointly recognizes intents and produces a graph draft."""
+
     def __init__(
         self,
         llm_client: JsonLLMClient,
@@ -378,6 +406,7 @@ class LLMIntentGraphBuilder:
         system_prompt_template: str = DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
         human_prompt_template: str = DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
     ) -> None:
+        """Initialize the unified graph builder with fallback recognizer and planner."""
         self.llm_client = llm_client
         self.model = model
         self.fallback_recognizer = fallback_recognizer or NullIntentRecognizer()
@@ -398,6 +427,7 @@ class LLMIntentGraphBuilder:
         recognition: RecognitionResult | None = None,
         on_delta: AsyncDeltaCallback | None = None,
     ) -> GraphBuildResult:
+        """Build a graph from one message, degrading to legacy recognize+plan when needed."""
         active_intents = [intent for intent in intents if intent.status == "active"]
         if not active_intents:
             return GraphBuildResult(
@@ -486,6 +516,7 @@ class LLMIntentGraphBuilder:
         recognition: RecognitionResult | None,
         on_delta: AsyncDeltaCallback | None,
     ) -> GraphBuildResult:
+        """Fallback to separate recognition and planning when unified building fails."""
         resolved_recognition = recognition or await self.fallback_recognizer.recognize(
             message=message,
             intents=intents,

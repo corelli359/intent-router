@@ -47,6 +47,8 @@ class GraphPlanNodePayload(BaseModel):
 
 
 class GraphPlanEdgePayload(BaseModel):
+    """LLM planner representation of one graph edge."""
+
     source_index: int = Field(ge=0)
     target_index: int = Field(ge=0)
     relation_type: GraphEdgeType = GraphEdgeType.SEQUENTIAL
@@ -164,42 +166,14 @@ class TurnDecisionPayload(BaseModel):
 
     @model_validator(mode="after")
     def normalize_reason(self) -> "TurnDecisionPayload":
+        """Ensure the decision always carries a non-empty explanatory reason."""
         self.reason = self.reason.strip() or self.action
         return self
 
 
 class IntentGraphPlanner(Protocol):
-    async def plan(
-        self,
-        *,
-        message: str,
-        matches: list[IntentMatch],
-        intents_by_code: dict[str, IntentDefinition],
-        recent_messages: list[str] | None = None,
-        long_term_memory: list[str] | None = None,
-    ) -> ExecutionGraphState: ...
+    """Protocol for components that can turn recognized intents into an execution graph."""
 
-
-class TurnInterpreter(Protocol):
-    async def interpret_pending_graph(
-        self,
-        *,
-        message: str,
-        pending_graph: ExecutionGraphState,
-        recognition: RecognitionResult,
-    ) -> TurnDecisionPayload: ...
-
-    async def interpret_waiting_node(
-        self,
-        *,
-        message: str,
-        waiting_node: GraphNodeState,
-        current_graph: ExecutionGraphState,
-        recognition: RecognitionResult,
-    ) -> TurnDecisionPayload: ...
-
-
-class SequentialIntentGraphPlanner:
     async def plan(
         self,
         *,
@@ -209,6 +183,48 @@ class SequentialIntentGraphPlanner:
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
     ) -> ExecutionGraphState:
+        """Plan an execution graph from recognized intent matches."""
+        ...
+
+
+class TurnInterpreter(Protocol):
+    """Protocol for components that interpret follow-up turns while graph execution is blocked."""
+
+    async def interpret_pending_graph(
+        self,
+        *,
+        message: str,
+        pending_graph: ExecutionGraphState,
+        recognition: RecognitionResult,
+    ) -> TurnDecisionPayload:
+        """Interpret a turn while the router is waiting on graph confirmation."""
+        ...
+
+    async def interpret_waiting_node(
+        self,
+        *,
+        message: str,
+        waiting_node: GraphNodeState,
+        current_graph: ExecutionGraphState,
+        recognition: RecognitionResult,
+    ) -> TurnDecisionPayload:
+        """Interpret a turn while one node is waiting for more user input."""
+        ...
+
+
+class SequentialIntentGraphPlanner:
+    """Deterministic fallback planner that executes matched intents sequentially."""
+
+    async def plan(
+        self,
+        *,
+        message: str,
+        matches: list[IntentMatch],
+        intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str] | None = None,
+        long_term_memory: list[str] | None = None,
+    ) -> ExecutionGraphState:
+        """Build a simple sequential graph in the order of recognized matches."""
         graph = ExecutionGraphState(
             source_message=message,
             status=GraphStatus.WAITING_CONFIRMATION if len(matches) > 1 else GraphStatus.DRAFT,
@@ -248,6 +264,7 @@ class SequentialIntentGraphPlanner:
         return graph
 
     def _default_actions(self, node_count: int) -> list[GraphAction]:
+        """Return the default graph-card actions for the given node count."""
         if node_count <= 1:
             return []
         return [
@@ -257,6 +274,8 @@ class SequentialIntentGraphPlanner:
 
 
 class BasicTurnInterpreter:
+    """Rule-based fallback interpreter for pending graphs and waiting nodes."""
+
     async def interpret_pending_graph(
         self,
         *,
@@ -264,6 +283,7 @@ class BasicTurnInterpreter:
         pending_graph: ExecutionGraphState,
         recognition: RecognitionResult,
     ) -> TurnDecisionPayload:
+        """Replan on new primary intent, otherwise keep waiting for an explicit action."""
         if recognition.primary:
             return TurnDecisionPayload(
                 action="replan",
@@ -280,6 +300,7 @@ class BasicTurnInterpreter:
         current_graph: ExecutionGraphState,
         recognition: RecognitionResult,
     ) -> TurnDecisionPayload:
+        """Replan on intent switch, otherwise resume the current waiting node."""
         different_match = next(
             (match for match in recognition.primary if match.intent_code != waiting_node.intent_code),
             None,
@@ -294,6 +315,8 @@ class BasicTurnInterpreter:
 
 
 class LLMIntentGraphPlanner:
+    """LLM-backed planner that turns matched intents into a graph plan."""
+
     def __init__(
         self,
         llm_client: JsonLLMClient,
@@ -303,6 +326,7 @@ class LLMIntentGraphPlanner:
         system_prompt_template: str = DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
         human_prompt_template: str = DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
     ) -> None:
+        """Initialize the planner with an LLM client, fallback planner, and prompt."""
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or SequentialIntentGraphPlanner()
@@ -321,6 +345,7 @@ class LLMIntentGraphPlanner:
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
     ) -> ExecutionGraphState:
+        """Plan an execution graph from recognized intents, with deterministic fallback."""
         if not matches:
             return await self.fallback.plan(
                 message=message,
@@ -396,6 +421,8 @@ class LLMIntentGraphPlanner:
         return graph
 
 class LLMGraphTurnInterpreter:
+    """LLM-backed interpreter for blocked graph turns."""
+
     def __init__(
         self,
         llm_client: JsonLLMClient,
@@ -405,6 +432,7 @@ class LLMGraphTurnInterpreter:
         system_prompt_template: str = DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT,
         human_prompt_template: str = DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT,
     ) -> None:
+        """Initialize the turn interpreter with an LLM client and fallback interpreter."""
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or BasicTurnInterpreter()
@@ -420,6 +448,7 @@ class LLMGraphTurnInterpreter:
         pending_graph: ExecutionGraphState,
         recognition: RecognitionResult,
     ) -> TurnDecisionPayload:
+        """Interpret a user turn while the router is waiting on graph confirmation."""
         return await self._interpret(
             mode="pending_graph",
             message=message,
@@ -442,6 +471,7 @@ class LLMGraphTurnInterpreter:
         current_graph: ExecutionGraphState,
         recognition: RecognitionResult,
     ) -> TurnDecisionPayload:
+        """Interpret a user turn while one node is waiting on additional user input."""
         return await self._interpret(
             mode="waiting_node",
             message=message,
@@ -468,6 +498,7 @@ class LLMGraphTurnInterpreter:
         recognition: RecognitionResult,
         fallback,
     ) -> TurnDecisionPayload:
+        """Run the LLM interpreter and degrade to the fallback interpreter on failure."""
         try:
             raw_payload = await self.llm_client.run_json(
                 prompt=self.prompt,

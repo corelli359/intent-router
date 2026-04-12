@@ -72,6 +72,7 @@ class GraphMessageFlow:
         resume_waiting_node: Callable[[GraphSessionState, GraphNodeState, str], Awaitable[None]],
         cancel_current_node: Callable[[GraphSessionState, str], Awaitable[None]],
     ) -> None:
+        """Initialize message-driven routing with graph compilation and control callbacks."""
         self.session_store = session_store
         self.graph_compiler = graph_compiler
         self.understanding_service = understanding_service

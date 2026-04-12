@@ -6,6 +6,8 @@ from router_service.core.shared.domain import CustomerMemory, LongTermMemoryEntr
 
 
 class SessionMemoryView(Protocol):
+    """Minimal session view required to promote facts into long-term memory."""
+
     session_id: str
     cust_id: str
     messages: list[object]
@@ -13,19 +15,25 @@ class SessionMemoryView(Protocol):
 
 
 class LongTermMemoryStore:
+    """In-memory long-term memory store keyed by customer id."""
+
     def __init__(self) -> None:
+        """Initialize the empty customer memory map."""
         self._customers: dict[str, CustomerMemory] = {}
 
     def get_or_create(self, cust_id: str) -> CustomerMemory:
+        """Return the customer memory bucket, creating it on first access."""
         if cust_id not in self._customers:
             self._customers[cust_id] = CustomerMemory(cust_id=cust_id)
         return self._customers[cust_id]
 
     def recall(self, cust_id: str, limit: int = 10) -> list[str]:
+        """Recall the most recent long-term memory facts for a customer."""
         memory = self.get_or_create(cust_id)
         return [entry.content for entry in memory.facts[-limit:]]
 
     def promote_session(self, session: SessionMemoryView) -> None:
+        """Promote recent messages and task slot memories from one session into long-term memory."""
         memory = self.get_or_create(session.cust_id)
         for message in session.messages[-5:]:
             memory.remember(

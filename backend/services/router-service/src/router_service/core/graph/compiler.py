@@ -31,6 +31,8 @@ RecentMessageSanitizer = Callable[[list[str]], list[str]]
 
 @dataclass(slots=True)
 class GraphCompilationResult:
+    """Result of compiling one turn into recognition plus an optional graph."""
+
     recognition: RecognitionResult
     graph: ExecutionGraphState | None
     no_match: bool = False
@@ -47,6 +49,7 @@ class GraphCompiler:
         understanding_service: IntentUnderstandingService,
         slot_resolution_service: SlotResolutionService,
     ) -> None:
+        """Initialize the compiler with catalog, planning, understanding, and slot services."""
         self.intent_catalog = intent_catalog
         self.planner = planner
         self.understanding_service = understanding_service
@@ -242,6 +245,7 @@ class GraphCompiler:
         )
 
     def guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:
+        """Build the synthetic user-visible content for guided-selection turns."""
         if guided_selection is None or not guided_selection.selected_intents:
             return ""
         titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]
@@ -251,6 +255,7 @@ class GraphCompiler:
         self,
         selected_items: list[ProactiveRecommendationItem],
     ) -> GuidedSelectionPayload:
+        """Convert selected proactive items into a guided-selection payload."""
         return GuidedSelectionPayload.model_validate(
             {
                 "selectedIntents": [
@@ -294,6 +299,7 @@ class GraphCompiler:
         ]
 
     def recommendation_context_summary(self, recommendation_context: RecommendationContextPayload) -> str:
+        """Render recommendation context into planning-safe synthetic messages."""
         lines = [
             "[FRONTEND_RECOMMENDATION_CONTEXT] 以下是前端刚展示给用户的推荐候选事项；它们只是候选，不代表用户已经选择。",
         ]
@@ -313,6 +319,7 @@ class GraphCompiler:
         self,
         proactive_recommendation: ProactiveRecommendationPayload,
     ) -> str:
+        """Render proactive recommendation context into planning-safe synthetic messages."""
         lines = [
             "[PROACTIVE_RECOMMENDATION_CONTEXT] 以下是系统本轮展示给用户的主动推荐事项；每项都带有原始默认要素。",
         ]
@@ -335,6 +342,7 @@ class GraphCompiler:
         self,
         selected_items: list[ProactiveRecommendationItem],
     ) -> str:
+        """Render the selected proactive items into planning-safe synthetic messages."""
         lines = [
             "[PROACTIVE_RECOMMENDATION_SELECTION] 以下推荐事项已由上游分流器选中；当前用户消息可能会修改其中部分要素或新增关系。",
         ]
@@ -348,6 +356,7 @@ class GraphCompiler:
         return "\n".join(lines)
 
     def guided_selection_summary(self, guided_selection: GuidedSelectionPayload) -> str:
+        """Build the graph summary used for guided-selection graphs."""
         titles = [selected.title or selected.intent_code for selected in guided_selection.selected_intents]
         return (
             f"已按用户选择生成执行图：{'、'.join(titles)}"
@@ -359,6 +368,7 @@ class GraphCompiler:
         self,
         selected_items: list[ProactiveRecommendationItem],
     ) -> RecognitionResult:
+        """Convert selected proactive items into deterministic recognition output."""
         matches: list[IntentMatch] = []
         for index, item in enumerate(selected_items):
             matches.append(
@@ -371,6 +381,7 @@ class GraphCompiler:
         return RecognitionResult(primary=matches, candidates=[])
 
     def fallback_intent(self) -> IntentDefinition | None:
+        """Return the configured fallback intent from the intent catalog, if any."""
         getter = getattr(self.intent_catalog, "get_fallback_intent", None)
         if getter is None:
             return None

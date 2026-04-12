@@ -50,6 +50,7 @@ class GraphActionFlow:
         emit_graph_progress: Callable[[GraphSessionState], Awaitable[None]],
         publish_graph_state: Callable[..., Awaitable[None]],
     ) -> None:
+        """Initialize explicit graph action handlers and their collaborators."""
         self.session_store = session_store
         self.agent_client = agent_client
         self.event_publisher = event_publisher

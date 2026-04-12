@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class EventBroker:
+    """Fan out router task events to per-session SSE subscribers."""
+
     def __init__(
         self,
         *,
@@ -18,17 +20,20 @@ class EventBroker:
         max_idle_seconds: float = 300.0,
         max_queue_size: int = 500,
     ) -> None:
+        """Create the in-memory SSE broker with bounded subscriber queues."""
         self._queues: dict[str, list[asyncio.Queue[TaskEvent]]] = defaultdict(list)
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.max_idle_seconds = max_idle_seconds
         self._max_queue_size = max_queue_size
 
     def register(self, session_id: str) -> asyncio.Queue[TaskEvent]:
+        """Register a push-style subscriber queue for a session."""
         queue = self._new_queue()
         self._queues[session_id].append(queue)
         return queue
 
     def unregister(self, session_id: str, queue: asyncio.Queue[TaskEvent]) -> None:
+        """Remove a previously registered subscriber queue."""
         queues = self._queues.get(session_id)
         if queues is None:
             return
@@ -38,10 +43,12 @@ class EventBroker:
             self._queues.pop(session_id, None)
 
     async def publish(self, event: TaskEvent) -> None:
+        """Publish an event to all queues subscribed to the same session."""
         for queue in list(self._queues[event.session_id]):
             await self._push_event(queue, event)
 
     async def subscribe(self, session_id: str) -> AsyncGenerator[TaskEvent, None]:
+        """Yield session events and synthetic heartbeats while the session is idle."""
         queue = self.register(session_id)
         last_activity = asyncio.get_running_loop().time()
         try:
@@ -68,11 +75,13 @@ class EventBroker:
             self.unregister(session_id, queue)
 
     def _new_queue(self) -> asyncio.Queue[TaskEvent]:
+        """Create a bounded or unbounded asyncio queue based on broker settings."""
         if self._max_queue_size <= 0:
             return asyncio.Queue()
         return asyncio.Queue(maxsize=self._max_queue_size)
 
     async def _push_event(self, queue: asyncio.Queue[TaskEvent], event: TaskEvent) -> None:
+        """Push an event into one subscriber queue, dropping the oldest item if needed."""
         if self._max_queue_size > 0 and queue.full():
             try:
                 queue.get_nowait()

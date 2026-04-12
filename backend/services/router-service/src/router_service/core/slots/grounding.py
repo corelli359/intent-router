@@ -16,10 +16,12 @@ _DIGIT_VALUE_TYPES = {
 
 
 def normalize_text(value: str) -> str:
+    """Normalize text for loose containment checks during slot grounding."""
     return "".join(character for character in value.strip().lower() if not character.isspace())
 
 
 def normalize_digits(value: str) -> str:
+    """Extract only digits for number-like slot grounding checks."""
     return "".join(character for character in value if character.isdigit())
 
 
@@ -29,6 +31,7 @@ def slot_value_grounded(
     value: Any,
     grounding_text: str,
 ) -> bool:
+    """Return whether one candidate slot value is grounded in the available text."""
     if value is None:
         return False
     string_value = str(value).strip()
@@ -56,6 +59,7 @@ def normalize_slot_memory(
     grounding_text: str,
     history_texts: Iterable[str] = (),
 ) -> tuple[dict[str, Any], list[str]]:
+    """Filter slot memory down to grounded values and mark history-derived keys."""
     if not slot_memory:
         return {}, []
 
@@ -90,6 +94,7 @@ def apply_history_slot_values(
     slot_schema: Iterable[IntentSlotDefinition],
     history_slot_values: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
+    """Inject missing history-allowed slot values into the current slot memory."""
     if not history_slot_values:
         return dict(slot_memory), []
 
@@ -115,6 +120,7 @@ def normalize_structured_slot_memory(
     slot_memory: dict[str, Any],
     slot_schema: Iterable[IntentSlotDefinition],
 ) -> dict[str, Any]:
+    """Clean structured slot payloads before they are stored on graph nodes."""
     if not slot_memory:
         return {}
 

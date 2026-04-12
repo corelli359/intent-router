@@ -8,20 +8,26 @@ from router_service.core.support.memory_store import LongTermMemoryStore
 
 
 class GraphSessionStore:
+    """In-memory session store responsible for graph session lifecycle and expiry handling."""
+
     def __init__(self, long_term_memory: LongTermMemoryStore | None = None) -> None:
+        """Initialize the session store and its long-term memory backend."""
         self._sessions: dict[str, GraphSessionState] = {}
         self.long_term_memory = long_term_memory or LongTermMemoryStore()
 
     def create(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
+        """Create and store a fresh graph session."""
         resolved_session_id = session_id or f"session_graph_{uuid4().hex[:10]}"
         session = GraphSessionState(session_id=resolved_session_id, cust_id=cust_id)
         self._sessions[resolved_session_id] = session
         return session
 
     def get(self, session_id: str) -> GraphSessionState:
+        """Return an existing graph session by id."""
         return self._sessions[session_id]
 
     def get_or_create(self, session_id: str | None, cust_id: str) -> GraphSessionState:
+        """Resolve a session id, recreating expired or customer-mismatched sessions when needed."""
         if session_id is None:
             return self.create(cust_id=cust_id)
         if session_id not in self._sessions:
@@ -37,8 +43,12 @@ class GraphSessionStore:
         return session
 
     def _compat_session_view(self, session: GraphSessionState) -> Any:
+        """Expose the subset of session fields required by long-term memory promotion."""
         class _Compat:
+            """Lightweight memory-promotion view over a graph session."""
+
             def __init__(self, source: GraphSessionState) -> None:
+                """Copy only memory-relevant fields out of the graph session."""
                 self.session_id = source.session_id
                 self.cust_id = source.cust_id
                 self.messages = source.messages

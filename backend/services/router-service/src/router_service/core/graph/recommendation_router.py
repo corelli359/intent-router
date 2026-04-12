@@ -21,21 +21,28 @@ logger = logging.getLogger(__name__)
 
 
 class ProactiveRecommendationRouter(Protocol):
-    async def decide(
-        self,
-        *,
-        message: str,
-        proactive_recommendation: ProactiveRecommendationPayload,
-    ) -> ProactiveRecommendationRouteDecision: ...
+    """Protocol for deciding how proactive recommendations should enter the router."""
 
-
-class NullProactiveRecommendationRouter:
     async def decide(
         self,
         *,
         message: str,
         proactive_recommendation: ProactiveRecommendationPayload,
     ) -> ProactiveRecommendationRouteDecision:
+        """Decide how a proactive recommendation turn should be routed."""
+        ...
+
+
+class NullProactiveRecommendationRouter:
+    """Fallback proactive router that always drops back to free dialog."""
+
+    async def decide(
+        self,
+        *,
+        message: str,
+        proactive_recommendation: ProactiveRecommendationPayload,
+    ) -> ProactiveRecommendationRouteDecision:
+        """Return a conservative free-dialog decision without semantic interpretation."""
         del message, proactive_recommendation
         return ProactiveRecommendationRouteDecision(
             route_mode=ProactiveRecommendationRouteMode.SWITCH_TO_FREE_DIALOG,
@@ -44,6 +51,8 @@ class NullProactiveRecommendationRouter:
 
 
 class LLMProactiveRecommendationRouter:
+    """LLM-backed proactive router that interprets recommendation selection intent."""
+
     def __init__(
         self,
         llm_client: JsonLLMClient,
@@ -53,6 +62,7 @@ class LLMProactiveRecommendationRouter:
         system_prompt_template: str = DEFAULT_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT,
         human_prompt_template: str = DEFAULT_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT,
     ) -> None:
+        """Initialize the proactive router and compile the selected prompt template."""
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or NullProactiveRecommendationRouter()
@@ -67,6 +77,7 @@ class LLMProactiveRecommendationRouter:
         message: str,
         proactive_recommendation: ProactiveRecommendationPayload,
     ) -> ProactiveRecommendationRouteDecision:
+        """Decide whether to ignore, directly execute, or graph selected recommendations."""
         try:
             raw_payload = await self.llm_client.run_json(
                 prompt=self.prompt,

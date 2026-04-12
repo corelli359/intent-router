@@ -37,18 +37,21 @@ class GraphStateSync:
         event_publisher: GraphEventPublisher,
         slot_resolution_service: SlotResolutionService,
     ) -> None:
+        """Initialize state synchronization with runtime, presentation, and slot helpers."""
         self.runtime_engine = runtime_engine
         self.presenter = presenter
         self.event_publisher = event_publisher
         self.slot_resolution_service = slot_resolution_service
 
     async def publish_pending_graph(self, session: GraphSessionState) -> None:
+        """Publish the session's current pending graph when one exists."""
         graph = session.pending_graph
         if graph is None:
             return
         await self.event_publisher.publish_pending_graph(session, graph)
 
     async def publish_graph_waiting_hint(self, session: GraphSessionState) -> None:
+        """Publish a reminder that the pending graph still waits for user confirmation."""
         graph = session.pending_graph
         if graph is None:
             return
@@ -92,6 +95,7 @@ class GraphStateSync:
         event: str,
         message: str,
     ) -> None:
+        """Publish one node state event through the shared event publisher."""
         await self.event_publisher.publish_node_state(
             session,
             graph,
@@ -102,6 +106,7 @@ class GraphStateSync:
         )
 
     async def publish_session_state(self, session: GraphSessionState, event: str) -> None:
+        """Publish one session-level state update."""
         await self.event_publisher.publish_session_state(session, event=event)
 
     async def emit_graph_progress(self, session: GraphSessionState) -> None:
@@ -119,18 +124,23 @@ class GraphStateSync:
         await self.publish_graph_state(session, event_name, message)
 
     def refresh_node_states(self, graph: ExecutionGraphState) -> None:
+        """Delegate node-state recomputation to the runtime engine."""
         self.runtime_engine.refresh_node_states(graph)
 
     def condition_matches_from_condition(self, source: GraphNodeState, condition: GraphCondition | None) -> bool:
+        """Delegate condition evaluation to the runtime engine."""
         return self.runtime_engine.condition_matches(source, condition)
 
     def graph_status(self, graph: ExecutionGraphState) -> GraphStatus:
+        """Delegate graph-status aggregation to the runtime engine."""
         return self.runtime_engine.graph_status(graph)
 
     def next_ready_node(self, graph: ExecutionGraphState) -> GraphNodeState | None:
+        """Delegate ready-node selection to the runtime engine."""
         return self.runtime_engine.next_ready_node(graph)
 
     def get_waiting_node(self, session: GraphSessionState) -> GraphNodeState | None:
+        """Return the current waiting node from the session's active graph."""
         return self.runtime_engine.waiting_node(session.current_graph)
 
     async def refresh_graph_state(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
@@ -194,6 +204,7 @@ class GraphStateSync:
         *,
         long_term_memory: list[str],
     ) -> dict[str, Any]:
+        """Delegate history slot lookup to the slot resolution service."""
         return self.slot_resolution_service.history_slot_values(
             session,
             long_term_memory=long_term_memory,
@@ -207,6 +218,7 @@ class GraphStateSync:
         source_text: str | None,
         confidence: float,
     ) -> list[SlotBindingState]:
+        """Delegate structured slot binding creation to the slot resolution service."""
         return self.slot_resolution_service.structured_slot_bindings(
             slot_memory=slot_memory,
             source=source,
@@ -221,6 +233,7 @@ class GraphStateSync:
         preferred_sources: dict[str, SlotBindingSource] | None = None,
         source_text: str | None = None,
     ) -> None:
+        """Delegate node slot-binding reconstruction to the slot resolution service."""
         self.slot_resolution_service.rebuild_node_slot_bindings(
             node,
             preferred_sources=preferred_sources,
@@ -244,7 +257,9 @@ class GraphStateSync:
         )
 
     def node_status_for_task_status(self, status: TaskStatus) -> GraphNodeStatus:
+        """Delegate task-to-node status translation to the runtime engine."""
         return self.runtime_engine.node_status_for_task_status(status)
 
     def task_status_for_graph(self, status: GraphStatus) -> TaskStatus:
+        """Delegate graph-to-task status translation to the runtime engine."""
         return self.runtime_engine.task_status_for_graph(status)

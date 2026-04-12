@@ -12,6 +12,7 @@ ENV_FILENAMES = (".env", ".env.local")
 
 
 def _env_search_roots() -> tuple[Path, ...]:
+    """Return candidate directories that may contain local environment files."""
     roots: list[Path] = []
     seen: set[Path] = set()
 
@@ -33,6 +34,7 @@ def _env_search_roots() -> tuple[Path, ...]:
 
 
 def _load_local_env_files() -> None:
+    """Load local env files without overriding variables already present in the process."""
     for root in _env_search_roots():
         for filename in ENV_FILENAMES:
             env_path = root / filename
@@ -56,6 +58,7 @@ def _load_local_env_files() -> None:
                 os.environ[key] = value
 
 def _env_headers(name: str) -> dict[str, str]:
+    """Parse a JSON-encoded HTTP header map from an environment variable."""
     raw_value = os.getenv(name)
     if not raw_value:
         return {}
@@ -66,6 +69,8 @@ def _env_headers(name: str) -> dict[str, str]:
 
 
 class Settings(BaseModel):
+    """Runtime configuration for the router API and its downstream integrations."""
+
     app_name: str = Field(default="Intent Router API")
     env: str = Field(default="dev")
     repository_backend: Literal["memory", "database", "postgres"] = Field(default="memory")
@@ -95,14 +100,17 @@ class Settings(BaseModel):
 
     @property
     def default_llm_model(self) -> str | None:
+        """Return the default model name for generic router LLM calls."""
         return self.llm_recognizer_model or self.llm_model
 
     @property
     def llm_connection_ready(self) -> bool:
+        """Report whether the minimum LLM connection settings are present."""
         return bool(self.llm_api_base_url and self.default_llm_model)
 
     @classmethod
     def from_env(cls) -> "Settings":
+        """Build settings from process environment plus local env files."""
         _load_local_env_files()
         return cls(
             app_name=os.getenv("ROUTER_API_APP_NAME", "Intent Router API"),

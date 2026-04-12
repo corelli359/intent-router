@@ -49,11 +49,13 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Return the cached router settings object."""
     return Settings.from_env()
 
 
 @lru_cache(maxsize=1)
 def get_intent_repository() -> IntentRepository:
+    """Build and cache the configured intent repository implementation."""
     settings = get_settings()
     if settings.repository_backend == "memory":
         return InMemoryIntentRepository()
@@ -66,6 +68,8 @@ def get_intent_repository() -> IntentRepository:
 
 @dataclass(slots=True)
 class RouterRuntime:
+    """Container for long-lived runtime dependencies stored on the FastAPI app."""
+
     event_broker: EventBroker
     llm_client: LangChainLLMClient | None
     intent_catalog: RepositoryIntentCatalog
@@ -74,6 +78,7 @@ class RouterRuntime:
 
 
 def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
+    """Log and return a no-op recognizer when semantic routing is unavailable."""
     logger.warning(
         "Router intent recognition requires LLM semantics "
         "(backend=%s, llm_available=%s). Falling back to NullIntentRecognizer "
@@ -85,6 +90,7 @@ def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> Nu
 
 
 def build_router_runtime() -> RouterRuntime:
+    """Assemble the full router runtime from repository, LLM, graph, and agent components."""
     settings = get_settings()
     event_broker = EventBroker(
         heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
@@ -196,6 +202,7 @@ def build_router_runtime() -> RouterRuntime:
 
 
 def _build_llm_client() -> LangChainLLMClient | None:
+    """Create the shared LLM client when the required connection settings are present."""
     settings = get_settings()
     if not settings.llm_connection_ready or settings.default_llm_model is None:
         return None
@@ -212,6 +219,7 @@ def _build_llm_client() -> LangChainLLMClient | None:
 
 
 def get_router_runtime(request: Request) -> RouterRuntime:
+    """Resolve or lazily create the router runtime stored on the FastAPI app state."""
     runtime = getattr(request.app.state, "router_runtime", None)
     if runtime is None:
         runtime = build_router_runtime()
@@ -220,30 +228,37 @@ def get_router_runtime(request: Request) -> RouterRuntime:
 
 
 def get_event_broker(request: Request) -> EventBroker:
+    """FastAPI dependency returning the shared SSE event broker."""
     return get_router_runtime(request).event_broker
 
 
 def get_llm_client(request: Request) -> LangChainLLMClient | None:
+    """FastAPI dependency returning the shared LLM client when configured."""
     return get_router_runtime(request).llm_client
 
 
 def get_intent_catalog(request: Request) -> RepositoryIntentCatalog:
+    """FastAPI dependency returning the refreshed intent catalog view."""
     return get_router_runtime(request).intent_catalog
 
 
 def get_orchestrator(request: Request) -> GraphRouterOrchestrator:
+    """FastAPI dependency returning the graph router orchestrator."""
     return get_router_runtime(request).orchestrator
 
 
 def get_event_broker_v2(request: Request) -> EventBroker:
+    """Compatibility alias for the V2 event broker dependency."""
     return get_event_broker(request)
 
 
 def get_orchestrator_v2(request: Request) -> GraphRouterOrchestrator:
+    """Compatibility alias for the V2 orchestrator dependency."""
     return get_orchestrator(request)
 
 
 async def close_router_runtime(runtime: RouterRuntime) -> None:
+    """Release network resources held by the runtime before application shutdown."""
     await runtime.agent_client.close()
 
 
@@ -253,6 +268,7 @@ async def run_intent_catalog_refresh(
     catalog: RepositoryIntentCatalog,
     refresh_interval_seconds: float,
 ) -> None:
+    """Continuously refresh the active intent catalog until shutdown is requested."""
     consecutive_failures = 0
     while not stop_event.is_set():
         try:

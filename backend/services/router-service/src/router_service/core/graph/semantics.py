@@ -33,11 +33,14 @@ _DEFAULT_INTENT_OUTPUT_KEYS: dict[str, set[str]] = {
 
 @dataclass(slots=True)
 class GraphSemanticRepairResult:
+    """Summary of implicit graph repairs applied after planning/building."""
+
     inserted_nodes: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
 def canonical_context_key(key: str | None) -> str | None:
+    """Normalize synonymous output/context keys into one canonical key."""
     if key is None:
         return None
     normalized = str(key).strip().lower()
@@ -50,12 +53,14 @@ def canonical_context_key(key: str | None) -> str | None:
 
 
 def intent_output_context_keys(intent: IntentDefinition) -> set[str]:
+    """Return the set of context keys an intent may produce for downstream conditions."""
     configured = {canonical_context_key(item) or str(item).strip().lower() for item in intent.graph_build_hints.provides_context_keys}
     fallback = {canonical_context_key(item) or item for item in _DEFAULT_INTENT_OUTPUT_KEYS.get(intent.intent_code, set())}
     return {item for item in configured | fallback if item}
 
 
 def resolve_output_value(payload: dict[str, Any], left_key: str | None) -> Any | None:
+    """Resolve a condition operand from node output payload or nested slot memory."""
     if not payload or not left_key:
         return None
     if left_key in payload:
@@ -81,6 +86,7 @@ def repair_unexecutable_condition_edges(
     graph: ExecutionGraphState,
     intents_by_code: dict[str, IntentDefinition],
 ) -> GraphSemanticRepairResult:
+    """Repair condition edges that reference data not produced by their source node."""
     result = GraphSemanticRepairResult()
     producer_by_source_and_key: dict[tuple[str, str], GraphNodeState] = {}
 
@@ -148,6 +154,7 @@ def _node_provides_context_key(
     intents_by_code: dict[str, IntentDefinition],
     context_key: str,
 ) -> bool:
+    """Return whether the node's intent is known to produce the requested context key."""
     intent = intents_by_code.get(node.intent_code)
     if intent is None:
         return False
@@ -162,6 +169,7 @@ def _find_existing_condition_source(
     intents_by_code: dict[str, IntentDefinition],
     context_key: str,
 ) -> GraphNodeState | None:
+    """Find an already-present graph node that can produce the requested condition key."""
     candidates = [
         node
         for node in graph.nodes
@@ -181,6 +189,7 @@ def _select_implicit_condition_intent(
     context_key: str,
     excluded_intent_code: str,
 ) -> IntentDefinition | None:
+    """Select the implicit producer intent when there is exactly one safe candidate."""
     candidates = [
         intent
         for intent in intents_by_code.values()
@@ -199,6 +208,7 @@ def _insert_implicit_condition_node(
     producer_intent: IntentDefinition,
     context_key: str,
 ) -> GraphNodeState:
+    """Insert an implicit producer node required for a condition edge to become executable."""
     title = producer_intent.name
     if context_key == "balance":
         title = "查询账户余额"
@@ -235,6 +245,7 @@ def _rewire_condition_edge(
     new_source_node: GraphNodeState,
     old_source_node: GraphNodeState,
 ) -> None:
+    """Retarget a condition edge from the old source node to the new producer node."""
     edge.source_node_id = new_source_node.node_id
     condition.source_node_id = new_source_node.node_id
     if old_source_node.node_id in target_node.depends_on:
@@ -247,12 +258,14 @@ def _rewire_condition_edge(
 
 
 def _reindex_positions(graph: ExecutionGraphState) -> None:
+    """Normalize node positions after implicit node insertion."""
     graph.nodes.sort(key=lambda node: (node.position, node.created_at))
     for index, node in enumerate(graph.nodes):
         node.position = index
 
 
 def _implicit_edge_label(*, context_key: str, producer_title: str) -> str:
+    """Build a user-facing edge label for an implicitly inserted producer node."""
     if context_key == "balance":
         return "为判断条件先查询余额"
     return f"为判断条件先执行 {producer_title}"

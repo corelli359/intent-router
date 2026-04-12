@@ -11,12 +11,16 @@ from router_service.core.shared.domain import ChatMessage, IntentMatch, SESSION_
 
 
 class GraphEdgeType(StrEnum):
+    """Relationship type between two graph nodes."""
+
     SEQUENTIAL = "sequential"
     CONDITIONAL = "conditional"
     PARALLEL = "parallel"
 
 
 class GraphNodeStatus(StrEnum):
+    """Execution status for one graph node."""
+
     DRAFT = "draft"
     BLOCKED = "blocked"
     READY = "ready"
@@ -30,6 +34,8 @@ class GraphNodeStatus(StrEnum):
 
 
 class GraphNodeSkipReason(StrEnum):
+    """Reason code explaining why a node was skipped instead of executed."""
+
     CONDITION_NOT_MET = "condition_not_met"
     UPSTREAM_FAILED = "upstream_failed"
     UPSTREAM_CANCELLED = "upstream_cancelled"
@@ -37,6 +43,8 @@ class GraphNodeSkipReason(StrEnum):
 
 
 class GraphStatus(StrEnum):
+    """Aggregate execution status for the whole graph."""
+
     DRAFT = "draft"
     WAITING_CONFIRMATION = "waiting_confirmation"
     RUNNING = "running"
@@ -49,6 +57,8 @@ class GraphStatus(StrEnum):
 
 
 class GraphAction(BaseModel):
+    """User-visible action exposed on a graph card."""
+
     code: str
     label: str
 
@@ -64,6 +74,8 @@ class GraphCondition(BaseModel):
 
 
 class GraphEdge(BaseModel):
+    """Directed edge connecting two graph nodes, optionally with a condition."""
+
     edge_id: str = Field(default_factory=lambda: f"edge_{uuid4().hex[:10]}")
     source_node_id: str
     target_node_id: str
@@ -73,6 +85,8 @@ class GraphEdge(BaseModel):
 
 
 class SlotBindingSource(StrEnum):
+    """Provenance of one slot value bound onto a graph node."""
+
     USER_MESSAGE = "user_message"
     HISTORY = "history"
     RECOMMENDATION = "recommendation"
@@ -120,6 +134,7 @@ class GraphNodeState(BaseModel):
         blocking_reason: str | None = None,
         skip_reason_code: str | None = None,
     ) -> None:
+        """Update node status metadata and refresh its timestamp."""
         self.status = status
         self.blocking_reason = blocking_reason
         self.skip_reason_code = skip_reason_code
@@ -142,20 +157,24 @@ class ExecutionGraphState(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
     def touch(self, status: GraphStatus | None = None) -> None:
+        """Update graph status metadata and refresh its timestamp."""
         if status is not None:
             self.status = status
         self.updated_at = utc_now()
 
     def node_by_id(self, node_id: str) -> GraphNodeState:
+        """Return one graph node by id or raise when it does not exist."""
         for node in self.nodes:
             if node.node_id == node_id:
                 return node
         raise KeyError(f"node not found: {node_id}")
 
     def incoming_edges(self, node_id: str) -> list[GraphEdge]:
+        """Return all edges pointing into the given node."""
         return [edge for edge in self.edges if edge.target_node_id == node_id]
 
     def outgoing_edges(self, node_id: str) -> list[GraphEdge]:
+        """Return all edges starting from the given node."""
         return [edge for edge in self.edges if edge.source_node_id == node_id]
 
 
@@ -175,11 +194,13 @@ class GraphSessionState(BaseModel):
     expires_at: datetime = Field(default_factory=lambda: utc_now() + SESSION_TTL)
 
     def touch(self) -> None:
+        """Refresh session timestamps and extend the expiry deadline."""
         now = utc_now()
         self.updated_at = now
         self.expires_at = now + SESSION_TTL
 
     def is_expired(self, now: datetime | None = None) -> bool:
+        """Return whether the session TTL has elapsed."""
         current = now or utc_now()
         return current >= self.expires_at
 
@@ -198,6 +219,8 @@ class GraphRouterSnapshot(BaseModel):
 
 
 class GuidedSelectionIntent(BaseModel):
+    """One explicitly selected intent coming from recommendation or UI input."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     intent_code: str = Field(alias="intentCode")
@@ -215,6 +238,8 @@ class GuidedSelectionPayload(BaseModel):
 
 
 class RecommendationIntent(BaseModel):
+    """One frontend-provided recommendation candidate for context-only routing."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     intent_code: str = Field(alias="intentCode")
@@ -233,6 +258,8 @@ class RecommendationContextPayload(BaseModel):
 
 
 class ProactiveRecommendationRouteMode(StrEnum):
+    """Routing mode selected for a proactive recommendation turn."""
+
     NO_SELECTION = "no_selection"
     DIRECT_EXECUTE = "direct_execute"
     INTERACTIVE_GRAPH = "interactive_graph"
@@ -240,6 +267,8 @@ class ProactiveRecommendationRouteMode(StrEnum):
 
 
 class ProactiveRecommendationItem(BaseModel):
+    """One actionable proactive recommendation item with optional default slots."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     recommendation_item_id: str = Field(alias="recommendationItemId")
@@ -263,6 +292,8 @@ class ProactiveRecommendationPayload(BaseModel):
 
 
 class ProactiveRecommendationRouteDecision(BaseModel):
+    """Router decision describing how to handle a proactive recommendation response."""
+
     route_mode: ProactiveRecommendationRouteMode = ProactiveRecommendationRouteMode.NO_SELECTION
     selected_recommendation_ids: list[str] = Field(default_factory=list, alias="selectedRecommendationIds")
     selected_intents: list[str] = Field(default_factory=list, alias="selectedIntents")

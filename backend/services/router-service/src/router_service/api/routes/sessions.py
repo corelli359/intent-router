@@ -23,11 +23,15 @@ router = APIRouter(tags=["router"])
 
 
 class CreateSessionResponse(BaseModel):
+    """Response returned after creating a router session."""
+
     session_id: str
     cust_id: str
 
 
 class CreateSessionRequest(BaseModel):
+    """Optional payload used when callers want to control session creation."""
+
     cust_id: str | None = None
     session_id: str | None = None
 
@@ -44,6 +48,7 @@ class MessageRequest(BaseModel):
 
     @model_validator(mode="after")
     def normalize(self) -> "MessageRequest":
+        """Normalize alias fields and require either message content or guided selection."""
         self.content = self.content or self.message or ""
         if not self.content and (self.guided_selection is None or not self.guided_selection.selected_intents):
             raise ValueError("content/message or guided_selection is required")
@@ -65,6 +70,7 @@ class ActionRequest(BaseModel):
 
     @model_validator(mode="after")
     def normalize(self) -> "ActionRequest":
+        """Normalize camelCase aliases into the canonical action request shape."""
         resolved_code = self.action_code or self.actionCode
         if not resolved_code:
             raise ValueError("action_code is required")
@@ -79,6 +85,7 @@ def _resolve_action_cust_id(
     session_id: str,
     request: ActionRequest,
 ) -> str:
+    """Resolve the customer id for an action request from payload or existing session."""
     if request.cust_id:
         return request.cust_id
     try:
@@ -92,6 +99,7 @@ def _resolve_message_cust_id(
     session_id: str,
     request: MessageRequest,
 ) -> str:
+    """Resolve the customer id for a message request from payload or existing session."""
     if request.cust_id:
         return request.cust_id
     try:
@@ -101,6 +109,7 @@ def _resolve_message_cust_id(
 
 
 def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
+    """Encode one router event as an SSE frame."""
     body = json.dumps(payload, ensure_ascii=False)
     return f"event: {event_name}\ndata: {body}\n\n"
 
@@ -110,6 +119,7 @@ async def create_session(
     request: CreateSessionRequest | None = None,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ) -> CreateSessionResponse:
+    """Create a router session for direct API or frontend callers."""
     cust_id = request.cust_id if request and request.cust_id else "cust_demo"
     session = orchestrator.create_session(cust_id=cust_id, session_id=request.session_id if request else None)
     return CreateSessionResponse(session_id=session.session_id, cust_id=session.cust_id)
@@ -120,6 +130,7 @@ async def get_session_snapshot(
     session_id: str,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
+    """Return the current router snapshot for one session."""
     try:
         return orchestrator.snapshot(session_id)
     except KeyError as exc:
@@ -132,6 +143,7 @@ async def post_message(
     request: MessageRequest,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
+    """Submit one user message turn to the router and return the updated snapshot."""
     # Message APIs are the main entry for intent dialog. They can be called by a
     # frontend chat page, a test harness, or a backend integration that wants to
     # drive the router directly without rendering any UI.
@@ -156,6 +168,7 @@ async def post_action(
     request: ActionRequest,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
+    """Submit one explicit graph action and return the updated snapshot."""
     # Action APIs mutate the router state machine directly. Typical callers are
     # the graph UI, an orchestration service, or tests that need to confirm/cancel
     # a pending graph or interrupt the current waiting node.
@@ -183,9 +196,11 @@ async def post_action_stream(
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
+    """Execute one graph action while streaming router events over SSE."""
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
 
     async def event_generator():
+        """Yield SSE frames for the action execution lifecycle."""
         # The broker queue must be registered before the action task starts,
         # otherwise early graph/node events could be missed by the client.
         queue = broker.register(session_id)
@@ -238,9 +253,11 @@ async def post_message_stream(
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
+    """Execute one message turn while streaming router events over SSE."""
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
 
     async def event_generator():
+        """Yield SSE frames for the message processing lifecycle."""
         # Streaming and non-streaming message APIs hit the same orchestrator path.
         # The only difference is whether the caller also subscribes to router events
         # while the turn is being processed.
@@ -291,7 +308,9 @@ async def stream_events(
     request: Request,
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
+    """Subscribe to router events for one session without triggering a new action."""
     async def event_generator():
+        """Yield heartbeat and session events until the client disconnects."""
         subscription = broker.subscribe(session_id)
         initial_heartbeat = TaskEvent(
             event="heartbeat",

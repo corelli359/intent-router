@@ -15,10 +15,13 @@ SESSION_TTL = timedelta(minutes=30)
 
 
 def utc_now() -> datetime:
+    """Return the current UTC timestamp used across runtime domain models."""
     return datetime.now(timezone.utc)
 
 
 class TaskStatus(StrEnum):
+    """Lifecycle status shared by router tasks, nodes, and SSE events."""
+
     CREATED = "created"
     QUEUED = "queued"
     DISPATCHING = "dispatching"
@@ -32,12 +35,16 @@ class TaskStatus(StrEnum):
 
 
 class ChatMessage(BaseModel):
+    """One chat transcript item stored in a router session."""
+
     role: str
     content: str
     created_at: datetime = Field(default_factory=utc_now)
 
 
 class IntentDefinition(BaseModel):
+    """Runtime intent definition consumed by recognition, planning, and dispatch."""
+
     intent_code: str
     name: str
     description: str
@@ -65,6 +72,8 @@ class IntentDefinition(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class IntentDomain:
+    """Domain-level view of related leaf intents used in hierarchical routing."""
+
     domain_code: str
     domain_name: str
     domain_description: str
@@ -74,16 +83,21 @@ class IntentDomain:
 
     @property
     def is_single_leaf(self) -> bool:
+        """Report whether the domain contains exactly one active leaf intent."""
         return len(self.leaf_intents) == 1
 
 
 class IntentMatch(BaseModel):
+    """Recognition match containing an intent code, confidence, and reason."""
+
     intent_code: str
     confidence: float
     reason: str
 
 
 class TaskEvent(BaseModel):
+    """Event payload published over SSE for graph, node, and session state changes."""
+
     event: str
     task_id: str
     session_id: str
@@ -96,6 +110,8 @@ class TaskEvent(BaseModel):
 
 
 class Task(BaseModel):
+    """Router-side task passed to the downstream intent agent."""
+
     task_id: str = Field(default_factory=lambda: f"task_{uuid4().hex[:10]}")
     session_id: str
     intent_code: str
@@ -113,11 +129,14 @@ class Task(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
     def touch(self, status: TaskStatus) -> None:
+        """Update the task status and refresh its timestamp."""
         self.status = status
         self.updated_at = utc_now()
 
 
 class LongTermMemoryEntry(BaseModel):
+    """One long-term memory fact promoted out of a session."""
+
     cust_id: str
     memory_type: str
     content: str
@@ -126,16 +145,21 @@ class LongTermMemoryEntry(BaseModel):
 
 
 class CustomerMemory(BaseModel):
+    """Collection of long-term memory facts for one customer."""
+
     cust_id: str
     facts: list[LongTermMemoryEntry] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=utc_now)
 
     def remember(self, entry: LongTermMemoryEntry) -> None:
+        """Append one memory fact and refresh the update timestamp."""
         self.facts.append(entry)
         self.updated_at = utc_now()
 
 
 class AgentStreamChunk(BaseModel):
+    """Normalized streaming chunk returned by an intent agent."""
+
     task_id: str
     event: str
     content: str

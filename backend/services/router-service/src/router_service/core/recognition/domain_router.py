@@ -10,6 +10,8 @@ from router_service.core.recognition.recognizer import IntentMatch, IntentRecogn
 
 @dataclass(slots=True)
 class DomainMatch:
+    """Domain-level semantic match returned by the domain router."""
+
     domain_code: str
     confidence: float
     reason: str
@@ -17,11 +19,15 @@ class DomainMatch:
 
 @dataclass(slots=True)
 class DomainRoutingResult:
+    """Grouped primary and candidate domain matches."""
+
     primary: list[DomainMatch]
     candidates: list[DomainMatch]
 
 
 class DomainRouter:
+    """Route a message to one or more intent domains before leaf recognition."""
+
     def __init__(
         self,
         recognizer: IntentRecognizer,
@@ -29,6 +35,7 @@ class DomainRouter:
         domain_primary_threshold: float = 0.65,
         domain_candidate_threshold: float = 0.4,
     ) -> None:
+        """Initialize the domain router with a recognizer and domain thresholds."""
         self.recognizer = recognizer
         self.domain_primary_threshold = domain_primary_threshold
         self.domain_candidate_threshold = domain_candidate_threshold
@@ -42,6 +49,7 @@ class DomainRouter:
         long_term_memory: list[str],
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> DomainRoutingResult:
+        """Recognize the most likely domains for the incoming message."""
         domain_list = list(domains)
         if not domain_list:
             return DomainRoutingResult(primary=[], candidates=[])
@@ -55,6 +63,7 @@ class DomainRouter:
         return self._to_domain_result(recognition)
 
     def _to_intent(self, domain: IntentDomain) -> IntentDefinition:
+        """Project one domain into a synthetic intent for generic recognition."""
         return IntentDefinition(
             intent_code=domain.domain_code,
             name=domain.domain_name or domain.domain_code,
@@ -82,7 +91,9 @@ class DomainRouter:
         )
 
     def _to_domain_result(self, recognition: RecognitionResult) -> DomainRoutingResult:
+        """Convert intent-style recognition output into domain-style matches."""
         def _to_domain_match(match: IntentMatch) -> DomainMatch:
+            """Convert one intent match into a domain match."""
             return DomainMatch(
                 domain_code=match.intent_code,
                 confidence=match.confidence,

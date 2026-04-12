@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class TurnInterpretationResult:
+    """Combined result of turn interpretation and its supporting recognition output."""
+
     decision: TurnDecisionPayload
     recognition: RecognitionResult
 
@@ -32,6 +34,7 @@ class IntentUnderstandingService:
         turn_interpreter: TurnInterpreter,
         event_publisher: Any,
     ) -> None:
+        """Initialize the understanding service with recognition, planning, and event dependencies."""
         self.intent_catalog = intent_catalog
         self.recognizer = recognizer
         self.graph_builder = graph_builder
@@ -40,6 +43,7 @@ class IntentUnderstandingService:
 
     @property
     def has_graph_builder(self) -> bool:
+        """Return whether unified graph building is enabled."""
         return self.graph_builder is not None
 
     async def recognize_message(
@@ -56,6 +60,7 @@ class IntentUnderstandingService:
             await self.event_publisher.publish_recognition_started(session)
 
         async def publish_recognition_delta(delta: str) -> None:
+            """Forward streamed recognition deltas to the event publisher when enabled."""
             if not emit_events or not delta:
                 return
             await self.event_publisher.publish_recognition_delta(session, delta=delta)
@@ -86,6 +91,7 @@ class IntentUnderstandingService:
             await self.event_publisher.publish_graph_builder_started(session)
 
         async def publish_graph_builder_delta(delta: str) -> None:
+            """Forward streamed graph-builder deltas to the event publisher when enabled."""
             if not emit_events or not delta:
                 return
             await self.event_publisher.publish_graph_builder_delta(session, delta=delta)

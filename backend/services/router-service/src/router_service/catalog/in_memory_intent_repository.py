@@ -12,15 +12,20 @@ from router_service.catalog.intent_repository import (
 
 
 def utcnow() -> datetime:
+    """Return the current UTC timestamp for repository records."""
     return datetime.now(timezone.utc)
 
 
 class InMemoryIntentRepository(IntentRepository):
+    """Thread-safe in-memory intent repository used for local development and tests."""
+
     def __init__(self) -> None:
+        """Initialize the in-memory store and its lock."""
         self._store: dict[str, IntentRecord] = {}
         self._lock = RLock()
 
     def list_intents(self, status: IntentStatus | None = None) -> list[IntentRecord]:
+        """Return all intents, optionally filtered by status."""
         with self._lock:
             intents = list(self._store.values())
             if status is None:
@@ -28,6 +33,7 @@ class InMemoryIntentRepository(IntentRepository):
             return [intent for intent in intents if intent.status == status]
 
     def get_intent(self, intent_code: str) -> IntentRecord:
+        """Return one intent or raise when it does not exist."""
         with self._lock:
             intent = self._store.get(intent_code)
             if intent is None:
@@ -35,6 +41,7 @@ class InMemoryIntentRepository(IntentRepository):
             return intent
 
     def create_intent(self, payload: IntentPayload) -> IntentRecord:
+        """Insert a new intent record into the in-memory store."""
         with self._lock:
             if payload.intent_code in self._store:
                 raise IntentAlreadyExistsError(f"Intent already exists: {payload.intent_code}")
@@ -44,6 +51,7 @@ class InMemoryIntentRepository(IntentRepository):
             return record
 
     def update_intent(self, intent_code: str, payload: IntentPayload) -> IntentRecord:
+        """Update or rename an existing intent record."""
         with self._lock:
             current = self._store.get(intent_code)
             if current is None:
@@ -62,6 +70,7 @@ class InMemoryIntentRepository(IntentRepository):
             return updated
 
     def delete_intent(self, intent_code: str) -> None:
+        """Delete an intent record from the in-memory store."""
         with self._lock:
             if intent_code not in self._store:
                 raise IntentNotFoundError(f"Intent not found: {intent_code}")

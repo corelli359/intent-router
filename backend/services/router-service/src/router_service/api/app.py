@@ -11,11 +11,13 @@ from router_service.api.routes.sessions import router as graph_session_router
 
 
 def create_router_app() -> FastAPI:
+    """Create the FastAPI application and wire runtime lifecycle hooks."""
     settings = get_settings()
     runtime = build_router_runtime()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Refresh the catalog on startup and stop background tasks on shutdown."""
         await asyncio.to_thread(runtime.intent_catalog.refresh_now)
         stop_event = asyncio.Event()
         refresh_task = asyncio.create_task(
@@ -47,14 +49,17 @@ def create_router_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
+        """Return the base health endpoint used by probes and local checks."""
         return {"status": "ok"}
 
     @app.get("/api/router/health")
     async def prefixed_health() -> dict[str, str]:
+        """Return a versionless router-prefixed health endpoint."""
         return await health()
 
     @app.get("/api/router/v2/health")
     async def prefixed_health_v2() -> dict[str, str]:
+        """Return a V2-prefixed health endpoint sharing the same runtime."""
         return await health()
 
     app.include_router(graph_session_router, prefix="/api/router")
