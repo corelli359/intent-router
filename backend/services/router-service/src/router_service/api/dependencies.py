@@ -11,10 +11,10 @@ from router_service.catalog.in_memory_intent_repository import InMemoryIntentRep
 from router_service.catalog.intent_repository import IntentRepository
 from router_service.catalog.sql_intent_repository import DatabaseIntentRepository
 from router_service.api.sse.broker import EventBroker
-from router_service.core.agent_client import StreamingAgentClient
-from router_service.core.intent_catalog import RepositoryIntentCatalog
-from router_service.core.llm_client import LangChainLLMClient
-from router_service.core.prompt_templates import (
+from router_service.core.support.agent_client import StreamingAgentClient
+from router_service.core.support.intent_catalog import RepositoryIntentCatalog
+from router_service.core.support.llm_client import LangChainLLMClient
+from router_service.core.prompts.prompt_templates import (
     DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
     DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
     DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,
@@ -22,25 +22,25 @@ from router_service.core.prompt_templates import (
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
 )
-from router_service.core.recognizer import LLMIntentRecognizer, NullIntentRecognizer
-from router_service.core.graph_builder import LLMIntentGraphBuilder
-from router_service.core.graph_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
-from router_service.core.graph_planner import (
+from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer
+from router_service.core.graph.builder import LLMIntentGraphBuilder
+from router_service.core.graph.orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
+from router_service.core.graph.planner import (
     BasicTurnInterpreter,
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
     SequentialIntentGraphPlanner,
 )
-from router_service.core.recommendation_router import (
+from router_service.core.graph.recommendation_router import (
     LLMProactiveRecommendationRouter,
     NullProactiveRecommendationRouter,
 )
-from router_service.core.domain_router import DomainRouter
-from router_service.core.hierarchical_intent_recognizer import HierarchicalIntentRecognizer
-from router_service.core.leaf_intent_router import LeafIntentRouter
-from router_service.core.slot_extractor import SlotExtractor
-from router_service.core.slot_validator import SlotValidator
-from router_service.core.understanding_validator import UnderstandingValidator
+from router_service.core.recognition.domain_router import DomainRouter
+from router_service.core.recognition.hierarchical_intent_recognizer import HierarchicalIntentRecognizer
+from router_service.core.recognition.leaf_intent_router import LeafIntentRouter
+from router_service.core.slots.extractor import SlotExtractor
+from router_service.core.slots.validator import SlotValidator
+from router_service.core.slots.understanding_validator import UnderstandingValidator
 from router_service.settings import Settings
 
 

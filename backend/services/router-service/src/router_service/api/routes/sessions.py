@@ -10,13 +10,13 @@ from starlette.responses import StreamingResponse
 
 from router_service.api.dependencies import get_event_broker, get_orchestrator
 from router_service.api.sse.broker import EventBroker
-from router_service.core.domain import TaskEvent, TaskStatus
-from router_service.core.graph_domain import (
+from router_service.core.shared.domain import TaskEvent, TaskStatus
+from router_service.core.shared.graph_domain import (
     GuidedSelectionPayload,
     ProactiveRecommendationPayload,
     RecommendationContextPayload,
 )
-from router_service.core.graph_orchestrator import GraphRouterOrchestrator
+from router_service.core.graph.orchestrator import GraphRouterOrchestrator
 
 
 router = APIRouter(tags=["router"])
