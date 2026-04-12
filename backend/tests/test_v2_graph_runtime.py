@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 
-from router_service.core.graph_domain import (  # noqa: E402
+from router_service.core.shared.graph_domain import (  # noqa: E402
     ExecutionGraphState,
     GraphCondition,
     GraphEdge,
@@ -13,7 +13,7 @@ from router_service.core.graph_domain import (  # noqa: E402
     GraphNodeStatus,
     GraphStatus,
 )
-from router_service.core.graph_runtime import GraphRuntimeEngine  # noqa: E402
+from router_service.core.graph.runtime import GraphRuntimeEngine  # noqa: E402
 
 
 def test_graph_runtime_engine_marks_condition_skip_as_completed_graph() -> None:

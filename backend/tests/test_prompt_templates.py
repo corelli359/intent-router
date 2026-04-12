@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 
-from router_service.core.prompt_templates import (  # noqa: E402
+from router_service.core.prompts.prompt_templates import (  # noqa: E402
     DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
     DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
     DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,

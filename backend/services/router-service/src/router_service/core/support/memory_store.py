@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from router_service.core.domain import CustomerMemory, LongTermMemoryEntry
+from router_service.core.shared.domain import CustomerMemory, LongTermMemoryEntry
 
 
 class SessionMemoryView(Protocol):

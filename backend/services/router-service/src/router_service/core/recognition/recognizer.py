@@ -6,9 +6,9 @@ from dataclasses import dataclass
 import json
 from typing import Awaitable, Callable, Protocol
 
-from router_service.core.domain import IntentDefinition, IntentMatch
-from router_service.core.llm_client import IntentRecognitionPayload, JsonLLMClient, llm_exception_is_retryable
-from router_service.core.prompt_templates import (
+from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.support.llm_client import IntentRecognitionPayload, JsonLLMClient, llm_exception_is_retryable
+from router_service.core.prompts.prompt_templates import (
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
     build_recognizer_prompt,

@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from router_service.core.domain import IntentDefinition
-from router_service.core.slot_grounding import slot_value_grounded
-from router_service.core.graph_domain import SlotBindingSource, SlotBindingState
+from router_service.core.shared.domain import IntentDefinition
+from router_service.core.slots.grounding import slot_value_grounded
+from router_service.core.shared.graph_domain import SlotBindingSource, SlotBindingState
 from router_service.models.intent import SlotValueType
 
 

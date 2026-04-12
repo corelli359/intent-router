@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from collections.abc import AsyncGenerator
 
-from router_service.core.domain import TaskEvent, TaskStatus
+from router_service.core.shared.domain import TaskEvent, TaskStatus
 
 logger = logging.getLogger(__name__)
 

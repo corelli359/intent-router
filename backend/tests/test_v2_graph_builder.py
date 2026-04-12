@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 
-from router_service.core.domain import IntentDefinition  # noqa: E402
-from router_service.core.graph_domain import GraphStatus, SlotBindingSource  # noqa: E402
-from router_service.core.graph_builder import GraphDraftNormalizer, LLMIntentGraphBuilder, UnifiedGraphDraftPayload  # noqa: E402
+from router_service.core.shared.domain import IntentDefinition  # noqa: E402
+from router_service.core.shared.graph_domain import GraphStatus, SlotBindingSource  # noqa: E402
+from router_service.core.graph.builder import GraphDraftNormalizer, LLMIntentGraphBuilder, UnifiedGraphDraftPayload  # noqa: E402
 
 
 class _StaticLLMClient:

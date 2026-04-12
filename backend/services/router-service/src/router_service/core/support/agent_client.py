@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from router_service.core.domain import AgentStreamChunk, Task, TaskStatus
+from router_service.core.shared.domain import AgentStreamChunk, Task, TaskStatus
 
 MISSING = object()
 

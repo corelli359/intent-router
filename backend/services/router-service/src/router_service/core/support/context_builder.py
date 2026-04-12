@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from router_service.core.domain import ChatMessage, Task
+from router_service.core.shared.domain import ChatMessage, Task
 
 
 class SessionLike(Protocol):

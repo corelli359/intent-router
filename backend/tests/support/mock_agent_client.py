@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterator
 
-from router_service.core.domain import AgentStreamChunk, Task, TaskStatus
+from router_service.core.shared.domain import AgentStreamChunk, Task, TaskStatus
 
 
 CARD_RE = re.compile(r"\b(\d{12,19})\b")

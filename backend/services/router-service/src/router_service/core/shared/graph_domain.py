@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from router_service.core.domain import ChatMessage, IntentMatch, SESSION_TTL, Task, utc_now
+from router_service.core.shared.domain import ChatMessage, IntentMatch, SESSION_TTL, Task, utc_now
 
 
 class GraphEdgeType(StrEnum):

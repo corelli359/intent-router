@@ -3,11 +3,11 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
-from router_service.core.domain import IntentDefinition, IntentDomain, IntentMatch
-from router_service.core.domain_router import DomainMatch, DomainRouter, DomainRoutingResult
-from router_service.core.intent_catalog import build_intent_domains
-from router_service.core.leaf_intent_router import LeafIntentRouter
-from router_service.core.recognizer import IntentRecognizer, RecognitionResult
+from router_service.core.shared.domain import IntentDefinition, IntentDomain, IntentMatch
+from router_service.core.recognition.domain_router import DomainMatch, DomainRouter, DomainRoutingResult
+from router_service.core.support.intent_catalog import build_intent_domains
+from router_service.core.recognition.leaf_intent_router import LeafIntentRouter
+from router_service.core.recognition.recognizer import IntentRecognizer, RecognitionResult
 
 
 class HierarchicalIntentRecognizer:

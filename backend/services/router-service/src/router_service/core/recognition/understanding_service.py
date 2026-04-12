@@ -4,11 +4,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from router_service.core.llm_client import llm_exception_is_retryable
-from router_service.core.recognizer import IntentRecognizer, RecognitionResult
-from router_service.core.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
-from router_service.core.graph_builder import GraphBuildResult, IntentGraphBuilder
-from router_service.core.graph_planner import TurnDecisionPayload, TurnInterpreter
+from router_service.core.support.llm_client import llm_exception_is_retryable
+from router_service.core.recognition.recognizer import IntentRecognizer, RecognitionResult
+from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
+from router_service.core.graph.builder import GraphBuildResult, IntentGraphBuilder
+from router_service.core.graph.planner import TurnDecisionPayload, TurnInterpreter
 
 
 logger = logging.getLogger(__name__)

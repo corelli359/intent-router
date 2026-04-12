@@ -3,15 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from router_service.core.domain import TaskEvent, TaskStatus
-from router_service.core.graph_domain import (
+from router_service.core.shared.domain import TaskEvent, TaskStatus
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeSkipReason,
     GraphNodeState,
     GraphSessionState,
     GraphStatus,
 )
-from router_service.core.graph_runtime import GraphRuntimeEngine
+from router_service.core.graph.runtime import GraphRuntimeEngine
 
 
 class GraphSnapshotPresenter:

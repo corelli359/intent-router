@@ -17,9 +17,9 @@ for path in PYTHON_PATHS:
         sys.path.insert(0, path_str)
 
 from router_service.settings import Settings  # noqa: E402
-from router_service.core.llm_client import LangChainLLMClient  # noqa: E402
-from router_service.core.domain import IntentDefinition  # noqa: E402
-from router_service.core.recognizer import LLMIntentRecognizer  # noqa: E402
+from router_service.core.support.llm_client import LangChainLLMClient  # noqa: E402
+from router_service.core.shared.domain import IntentDefinition  # noqa: E402
+from router_service.core.recognition.recognizer import LLMIntentRecognizer  # noqa: E402
 
 
 def _masked_key(api_key: str | None) -> str | None:

@@ -8,16 +8,16 @@ from typing import Any, Iterable, Literal, Protocol
 from pydantic import BaseModel, Field
 
 from router_service.models.intent import GraphConfirmPolicy
-from router_service.core.domain import IntentDefinition, IntentMatch
-from router_service.core.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
-from router_service.core.prompt_templates import (
+from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.support.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
+from router_service.core.prompts.prompt_templates import (
     DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
     DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
     build_unified_graph_builder_prompt,
 )
-from router_service.core.recognizer import IntentRecognizer, NullIntentRecognizer, RecognitionResult, recognition_intent_payload
-from router_service.core.slot_grounding import normalize_slot_memory
-from router_service.core.graph_domain import (
+from router_service.core.recognition.recognizer import IntentRecognizer, NullIntentRecognizer, RecognitionResult, recognition_intent_payload
+from router_service.core.slots.grounding import normalize_slot_memory
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
@@ -28,7 +28,7 @@ from router_service.core.graph_domain import (
     SlotBindingSource,
     SlotBindingState,
 )
-from router_service.core.graph_planner import IntentGraphPlanner, SequentialIntentGraphPlanner
+from router_service.core.graph.planner import IntentGraphPlanner, SequentialIntentGraphPlanner
 
 
 logger = logging.getLogger(__name__)

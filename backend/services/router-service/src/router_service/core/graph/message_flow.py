@@ -4,9 +4,9 @@ from collections.abc import Awaitable, Callable
 import logging
 from typing import Any
 
-from router_service.core.domain import ChatMessage, utc_now
-from router_service.core.graph_compiler import GraphCompiler
-from router_service.core.graph_domain import (
+from router_service.core.shared.domain import ChatMessage, utc_now
+from router_service.core.graph.compiler import GraphCompiler
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeState,
     GraphRouterSnapshot,
@@ -20,9 +20,9 @@ from router_service.core.graph_domain import (
 )
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.state_sync import GraphStateSync
-from router_service.core.intent_understanding_service import IntentUnderstandingService
-from router_service.core.llm_client import llm_exception_is_retryable
-from router_service.core.recommendation_router import ProactiveRecommendationRouter
+from router_service.core.recognition.understanding_service import IntentUnderstandingService
+from router_service.core.support.llm_client import llm_exception_is_retryable
+from router_service.core.graph.recommendation_router import ProactiveRecommendationRouter
 
 
 logger = logging.getLogger(__name__)

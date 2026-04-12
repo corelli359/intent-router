@@ -4,9 +4,9 @@ from collections.abc import Awaitable, Callable
 import logging
 from typing import Any
 
-from router_service.core.agent_client import AgentClient
-from router_service.core.domain import Task, TaskStatus
-from router_service.core.graph_domain import (
+from router_service.core.support.agent_client import AgentClient
+from router_service.core.shared.domain import Task, TaskStatus
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeState,
     GraphNodeStatus,
@@ -14,7 +14,7 @@ from router_service.core.graph_domain import (
     GraphSessionState,
     GraphStatus,
 )
-from router_service.core.graph_presentation import GraphEventPublisher
+from router_service.core.graph.presentation import GraphEventPublisher
 from router_service.core.graph.session_store import GraphSessionStore
 
 

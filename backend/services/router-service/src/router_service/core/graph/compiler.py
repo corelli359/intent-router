@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from router_service.core.domain import IntentDefinition, IntentMatch
-from router_service.core.intent_understanding_service import IntentUnderstandingService
-from router_service.core.recognizer import RecognitionResult
-from router_service.core.slot_grounding import normalize_structured_slot_memory
-from router_service.core.slot_resolution_service import SlotResolutionService
-from router_service.core.graph_domain import (
+from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.recognition.understanding_service import IntentUnderstandingService
+from router_service.core.recognition.recognizer import RecognitionResult
+from router_service.core.slots.grounding import normalize_structured_slot_memory
+from router_service.core.slots.resolution_service import SlotResolutionService
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphEdge,
     GraphEdgeType,
@@ -21,8 +21,8 @@ from router_service.core.graph_domain import (
     RecommendationContextPayload,
     SlotBindingSource,
 )
-from router_service.core.graph_semantics import repair_unexecutable_condition_edges
-from router_service.core.graph_planner import IntentGraphPlanner
+from router_service.core.graph.semantics import repair_unexecutable_condition_edges
+from router_service.core.graph.planner import IntentGraphPlanner
 
 
 SessionContextBuilder = Callable[[GraphSessionState], dict[str, Any]]

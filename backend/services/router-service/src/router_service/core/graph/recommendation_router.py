@@ -4,13 +4,13 @@ import json
 import logging
 from typing import Protocol
 
-from router_service.core.llm_client import JsonLLMClient, llm_exception_is_retryable
-from router_service.core.prompt_templates import (
+from router_service.core.support.llm_client import JsonLLMClient, llm_exception_is_retryable
+from router_service.core.prompts.prompt_templates import (
     DEFAULT_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT,
     DEFAULT_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT,
     build_proactive_recommendation_prompt,
 )
-from router_service.core.graph_domain import (
+from router_service.core.shared.graph_domain import (
     ProactiveRecommendationPayload,
     ProactiveRecommendationRouteDecision,
     ProactiveRecommendationRouteMode,

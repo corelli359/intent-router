@@ -6,7 +6,7 @@ from typing import Iterable
 
 from router_service.models.intent import IntentRecord, IntentStatus
 from router_service.catalog.intent_repository import IntentRepository
-from router_service.core.domain import IntentDefinition, IntentDomain
+from router_service.core.shared.domain import IntentDefinition, IntentDomain
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from router_service.core.domain import IntentDefinition, IntentDomain, IntentGraphBuildHints
-from router_service.core.domain_router import DomainRouter, DomainRoutingResult
-from router_service.core.recognizer import IntentMatch, RecognitionResult
+from router_service.core.shared.domain import IntentDefinition, IntentDomain, IntentGraphBuildHints
+from router_service.core.recognition.domain_router import DomainRouter, DomainRoutingResult
+from router_service.core.recognition.recognizer import IntentMatch, RecognitionResult
 
 
 @dataclass

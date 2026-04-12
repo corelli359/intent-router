@@ -21,10 +21,10 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from tests.support.mock_agent_client import MockStreamingAgentClient
-from router_service.core.agent_client import StreamingAgentClient
-from router_service.core.domain import IntentDefinition, IntentMatch
-from router_service.core.recognizer import RecognitionResult
-from router_service.core.graph_domain import (
+from router_service.core.support.agent_client import StreamingAgentClient
+from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.recognition.recognizer import RecognitionResult
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
@@ -36,8 +36,8 @@ from router_service.core.graph_domain import (
     ProactiveRecommendationRouteDecision,
     ProactiveRecommendationRouteMode,
 )
-from router_service.core.graph_orchestrator import GraphRouterOrchestrator
-from router_service.core.graph_planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
+from router_service.core.graph.orchestrator import GraphRouterOrchestrator
+from router_service.core.graph.planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
 
 
 class _StaticCatalog:

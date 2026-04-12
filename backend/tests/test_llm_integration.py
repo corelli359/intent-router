@@ -9,17 +9,17 @@ from typing import Any
 import pytest
 
 
-from router_service.core.agent_client import StreamingAgentClient  # noqa: E402
-from router_service.core.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
-from router_service.core.domain import IntentMatch  # noqa: E402
-from router_service.core.llm_client import (  # noqa: E402
+from router_service.core.support.agent_client import StreamingAgentClient  # noqa: E402
+from router_service.core.shared.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
+from router_service.core.shared.domain import IntentMatch  # noqa: E402
+from router_service.core.support.llm_client import (  # noqa: E402
     IntentRecognitionMatchPayload,
     IntentRecognitionPayload,
     LangChainLLMClient,
 )
-from router_service.core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
-from router_service.core.graph_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
-from router_service.core.graph_planner import (  # noqa: E402
+from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
+from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
+from router_service.core.graph.planner import (  # noqa: E402
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
 )

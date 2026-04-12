@@ -31,13 +31,13 @@ def _bootstrap_python_path() -> None:
 
 _bootstrap_python_path()
 
-from router_service.core.domain import IntentDefinition  # noqa: E402
-from router_service.core.llm_client import LangChainLLMClient  # noqa: E402
-from router_service.core.prompt_templates import (  # noqa: E402
+from router_service.core.shared.domain import IntentDefinition  # noqa: E402
+from router_service.core.support.llm_client import LangChainLLMClient  # noqa: E402
+from router_service.core.prompts.prompt_templates import (  # noqa: E402
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
 )
-from router_service.core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
+from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
 from router_service.settings import Settings  # noqa: E402
 
 

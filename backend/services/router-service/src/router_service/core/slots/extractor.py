@@ -8,16 +8,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from router_service.core.domain import IntentDefinition
-from router_service.core.llm_client import JsonLLMClient, llm_exception_is_retryable
-from router_service.core.prompt_templates import (
+from router_service.core.shared.domain import IntentDefinition
+from router_service.core.support.llm_client import JsonLLMClient, llm_exception_is_retryable
+from router_service.core.prompts.prompt_templates import (
     DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
     DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT,
     build_slot_extractor_prompt,
 )
-from router_service.core.recognizer import recognition_intent_payload
-from router_service.core.slot_grounding import normalize_structured_slot_memory, slot_value_grounded
-from router_service.core.graph_domain import GraphNodeState, SlotBindingSource, SlotBindingState
+from router_service.core.recognition.recognizer import recognition_intent_payload
+from router_service.core.slots.grounding import normalize_structured_slot_memory, slot_value_grounded
+from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingSource, SlotBindingState
 from router_service.models.intent import IntentSlotDefinition, SlotOverwritePolicy, SlotValueType
 
 

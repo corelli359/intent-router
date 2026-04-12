@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from router_service.catalog.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
 from router_service.api import dependencies  # noqa: E402
-from router_service.core.hierarchical_intent_recognizer import HierarchicalIntentRecognizer  # noqa: E402
+from router_service.core.recognition.hierarchical_intent_recognizer import HierarchicalIntentRecognizer  # noqa: E402
 
 
 class FakeLLMClient:

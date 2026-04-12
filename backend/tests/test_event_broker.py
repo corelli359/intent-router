@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 from router_service.api.sse.broker import EventBroker  # noqa: E402
-from router_service.core.domain import TaskEvent, TaskStatus  # noqa: E402
+from router_service.core.shared.domain import TaskEvent, TaskStatus  # noqa: E402
 
 
 def test_event_broker_emits_heartbeat_before_real_event() -> None:

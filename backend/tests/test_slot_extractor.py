@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from router_service.core.domain import IntentDefinition
-from router_service.core.slot_extractor import SlotExtractor
-from router_service.core.graph_domain import GraphNodeState, SlotBindingSource
+from router_service.core.shared.domain import IntentDefinition
+from router_service.core.slots.extractor import SlotExtractor
+from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingSource
 
 
 class _RetryableLLMError(Exception):

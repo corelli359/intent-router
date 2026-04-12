@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 
-from router_service.core.domain import IntentDefinition, IntentDomain, IntentGraphBuildHints
-from router_service.core.domain_router import DomainMatch, DomainRoutingResult
-from router_service.core.hierarchical_intent_recognizer import HierarchicalIntentRecognizer
-from router_service.core.recognizer import IntentMatch, IntentRecognizer, RecognitionResult
+from router_service.core.shared.domain import IntentDefinition, IntentDomain, IntentGraphBuildHints
+from router_service.core.recognition.domain_router import DomainMatch, DomainRoutingResult
+from router_service.core.recognition.hierarchical_intent_recognizer import HierarchicalIntentRecognizer
+from router_service.core.recognition.recognizer import IntentMatch, IntentRecognizer, RecognitionResult
 
 
 def _intent(intent_code: str, *, domain_code: str = "", domain_name: str = "") -> IntentDefinition:

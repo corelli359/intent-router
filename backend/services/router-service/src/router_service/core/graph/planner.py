@@ -5,9 +5,9 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, model_validator
 
-from router_service.core.domain import IntentDefinition, IntentMatch
-from router_service.core.llm_client import JsonLLMClient
-from router_service.core.prompt_templates import (
+from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.support.llm_client import JsonLLMClient
+from router_service.core.prompts.prompt_templates import (
     DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
     DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
     DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT,
@@ -15,8 +15,8 @@ from router_service.core.prompt_templates import (
     build_graph_planner_prompt,
     build_turn_interpreter_prompt,
 )
-from router_service.core.recognizer import RecognitionResult
-from router_service.core.graph_domain import (
+from router_service.core.recognition.recognizer import RecognitionResult
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,

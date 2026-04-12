@@ -5,8 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-from router_service.core.domain import ChatMessage  # noqa: E402
-from router_service.core.memory_store import LongTermMemoryStore  # noqa: E402
+from router_service.core.shared.domain import ChatMessage  # noqa: E402
+from router_service.core.support.memory_store import LongTermMemoryStore  # noqa: E402
 
 
 def test_long_term_memory_store_promotes_recent_messages_and_slots() -> None:

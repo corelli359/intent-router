@@ -6,9 +6,9 @@ from dataclasses import dataclass
 import logging
 from typing import Any
 
-from router_service.core.agent_client import AgentClient, StreamingAgentClient
-from router_service.core.context_builder import ContextBuilder
-from router_service.core.domain import (
+from router_service.core.support.agent_client import AgentClient, StreamingAgentClient
+from router_service.core.support.context_builder import ContextBuilder
+from router_service.core.shared.domain import (
     ChatMessage,
     IntentDefinition,
     IntentMatch,
@@ -17,12 +17,12 @@ from router_service.core.domain import (
     TaskStatus,
     utc_now,
 )
-from router_service.core.recognizer import IntentRecognizer, RecognitionResult
-from router_service.core.graph_compiler import GraphCompiler
-from router_service.core.intent_understanding_service import IntentUnderstandingService
-from router_service.core.slot_resolution_service import SlotResolutionService
-from router_service.core.understanding_validator import UnderstandingValidationResult, UnderstandingValidator
-from router_service.core.graph_domain import (
+from router_service.core.recognition.recognizer import IntentRecognizer, RecognitionResult
+from router_service.core.graph.compiler import GraphCompiler
+from router_service.core.recognition.understanding_service import IntentUnderstandingService
+from router_service.core.slots.resolution_service import SlotResolutionService
+from router_service.core.slots.understanding_validator import UnderstandingValidationResult, UnderstandingValidator
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphCondition,
     GraphNodeState,
@@ -38,16 +38,16 @@ from router_service.core.graph_domain import (
     SlotBindingSource,
     SlotBindingState,
 )
-from router_service.core.graph_runtime import GraphRuntimeEngine
-from router_service.core.graph_presentation import GraphEventPublisher, GraphSnapshotPresenter
-from router_service.core.graph_builder import GraphBuildResult, IntentGraphBuilder
-from router_service.core.graph_planner import (
+from router_service.core.graph.runtime import GraphRuntimeEngine
+from router_service.core.graph.presentation import GraphEventPublisher, GraphSnapshotPresenter
+from router_service.core.graph.builder import GraphBuildResult, IntentGraphBuilder
+from router_service.core.graph.planner import (
     BasicTurnInterpreter,
     IntentGraphPlanner,
     SequentialIntentGraphPlanner,
     TurnInterpreter,
 )
-from router_service.core.recommendation_router import (
+from router_service.core.graph.recommendation_router import (
     NullProactiveRecommendationRouter,
     ProactiveRecommendationRouter,
 )

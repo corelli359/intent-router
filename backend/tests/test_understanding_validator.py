@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from router_service.core.domain import IntentDefinition
-from router_service.core.understanding_validator import UnderstandingValidator
-from router_service.core.graph_domain import GraphNodeState
+from router_service.core.shared.domain import IntentDefinition
+from router_service.core.slots.understanding_validator import UnderstandingValidator
+from router_service.core.shared.graph_domain import GraphNodeState
 
 
 def _gas_intent() -> IntentDefinition:

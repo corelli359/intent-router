@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from router_service.models.intent import IntentPayload, IntentStatus  # noqa: E402
 from router_service.catalog.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
-from router_service.core.intent_catalog import RepositoryIntentCatalog  # noqa: E402
+from router_service.core.support.intent_catalog import RepositoryIntentCatalog  # noqa: E402
 
 
 def _payload(

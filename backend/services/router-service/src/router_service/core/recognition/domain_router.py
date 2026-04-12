@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from typing import Iterable
 
-from router_service.core.domain import IntentDefinition, IntentDomain, IntentGraphBuildHints
-from router_service.core.recognizer import IntentMatch, IntentRecognizer, RecognitionResult
+from router_service.core.shared.domain import IntentDefinition, IntentDomain, IntentGraphBuildHints
+from router_service.core.recognition.recognizer import IntentMatch, IntentRecognizer, RecognitionResult
 
 
 @dataclass(slots=True)

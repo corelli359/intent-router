@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from router_service.core.domain import IntentDefinition, IntentGraphBuildHints
-from router_service.core.leaf_intent_router import LeafIntentRouter
-from router_service.core.recognizer import IntentMatch, IntentRecognizer, RecognitionResult
+from router_service.core.shared.domain import IntentDefinition, IntentGraphBuildHints
+from router_service.core.recognition.leaf_intent_router import LeafIntentRouter
+from router_service.core.recognition.recognizer import IntentMatch, IntentRecognizer, RecognitionResult
 
 
 class _RecordingRecognizer(IntentRecognizer):
