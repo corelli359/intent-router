@@ -13,8 +13,20 @@ ENV_FILENAMES = (".env", ".env.local")
 
 def _env_search_roots() -> tuple[Path, ...]:
     roots: list[Path] = []
+    seen: set[Path] = set()
+
+    for candidate in (Path.cwd(), Path("/workspace")):
+        resolved = candidate.expanduser().resolve()
+        if not resolved.exists() or resolved in seen:
+            continue
+        roots.append(resolved)
+        seen.add(resolved)
+
     for parent in Path(__file__).resolve().parents:
+        if parent in seen:
+            continue
         roots.append(parent)
+        seen.add(parent)
         if (parent / ".git").exists() or (parent / "AGENTS.md").is_file():
             break
     return tuple(roots)

@@ -34,9 +34,15 @@ def _sample_payload(intent_code: str = "transfer_money") -> dict:
         "intent_code": intent_code,
         "name": "Transfer Money",
         "description": "Handle transfer requests",
+        "domain_code": "transfer",
+        "domain_name": "Transfer",
+        "domain_description": "Handles money transfers",
         "examples": ["transfer 100 to Alex"],
         "agent_url": "https://agent.example.com/transfer",
         "status": "inactive",
+        "is_leaf_intent": True,
+        "parent_intent_code": "",
+        "routing_examples": ["transfer money to Alex"],
         "dispatch_priority": 10,
         "request_schema": {"type": "object"},
         "field_mapping": {"amount": "$entities.amount"},
@@ -97,6 +103,12 @@ def test_intent_crud_and_status_filter_flow() -> None:
             assert create_response.status_code == 201
             assert create_response.json()["intent_code"] == "transfer_money"
             assert create_response.json()["status"] == "inactive"
+            assert create_response.json()["domain_code"] == "transfer"
+            assert create_response.json()["domain_name"] == "Transfer"
+            assert create_response.json()["domain_description"] == "Handles money transfers"
+            assert create_response.json()["is_leaf_intent"] is True
+            assert create_response.json()["parent_intent_code"] == ""
+            assert create_response.json()["routing_examples"] == ["transfer money to Alex"]
             assert create_response.json()["field_catalog"][0]["field_code"] == "person_name"
             assert create_response.json()["slot_schema"][0]["slot_key"] == "recipient_name"
             assert create_response.json()["slot_schema"][0]["field_code"] == "person_name"

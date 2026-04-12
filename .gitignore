@@ -35,5 +35,6 @@ node_modules/
 
 # Local build / workspace artifacts
 /build/
+/backend/services/**/build/
 /.codex
 *.ipynb

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from router_service.catalog.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
 from router_service.api import dependencies  # noqa: E402
+from router_service.core.hierarchical_intent_recognizer import HierarchicalIntentRecognizer  # noqa: E402
 
 
 class FakeLLMClient:
@@ -19,6 +20,7 @@ def test_build_router_runtime_shares_single_recognizer_instance(monkeypatch) -> 
         router_intent_refresh_interval_seconds=5.0,
         recognizer_backend="llm",
         router_v2_graph_build_mode="legacy",
+        router_v2_understanding_mode="flat",
         llm_recognizer_model="recognizer-model",
         llm_model="planner-model",
         llm_recognizer_system_prompt_template=None,
@@ -46,6 +48,7 @@ def test_build_router_runtime_can_enable_unified_v2_graph_builder(monkeypatch) -
         router_intent_refresh_interval_seconds=5.0,
         recognizer_backend="llm",
         router_v2_graph_build_mode="unified",
+        router_v2_understanding_mode="flat",
         llm_recognizer_model="recognizer-model",
         llm_model="planner-model",
         llm_recognizer_system_prompt_template=None,
@@ -63,5 +66,34 @@ def test_build_router_runtime_can_enable_unified_v2_graph_builder(monkeypatch) -
     try:
         assert runtime.orchestrator.graph_builder is not None
         assert runtime.orchestrator.recognizer is not None
+    finally:
+        asyncio.run(runtime.agent_client.close())
+
+
+def test_build_router_runtime_disables_unified_graph_builder_in_hierarchical_mode(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        router_sse_heartbeat_seconds=15.0,
+        router_sse_max_idle_seconds=300.0,
+        router_intent_refresh_interval_seconds=5.0,
+        recognizer_backend="llm",
+        router_v2_graph_build_mode="unified",
+        router_v2_understanding_mode="hierarchical",
+        llm_recognizer_model="recognizer-model",
+        llm_model="planner-model",
+        llm_recognizer_system_prompt_template=None,
+        llm_recognizer_human_prompt_template=None,
+        agent_http_timeout_seconds=5.0,
+        router_intent_switch_threshold=0.8,
+        router_agent_timeout_seconds=30.0,
+    )
+
+    monkeypatch.setattr(dependencies, "get_settings", lambda: settings)
+    monkeypatch.setattr(dependencies, "get_intent_repository", lambda: InMemoryIntentRepository())
+    monkeypatch.setattr(dependencies, "_build_llm_client", lambda: FakeLLMClient())
+
+    runtime = dependencies.build_router_runtime()
+    try:
+        assert runtime.orchestrator.graph_builder is None
+        assert isinstance(runtime.orchestrator.recognizer, HierarchicalIntentRecognizer)
     finally:
         asyncio.run(runtime.agent_client.close())

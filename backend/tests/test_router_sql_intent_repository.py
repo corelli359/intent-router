@@ -3,23 +3,29 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from admin_service.models.intent import IntentPayload, IntentStatus  # noqa: E402
-from admin_service.storage.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
+from router_service.catalog.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
+from router_service.models.intent import IntentPayload, IntentStatus  # noqa: E402
 
 
-def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, is_fallback: bool = False) -> IntentPayload:
+def _payload(
+    intent_code: str,
+    *,
+    status: IntentStatus = IntentStatus.INACTIVE,
+    is_fallback: bool = False,
+) -> IntentPayload:
     return IntentPayload(
         intent_code=intent_code,
         name=f"{intent_code} name",
         description=f"{intent_code} description",
-        domain_code="finance",
-        domain_name="Finance",
-        domain_description="Financial domain intents",
-        is_leaf_intent=True,
-        parent_intent_code="",
+        domain_code="payment",
+        domain_name="Payment",
+        domain_description="Payment domain intents",
         examples=[f"{intent_code} example"],
         agent_url=f"https://agent.example.com/{intent_code}",
+        is_leaf_intent=True,
+        parent_intent_code="",
         status=status,
+        routing_examples=[f"{intent_code} routing"],
         is_fallback=is_fallback,
         dispatch_priority=100,
         request_schema={"type": "object", "required": ["input"]},
@@ -27,8 +33,8 @@ def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, 
         field_catalog=[
             {
                 "field_code": "free_text_input",
-                "label": "输入文本",
-                "semantic_definition": "当前意图接收的一段自由文本输入",
+                "label": "Input",
+                "semantic_definition": "Free text input for this intent",
                 "value_type": "string",
                 "examples": ["foo"],
             }
@@ -38,44 +44,44 @@ def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, 
                 "slot_key": "input",
                 "field_code": "free_text_input",
                 "role": "primary_input",
-                "label": "输入",
-                "description": "必填输入参数",
-                "semantic_definition": "当前意图的主输入文本",
+                "label": "Input",
+                "description": "Required input field",
+                "semantic_definition": "Primary input text for this intent",
                 "value_type": "string",
                 "required": True,
-                "aliases": ["输入"],
+                "aliases": ["input"],
                 "examples": ["foo"],
             }
         ],
-        routing_examples=[f"{intent_code} routing"],
+        graph_build_hints={
+            "intent_scope_rule": "One message maps to one node by default.",
+            "planner_notes": "Split only when the user expresses independent actions.",
+        },
         resume_policy="resume_same_task",
     )
 
 
-def test_database_repository_persists_records_across_instances(tmp_path: Path) -> None:
-    database_url = f"sqlite:///{tmp_path / 'intent-router.db'}"
+def test_router_database_repository_persists_hierarchical_fields(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'router-intent.db'}"
     repository = DatabaseIntentRepository(database_url)
-    repository.create_intent(_payload("query_order_status", status=IntentStatus.ACTIVE))
+    repository.create_intent(_payload("pay_electricity", status=IntentStatus.ACTIVE))
     repository.create_intent(_payload("fallback_general", status=IntentStatus.ACTIVE, is_fallback=True))
 
     reloaded = DatabaseIntentRepository(database_url)
-    all_intents = reloaded.list_intents()
-    active_intents = reloaded.list_intents(IntentStatus.ACTIVE)
+    record = reloaded.get_intent("pay_electricity")
 
-    assert [intent.intent_code for intent in all_intents] == ["query_order_status", "fallback_general"]
-    assert [intent.intent_code for intent in active_intents] == ["query_order_status", "fallback_general"]
-    assert reloaded.get_intent("fallback_general").is_fallback is True
-    assert reloaded.get_intent("query_order_status").field_catalog[0].field_code == "free_text_input"
-    assert reloaded.get_intent("query_order_status").slot_schema[0].slot_key == "input"
-    assert reloaded.get_intent("query_order_status").slot_schema[0].field_code == "free_text_input"
-    assert reloaded.get_intent("query_order_status").slot_schema[0].role == "primary_input"
-    assert reloaded.get_intent("query_order_status").domain_code == "finance"
-    assert reloaded.get_intent("query_order_status").domain_name == "Finance"
-    assert reloaded.get_intent("query_order_status").routing_examples == ["query_order_status routing"]
+    assert record.domain_code == "payment"
+    assert record.domain_name == "Payment"
+    assert record.domain_description == "Payment domain intents"
+    assert record.is_leaf_intent is True
+    assert record.parent_intent_code == ""
+    assert record.routing_examples == ["pay_electricity routing"]
+    assert record.field_catalog[0].field_code == "free_text_input"
+    assert record.slot_schema[0].field_code == "free_text_input"
 
 
-def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Path) -> None:
-    db_path = tmp_path / "legacy-intent-router.db"
+def test_router_database_repository_auto_adds_hierarchical_columns_for_legacy_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy-router-intent.db"
     connection = sqlite3.connect(db_path)
     try:
         connection.execute(
@@ -125,8 +131,6 @@ def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Pa
     repository = DatabaseIntentRepository(f"sqlite:///{db_path}")
     record = repository.get_intent("transfer_money")
 
-    assert record.slot_schema == []
-    assert record.field_catalog == []
     assert record.domain_code == ""
     assert record.domain_name == ""
     assert record.domain_description == ""

@@ -53,9 +53,15 @@ class IntentCreateRequest(BaseModel):
     intent_code: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=256)
     description: str = Field(min_length=1, max_length=4000)
+    domain_code: str = Field(default="", max_length=128)
+    domain_name: str = Field(default="", max_length=256)
+    domain_description: str = Field(default="", max_length=2000)
     examples: list[str] = Field(default_factory=list)
     agent_url: str = Field(min_length=1, max_length=2048)
+    is_leaf_intent: bool = True
+    parent_intent_code: str = Field(default="", max_length=128)
     status: IntentStatus = IntentStatus.INACTIVE
+    routing_examples: list[str] = Field(default_factory=list)
     is_fallback: bool = False
     dispatch_priority: int = Field(default=100, ge=0, le=10_000)
     request_schema: dict[str, Any] = Field(default_factory=dict)
@@ -80,8 +86,14 @@ class IntentResponse(BaseModel):
     intent_code: str
     name: str
     description: str
+    domain_code: str
+    domain_name: str
+    domain_description: str
     examples: list[str]
     agent_url: str
+    is_leaf_intent: bool
+    parent_intent_code: str
+    routing_examples: list[str]
     status: IntentStatus
     is_fallback: bool
     dispatch_priority: int

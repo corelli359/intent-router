@@ -5,6 +5,10 @@ from pathlib import Path
 
 
 from router_service.core.prompt_templates import (  # noqa: E402
+    DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
+    DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
+    DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,
+    DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
     DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT,
@@ -35,9 +39,47 @@ def test_recognizer_prompt_explicitly_prevents_single_action_over_split() -> Non
 
     assert len(messages) == 2
     assert "只返回一个 intent" in messages[0].content
+    assert "routing_examples" in messages[0].content
     assert "field_catalog" in messages[0].content
     assert "我要给我弟弟转500" in messages[1].content
     assert "已注册意图清单" in messages[1].content
+
+
+def test_domain_router_prompt_accepts_expected_variables() -> None:
+    prompt = build_recognizer_prompt(
+        system_prompt=DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
+    )
+
+    messages = prompt.format_messages(
+        message="我要交电费",
+        recent_messages_json="[]",
+        long_term_memory_json="[]",
+        intents_json='[{"intent_code":"payment"}]',
+    )
+
+    assert len(messages) == 2
+    assert "大类识别器" in messages[0].content
+    assert "routing_examples" in messages[0].content
+    assert "可选 domain 列表" in messages[1].content
+
+
+def test_leaf_router_prompt_accepts_expected_variables() -> None:
+    prompt = build_recognizer_prompt(
+        system_prompt=DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,
+    )
+
+    messages = prompt.format_messages(
+        message="我要交电费",
+        recent_messages_json="[]",
+        long_term_memory_json="[]",
+        intents_json='[{"intent_code":"pay_electricity"}]',
+    )
+
+    assert len(messages) == 2
+    assert "leaf intent 识别器" in messages[0].content
+    assert "当前 domain 里的 leaf intents" in messages[1].content
 
 
 def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:

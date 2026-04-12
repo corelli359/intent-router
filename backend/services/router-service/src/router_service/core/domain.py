@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any
@@ -60,6 +61,9 @@ class IntentDefinition(BaseModel):
     intent_code: str
     name: str
     description: str
+    domain_code: str = ""
+    domain_name: str = ""
+    domain_description: str = ""
     examples: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
     agent_url: str
@@ -74,6 +78,23 @@ class IntentDefinition(BaseModel):
     slot_schema: list[IntentSlotDefinition] = Field(default_factory=list)
     graph_build_hints: IntentGraphBuildHints = Field(default_factory=IntentGraphBuildHints)
     resume_policy: str = "resume_same_task"
+    is_leaf_intent: bool = True
+    parent_intent_code: str = ""
+    routing_examples: list[str] = Field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class IntentDomain:
+    domain_code: str
+    domain_name: str
+    domain_description: str
+    routing_examples: tuple[str, ...]
+    leaf_intents: tuple[IntentDefinition, ...]
+    dispatch_priority: int
+
+    @property
+    def is_single_leaf(self) -> bool:
+        return len(self.leaf_intents) == 1
 
 
 class IntentMatch(BaseModel):

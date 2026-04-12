@@ -14,7 +14,14 @@ from router_service.api.sse.broker import EventBroker
 from router_service.core.agent_client import StreamingAgentClient
 from router_service.core.intent_catalog import RepositoryIntentCatalog
 from router_service.core.llm_client import LangChainLLMClient
-from router_service.core.prompt_templates import DEFAULT_RECOGNIZER_HUMAN_PROMPT, DEFAULT_RECOGNIZER_SYSTEM_PROMPT
+from router_service.core.prompt_templates import (
+    DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
+    DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
+    DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,
+    DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
+    DEFAULT_RECOGNIZER_HUMAN_PROMPT,
+    DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
+)
 from router_service.core.recognizer import LLMIntentRecognizer, NullIntentRecognizer
 from router_service.core.v2_graph_builder import LLMIntentGraphBuilder
 from router_service.core.v2_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
@@ -28,6 +35,12 @@ from router_service.core.v2_recommendation_router import (
     LLMProactiveRecommendationRouter,
     NullProactiveRecommendationRouter,
 )
+from router_service.core.domain_router import DomainRouter
+from router_service.core.hierarchical_intent_recognizer import HierarchicalIntentRecognizer
+from router_service.core.leaf_intent_router import LeafIntentRouter
+from router_service.core.slot_extractor import SlotExtractor
+from router_service.core.slot_validator import SlotValidator
+from router_service.core.understanding_validator import UnderstandingValidator
 from router_service.settings import Settings
 
 
@@ -79,7 +92,7 @@ def build_router_runtime() -> RouterRuntime:
     )
     llm_client = _build_llm_client()
     intent_catalog = RepositoryIntentCatalog(get_intent_repository())
-    recognizer = (
+    baseline_recognizer = (
         LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
@@ -93,7 +106,36 @@ def build_router_runtime() -> RouterRuntime:
             llm_available=False,
         )
     )
+    recognizer = baseline_recognizer
+    if settings.router_v2_understanding_mode == "hierarchical" and llm_client is not None:
+        domain_recognizer = LLMIntentRecognizer(
+            llm_client,
+            model=settings.llm_recognizer_model or settings.llm_model,
+            fallback=NullIntentRecognizer(),
+            system_prompt_template=DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
+            human_prompt_template=DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
+        )
+        leaf_recognizer = LLMIntentRecognizer(
+            llm_client,
+            model=settings.llm_recognizer_model or settings.llm_model,
+            fallback=NullIntentRecognizer(),
+            system_prompt_template=DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
+            human_prompt_template=DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,
+        )
+        recognizer = HierarchicalIntentRecognizer(
+            intent_catalog=intent_catalog,
+            domain_router=DomainRouter(domain_recognizer),
+            leaf_router=LeafIntentRouter(leaf_recognizer),
+            fallback=baseline_recognizer,
+        )
     agent_client = StreamingAgentClient(http_timeout_seconds=settings.agent_http_timeout_seconds)
+    understanding_validator = UnderstandingValidator(
+        slot_extractor=SlotExtractor(
+            llm_client=llm_client,
+            model=settings.llm_model,
+        ),
+        slot_validator=SlotValidator(),
+    )
     orchestrator = GraphRouterOrchestrator(
         publish_event=event_broker.publish,
         intent_catalog=intent_catalog,
@@ -105,7 +147,9 @@ def build_router_runtime() -> RouterRuntime:
                 fallback_recognizer=recognizer,
                 fallback_planner=SequentialIntentGraphPlanner(),
             )
-            if llm_client is not None and settings.router_v2_graph_build_mode == "unified"
+            if llm_client is not None
+            and settings.router_v2_graph_build_mode == "unified"
+            and settings.router_v2_understanding_mode != "hierarchical"
             else None
         ),
         planner=(
@@ -140,6 +184,7 @@ def build_router_runtime() -> RouterRuntime:
             intent_switch_threshold=settings.router_intent_switch_threshold,
             agent_timeout_seconds=settings.router_agent_timeout_seconds,
         ),
+        understanding_validator=understanding_validator,
     )
     return RouterRuntime(
         event_broker=event_broker,

@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 DEFAULT_RECOGNIZER_SYSTEM_PROMPT = (
     "你是一个多意图识别器。"
     "只能从已注册 intent 中选择，不能虚构新的 intent_code。"
-    "每个 intent 都会附带 field_catalog、slot_schema 和 graph_build_hints。"
+    "每个 intent 都会附带 domain_code、domain_name、routing_examples、field_catalog、slot_schema 和 graph_build_hints。"
     "field_catalog 里的公共字段语义，以及 slot_schema 里的 field_code、role、semantic_definition、bind_scope、examples、counter_examples 都是强约束。"
     "你必须严格利用这些注册约束，判断哪些内容只是该 intent 的槽位，哪些才是新的独立 intent。"
     "你可以返回多个意图，但必须保持谨慎。"
@@ -29,6 +29,62 @@ DEFAULT_RECOGNIZER_HUMAN_PROMPT = (
     "最近对话(JSON):\n{recent_messages_json}\n\n"
     "长期记忆(JSON):\n{long_term_memory_json}\n\n"
     "已注册意图清单(JSON):\n{intents_json}"
+)
+
+DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT = (
+    "你是层级路由中的大类识别器。只从可选的 domain 中挑选当前消息所属的大类。"
+    "domain 由 domain_code、domain_name、domain_description 和 routing_examples 描述。"
+    "你可以返回多个 domain，但必须谨慎。confidence 必须在 0 和 1 之间。"
+)
+
+DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT = (
+    "当前消息:\n{message}\n\n"
+    "最近对话(JSON):\n{recent_messages_json}\n\n"
+    "长期记忆(JSON):\n{long_term_memory_json}\n\n"
+    "可选 domain 列表(JSON):\n{intents_json}"
+)
+
+DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT = (
+    "你是层级路由里的 leaf intent 识别器。只在当前 domain 提供的 leaf intents 里作判断。"
+    "保持谨慎，只有当消息明确表达了与某个 leaf intent 对应的完整执行行为，才返回 primary match。"
+)
+
+DEFAULT_LEAF_ROUTER_HUMAN_PROMPT = (
+    "当前消息:\n{message}\n\n"
+    "最近对话(JSON):\n{recent_messages_json}\n\n"
+    "长期记忆(JSON):\n{long_term_memory_json}\n\n"
+    "当前 domain 里的 leaf intents(JSON):\n{intents_json}"
+)
+
+DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT = (
+    "你是路由层的槽位抽取器，只为单个 leaf intent 抽取槽位。"
+    "你只能使用已注册 slot_schema 中出现的 slot_key，不能虚构新槽位。"
+    "你必须严格依据 slot_schema 的 label、description、semantic_definition、aliases、examples 和 counter_examples。"
+    "只能抽取当前消息或当前节点原始片段里能够明确落地的值，不允许猜测。"
+    "如果某个槽位在文本里没有足够证据，不要输出。"
+    "如果某个候选值存在歧义或无法确定应该绑定到哪个槽位，把 slot_key 放进 ambiguousSlotKeys。"
+    "如果已有 existing_slot_memory 中的值明显已经成立，不必重复输出；重点补充缺失槽位。"
+    "输出必须是 JSON，不能输出解释。"
+)
+
+DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT = (
+    "当前消息:\n{message}\n\n"
+    "当前节点原始片段:\n{source_fragment}\n\n"
+    "意图定义(JSON):\n{intent_json}\n\n"
+    "已有槽位(JSON):\n{existing_slot_memory_json}\n\n"
+    "请输出 JSON:\n"
+    "{{\n"
+    '  "slots": [\n'
+    "    {{\n"
+    '      "slot_key": "string",\n'
+    '      "value": "string | number | boolean | null",\n'
+    '      "source": "user_message | history | recommendation | agent | runtime_prefill",\n'
+    '      "source_text": "string | null",\n'
+    '      "confidence": 0.0\n'
+    "    }}\n"
+    "  ],\n"
+    '  "ambiguousSlotKeys": ["string"]\n'
+    "}}"
 )
 
 DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
@@ -280,4 +336,8 @@ def build_v2_unified_graph_builder_prompt(*, system_prompt: str, human_prompt: s
 
 
 def build_v2_proactive_recommendation_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+    return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
+
+
+def build_v2_slot_extractor_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)

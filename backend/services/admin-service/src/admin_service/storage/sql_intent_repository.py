@@ -44,15 +44,22 @@ class IntentRow(Base):
     intent_code: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    domain_code: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    domain_name: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    domain_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     examples_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     agent_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     is_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_leaf_intent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     dispatch_priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     request_schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     field_mapping_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     field_catalog_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     slot_schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    graph_build_hints_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    parent_intent_code: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    routing_examples_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     resume_policy: Mapped[str] = mapped_column(String(128), nullable=False, default="resume_same_task")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
@@ -98,15 +105,22 @@ class DatabaseIntentRepository(IntentRepository):
                 intent_code=payload.intent_code,
                 name=payload.name,
                 description=payload.description,
+                domain_code=payload.domain_code,
+                domain_name=payload.domain_name,
+                domain_description=payload.domain_description,
                 examples_json=self._dump_json(payload.examples),
                 agent_url=payload.agent_url,
                 status=payload.status.value,
                 is_fallback=payload.is_fallback,
+                is_leaf_intent=payload.is_leaf_intent,
                 dispatch_priority=payload.dispatch_priority,
                 request_schema_json=self._dump_json(payload.request_schema),
                 field_mapping_json=self._dump_json(payload.field_mapping),
                 field_catalog_json=self._dump_json([field.model_dump(mode="json") for field in payload.field_catalog]),
                 slot_schema_json=self._dump_json([slot.model_dump(mode="json") for slot in payload.slot_schema]),
+                graph_build_hints_json="{}",
+                parent_intent_code=payload.parent_intent_code,
+                routing_examples_json=self._dump_json(payload.routing_examples),
                 resume_policy=payload.resume_policy,
                 created_at=now,
                 updated_at=now,
@@ -129,15 +143,22 @@ class DatabaseIntentRepository(IntentRepository):
             row.intent_code = payload.intent_code
             row.name = payload.name
             row.description = payload.description
+            row.domain_code = payload.domain_code
+            row.domain_name = payload.domain_name
+            row.domain_description = payload.domain_description
             row.examples_json = self._dump_json(payload.examples)
             row.agent_url = payload.agent_url
             row.status = payload.status.value
             row.is_fallback = payload.is_fallback
+            row.is_leaf_intent = payload.is_leaf_intent
             row.dispatch_priority = payload.dispatch_priority
             row.request_schema_json = self._dump_json(payload.request_schema)
             row.field_mapping_json = self._dump_json(payload.field_mapping)
             row.field_catalog_json = self._dump_json([field.model_dump(mode="json") for field in payload.field_catalog])
             row.slot_schema_json = self._dump_json([slot.model_dump(mode="json") for slot in payload.slot_schema])
+            row.graph_build_hints_json = getattr(row, "graph_build_hints_json", "{}") or "{}"
+            row.parent_intent_code = payload.parent_intent_code
+            row.routing_examples_json = self._dump_json(payload.routing_examples)
             row.resume_policy = payload.resume_policy
             row.updated_at = utcnow()
 
@@ -168,15 +189,21 @@ class DatabaseIntentRepository(IntentRepository):
             intent_code=row.intent_code,
             name=row.name,
             description=row.description,
+            domain_code=getattr(row, "domain_code", ""),
+            domain_name=getattr(row, "domain_name", ""),
+            domain_description=getattr(row, "domain_description", ""),
             examples=self._load_json_list(row.examples_json),
             agent_url=row.agent_url,
             status=IntentStatus(row.status),
             is_fallback=row.is_fallback,
+            is_leaf_intent=self._coerce_bool(getattr(row, "is_leaf_intent", True)),
             dispatch_priority=row.dispatch_priority,
             request_schema=self._load_json_object(row.request_schema_json),
             field_mapping=self._load_json_str_dict(row.field_mapping_json),
             field_catalog=self._load_field_catalog(getattr(row, "field_catalog_json", "[]")),
             slot_schema=self._load_slot_schema(getattr(row, "slot_schema_json", "[]")),
+            parent_intent_code=getattr(row, "parent_intent_code", ""),
+            routing_examples=self._load_json_list(getattr(row, "routing_examples_json", "[]")),
             resume_policy=row.resume_policy,
             created_at=self._ensure_aware(row.created_at),
             updated_at=self._ensure_aware(row.updated_at),
@@ -188,19 +215,26 @@ class DatabaseIntentRepository(IntentRepository):
             return
         existing_columns = {column["name"] for column in inspector.get_columns("intent_registry")}
         additions = {
-            "field_catalog_json": "[]",
-            "slot_schema_json": "[]",
+            "field_catalog_json": ("TEXT", "'[]'"),
+            "slot_schema_json": ("TEXT", "'[]'"),
+            "graph_build_hints_json": ("TEXT", "'{}'"),
+            "domain_code": ("TEXT", "''"),
+            "domain_name": ("TEXT", "''"),
+            "domain_description": ("TEXT", "''"),
+            "is_leaf_intent": ("BOOLEAN", "1"),
+            "parent_intent_code": ("TEXT", "''"),
+            "routing_examples_json": ("TEXT", "'[]'"),
         }
-        missing = {name: default for name, default in additions.items() if name not in existing_columns}
+        missing = {name: spec for name, spec in additions.items() if name not in existing_columns}
         if not missing:
             return
 
         with self._engine.begin() as connection:
-            for column_name, default_value in missing.items():
+            for column_name, (column_type, default_value) in missing.items():
                 connection.execute(
                     text(
                         f"ALTER TABLE intent_registry "
-                        f"ADD COLUMN {column_name} TEXT NOT NULL DEFAULT '{default_value}'"
+                        f"ADD COLUMN {column_name} {column_type} NOT NULL DEFAULT {default_value}"
                     )
                 )
 
@@ -251,3 +285,10 @@ class DatabaseIntentRepository(IntentRepository):
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value
+
+    def _coerce_bool(self, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}

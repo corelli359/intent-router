@@ -771,6 +771,37 @@ class _HistoryConditionalGraphBuilder:
         )()
 
 
+class _MissingSlotGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, recent_messages, long_term_memory, recognition, on_delta
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="识别到天然气缴费事项，等待补全槽位",
+            status=GraphStatus.DRAFT,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="pay_gas_bill",
+                title="缴纳天然气费",
+                confidence=0.95,
+                position=0,
+                source_fragment=message,
+                slot_memory={},
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": RecognitionResult(
+                    primary=[IntentMatch(intent_code="pay_gas_bill", confidence=0.95, reason="fixed")],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
+
+
 class _RateLimitedGraphBuilder:
     async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
         del message, intents, recent_messages, long_term_memory, recognition, on_delta
@@ -1878,7 +1909,7 @@ def test_v2_proactive_recommendation_switch_to_free_dialog_reuses_existing_recog
             snapshot = response.json()["snapshot"]
             assert snapshot["pending_graph"] is None
             assert snapshot["current_graph"]["nodes"][0]["intent_code"] == "exchange_forex"
-            assert snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert snapshot["current_graph"]["status"] == "completed"
 
     asyncio.run(run())
 
@@ -2033,5 +2064,89 @@ def test_v2_proactive_recommendation_hidden_balance_query_reuses_shared_account_
             ]
             assert all("请提供卡号" not in message["content"] for message in snapshot["messages"])
             assert snapshot["messages"][-1]["content"] == "已向我妈妈转账 3000 元，转账成功"
+
+    asyncio.run(run())
+
+
+def test_v2_router_pre_dispatch_gate_waits_before_dispatching_missing_slots() -> None:
+    async def run() -> None:
+        builder = _MissingSlotGraphBuilder()
+        app, orchestrator = _test_v2_app(graph_builder=builder)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我缴天然气费"},
+            )
+            assert first_turn.status_code == 200
+            snapshot = first_turn.json()["snapshot"]
+            assert snapshot["current_graph"] is not None
+            node = snapshot["current_graph"]["nodes"][0]
+            assert node["status"] == "waiting_user_input"
+            assert node["task_id"] is None
+            session = orchestrator.session_store.get(session_id)
+            assert not session.tasks
+
+    asyncio.run(run())
+
+
+def test_v2_router_completes_after_slots_are_filled() -> None:
+    async def run() -> None:
+        builder = _MissingSlotGraphBuilder()
+        app, _ = _test_v2_app(graph_builder=builder)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我缴天然气费"},
+            )
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "给燃气户号88001234交88元"},
+            )
+            assert second_turn.status_code == 200
+            snapshot = second_turn.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "completed"
+            assert snapshot["messages"][-1]["content"] == "已为燃气户号 88001234 缴费 88 元"
+
+    asyncio.run(run())
+
+
+def test_v2_router_guided_selection_with_prefilled_slots_dispatches() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "帮我缴天然气费",
+                    "guidedSelection": {
+                        "selectedIntents": [
+                            {
+                                "intentCode": "pay_gas_bill",
+                                "title": "缴纳天然气费",
+                                "slotMemory": {
+                                    "gas_account_number": "88001234",
+                                    "amount": "88",
+                                },
+                            }
+                        ]
+                    },
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "completed"
+            assert snapshot["messages"][-1]["content"] == "已为燃气户号 88001234 缴费 88 元"
 
     asyncio.run(run())

@@ -25,6 +25,7 @@ from router_service.core.recognizer import IntentRecognizer, RecognitionResult
 from router_service.core.graph_compiler import GraphCompiler
 from router_service.core.intent_understanding_service import IntentUnderstandingService
 from router_service.core.slot_resolution_service import SlotResolutionService
+from router_service.core.understanding_validator import UnderstandingValidationResult, UnderstandingValidator
 from router_service.core.v2_domain import (
     ExecutionGraphState,
     GraphCondition,
@@ -149,6 +150,7 @@ class GraphRouterOrchestrator:
         event_publisher: GraphEventPublisher | None = None,
         config: GraphRouterOrchestratorConfig | None = None,
         understanding_service: IntentUnderstandingService | None = None,
+        understanding_validator: UnderstandingValidator | None = None,
         slot_resolution_service: SlotResolutionService | None = None,
         graph_compiler: GraphCompiler | None = None,
     ) -> None:
@@ -176,6 +178,7 @@ class GraphRouterOrchestrator:
 
             self.intent_catalog = _FallbackCatalog()
         self.slot_resolution_service = slot_resolution_service or SlotResolutionService()
+        self.understanding_validator = understanding_validator or UnderstandingValidator()
         self.understanding_service = understanding_service or IntentUnderstandingService(
             intent_catalog=self.intent_catalog,
             recognizer=self.recognizer,
@@ -559,13 +562,27 @@ class GraphRouterOrchestrator:
     ) -> None:
         task = self._get_task(session, node.task_id)
         created_new_task = task is None
+        node_was_waiting = node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
         if task is None:
-            task = await self._create_task_for_node(session, graph, node)
+            task = await self._create_task_for_node(
+                session,
+                graph,
+                node,
+                dispatch_input=user_input,
+            )
+            if task is None:
+                return
 
         previous_initial_source_input = task.input_context.get("initial_source_input")
         if not (isinstance(previous_initial_source_input, str) and previous_initial_source_input):
             previous_initial_source_input = node.source_fragment or graph.source_message
-        effective_user_input = (node.source_fragment or user_input) if created_new_task else user_input
+        effective_user_input = (
+            user_input
+            if created_new_task and node_was_waiting
+            else (node.source_fragment or user_input or graph.source_message)
+            if created_new_task
+            else user_input
+        )
         task.input_context = self._build_graph_task_context(session, graph=graph, task=task)
         task.input_context.update(
             {
@@ -615,11 +632,24 @@ class GraphRouterOrchestrator:
         session: GraphSessionState,
         graph: ExecutionGraphState,
         node: GraphNodeState,
-    ) -> Task:
+        *,
+        dispatch_input: str,
+    ) -> Task | None:
         active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
         intent = active_intents.get(node.intent_code)
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
+
+        validation = await self._validate_node_understanding(
+            session,
+            graph,
+            node,
+            intent=intent,
+            current_message=dispatch_input,
+        )
+        if not validation.can_dispatch:
+            await self._mark_node_waiting_for_slots(session, graph, node, validation)
+            return None
 
         context = self._build_graph_task_context(session, graph=graph)
         context.update(
@@ -720,6 +750,74 @@ class GraphRouterOrchestrator:
             payload=payload,
         )
         await self._refresh_graph_state(session, graph)
+        await self._emit_graph_progress(session)
+
+    async def _validate_node_understanding(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        node: GraphNodeState,
+        *,
+        intent: IntentDefinition,
+        current_message: str,
+    ) -> UnderstandingValidationResult:
+        session_context = self._build_session_context(session)
+        memory_candidates = list(session_context["long_term_memory"])
+        history_slot_values = self._history_slot_values(
+            session,
+            long_term_memory=session_context["long_term_memory"],
+        )
+        for slot_key, value in history_slot_values.items():
+            candidate = f"{slot_key}={value}"
+            if candidate not in memory_candidates:
+                memory_candidates.append(candidate)
+        validation = await self.understanding_validator.validate_node(
+            intent=intent,
+            node=node,
+            graph_source_message=graph.source_message,
+            current_message=current_message,
+            long_term_memory=memory_candidates,
+        )
+        node.slot_memory = dict(validation.slot_memory)
+        node.slot_bindings = list(validation.slot_bindings)
+        node.history_slot_keys = list(validation.history_slot_keys)
+        return validation
+
+    async def _mark_node_waiting_for_slots(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        node: GraphNodeState,
+        validation: UnderstandingValidationResult,
+    ) -> None:
+        message = validation.prompt_message or "请补充当前事项所需信息"
+        node.task_id = None
+        node.touch(GraphNodeStatus.WAITING_USER_INPUT, blocking_reason=message)
+        graph.touch(GraphStatus.WAITING_USER_INPUT)
+        session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
+        session.touch()
+        await self._publish_node_state(
+            session,
+            graph,
+            node,
+            TaskStatus.WAITING_USER_INPUT,
+            "node.waiting_user_input",
+            message,
+        )
+        await self.event_publisher.publish_node_runtime_event(
+            session,
+            graph,
+            node,
+            task_status=TaskStatus.WAITING_USER_INPUT,
+            event="node.understanding_blocked",
+            message=message,
+            payload={
+                "missing_required_slots": list(validation.missing_required_slots),
+                "ambiguous_slot_keys": list(validation.ambiguous_slot_keys),
+                "invalid_slot_keys": list(validation.invalid_slot_keys),
+            },
+            source="router",
+        )
         await self._emit_graph_progress(session)
 
     async def _resume_waiting_node(

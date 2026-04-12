@@ -13,8 +13,20 @@ ENV_FILENAMES = (".env", ".env.local")
 
 def _env_search_roots() -> tuple[Path, ...]:
     roots: list[Path] = []
+    seen: set[Path] = set()
+
+    for candidate in (Path.cwd(), Path("/workspace")):
+        resolved = candidate.expanduser().resolve()
+        if not resolved.exists() or resolved in seen:
+            continue
+        roots.append(resolved)
+        seen.add(resolved)
+
     for parent in Path(__file__).resolve().parents:
+        if parent in seen:
+            continue
         roots.append(parent)
+        seen.add(parent)
         if (parent / ".git").exists() or (parent / "AGENTS.md").is_file():
             break
     return tuple(roots)
@@ -60,6 +72,7 @@ class Settings(BaseModel):
     database_url: str | None = Field(default=None)
     recognizer_backend: Literal["rules", "llm"] = Field(default="llm")
     router_v2_graph_build_mode: Literal["legacy", "unified"] = Field(default="legacy")
+    router_v2_understanding_mode: Literal["flat", "hierarchical"] = Field(default="flat")
     router_intent_refresh_interval_seconds: float = Field(default=5.0, gt=0)
     router_intent_switch_threshold: float = Field(default=0.80, ge=0, le=1)
     router_agent_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -100,6 +113,7 @@ class Settings(BaseModel):
             or os.getenv("ADMIN_POSTGRES_DSN"),
             recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "llm"),
             router_v2_graph_build_mode=os.getenv("ROUTER_V2_GRAPH_BUILD_MODE", "legacy"),
+            router_v2_understanding_mode=os.getenv("ROUTER_V2_UNDERSTANDING_MODE", "flat"),
             router_intent_refresh_interval_seconds=float(
                 os.getenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "5")
             ),
