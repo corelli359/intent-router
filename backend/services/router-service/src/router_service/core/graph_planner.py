@@ -8,15 +8,15 @@ from pydantic import BaseModel, Field, model_validator
 from router_service.core.domain import IntentDefinition, IntentMatch
 from router_service.core.llm_client import JsonLLMClient
 from router_service.core.prompt_templates import (
-    DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT,
-    DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT,
-    DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT,
-    DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT,
-    build_v2_graph_planner_prompt,
-    build_v2_turn_interpreter_prompt,
+    DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
+    DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
+    DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT,
+    DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT,
+    build_graph_planner_prompt,
+    build_turn_interpreter_prompt,
 )
 from router_service.core.recognizer import RecognitionResult
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
@@ -289,14 +289,14 @@ class LLMIntentGraphPlanner:
         *,
         model: str | None = None,
         fallback: IntentGraphPlanner | None = None,
-        system_prompt_template: str = DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT,
-        human_prompt_template: str = DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT,
+        system_prompt_template: str = DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
+        human_prompt_template: str = DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
     ) -> None:
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or SequentialIntentGraphPlanner()
         self.normalizer = GraphPlanNormalizer()
-        self.prompt = build_v2_graph_planner_prompt(
+        self.prompt = build_graph_planner_prompt(
             system_prompt=system_prompt_template,
             human_prompt=human_prompt_template,
         )
@@ -391,13 +391,13 @@ class LLMGraphTurnInterpreter:
         *,
         model: str | None = None,
         fallback: TurnInterpreter | None = None,
-        system_prompt_template: str = DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT,
-        human_prompt_template: str = DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT,
+        system_prompt_template: str = DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT,
+        human_prompt_template: str = DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT,
     ) -> None:
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or BasicTurnInterpreter()
-        self.prompt = build_v2_turn_interpreter_prompt(
+        self.prompt = build_turn_interpreter_prompt(
             system_prompt=system_prompt_template,
             human_prompt=human_prompt_template,
         )

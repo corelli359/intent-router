@@ -11,16 +11,16 @@ from router_service.core.prompt_templates import (  # noqa: E402
     DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
-    DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT,
-    DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT,
-    DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT,
-    DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT,
-    DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
-    DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
+    DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
+    DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
+    DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT,
+    DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT,
+    DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+    DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
     build_recognizer_prompt,
-    build_v2_graph_planner_prompt,
-    build_v2_turn_interpreter_prompt,
-    build_v2_unified_graph_builder_prompt,
+    build_graph_planner_prompt,
+    build_turn_interpreter_prompt,
+    build_unified_graph_builder_prompt,
 )
 
 
@@ -83,9 +83,9 @@ def test_leaf_router_prompt_accepts_expected_variables() -> None:
 
 
 def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
-    prompt = build_v2_graph_planner_prompt(
-        system_prompt=DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT,
-        human_prompt=DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT,
+    prompt = build_graph_planner_prompt(
+        system_prompt=DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
     )
 
     messages = prompt.format_messages(
@@ -106,9 +106,9 @@ def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
 
 
 def test_v2_turn_interpreter_prompt_accepts_expected_variables() -> None:
-    prompt = build_v2_turn_interpreter_prompt(
-        system_prompt=DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT,
-        human_prompt=DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT,
+    prompt = build_turn_interpreter_prompt(
+        system_prompt=DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT,
     )
 
     messages = prompt.format_messages(
@@ -127,9 +127,9 @@ def test_v2_turn_interpreter_prompt_accepts_expected_variables() -> None:
 
 
 def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
-    prompt = build_v2_unified_graph_builder_prompt(
-        system_prompt=DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
-        human_prompt=DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+    prompt = build_unified_graph_builder_prompt(
+        system_prompt=DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
     )
 
     messages = prompt.format_messages(

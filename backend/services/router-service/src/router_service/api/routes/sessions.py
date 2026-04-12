@@ -8,15 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
 from starlette.responses import StreamingResponse
 
-from router_service.api.dependencies import get_event_broker_v2, get_orchestrator_v2
+from router_service.api.dependencies import get_event_broker, get_orchestrator
 from router_service.api.sse.broker import EventBroker
 from router_service.core.domain import TaskEvent, TaskStatus
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     GuidedSelectionPayload,
     ProactiveRecommendationPayload,
     RecommendationContextPayload,
 )
-from router_service.core.v2_orchestrator import GraphRouterOrchestrator
+from router_service.core.graph_orchestrator import GraphRouterOrchestrator
 
 
 router = APIRouter(tags=["router"])
@@ -104,7 +104,7 @@ def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: CreateSessionRequest | None = None,
-    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator_v2),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ) -> CreateSessionResponse:
     cust_id = request.cust_id if request and request.cust_id else "cust_demo"
     session = orchestrator.create_session(cust_id=cust_id, session_id=request.session_id if request else None)
@@ -114,7 +114,7 @@ async def create_session(
 @router.get("/sessions/{session_id}")
 async def get_session_snapshot(
     session_id: str,
-    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator_v2),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
     try:
         return orchestrator.snapshot(session_id)
@@ -126,7 +126,7 @@ async def get_session_snapshot(
 async def post_message(
     session_id: str,
     request: MessageRequest,
-    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator_v2),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     try:
@@ -147,7 +147,7 @@ async def post_message(
 async def post_action(
     session_id: str,
     request: ActionRequest,
-    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator_v2),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
     try:
@@ -170,8 +170,8 @@ async def post_action_stream(
     session_id: str,
     request: ActionRequest,
     http_request: Request,
-    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator_v2),
-    broker: EventBroker = Depends(get_event_broker_v2),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
+    broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
 
@@ -223,8 +223,8 @@ async def post_message_stream(
     session_id: str,
     request: MessageRequest,
     http_request: Request,
-    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator_v2),
-    broker: EventBroker = Depends(get_event_broker_v2),
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
+    broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
 
@@ -274,7 +274,7 @@ async def post_message_stream(
 async def stream_events(
     session_id: str,
     request: Request,
-    broker: EventBroker = Depends(get_event_broker_v2),
+    broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     async def event_generator():
         subscription = broker.subscribe(session_id)

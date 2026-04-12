@@ -6,7 +6,7 @@ from typing import Any
 from router_service.core.domain import IntentDefinition
 from router_service.core.slot_extractor import SlotExtractor
 from router_service.core.slot_validator import SlotValidationResult, SlotValidator
-from router_service.core.v2_domain import GraphNodeState, SlotBindingState
+from router_service.core.graph_domain import GraphNodeState, SlotBindingState
 
 
 @dataclass(slots=True)

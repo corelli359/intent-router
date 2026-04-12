@@ -6,11 +6,11 @@ from typing import Protocol
 
 from router_service.core.llm_client import JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompt_templates import (
-    DEFAULT_V2_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT,
-    DEFAULT_V2_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT,
-    build_v2_proactive_recommendation_prompt,
+    DEFAULT_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT,
+    DEFAULT_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT,
+    build_proactive_recommendation_prompt,
 )
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     ProactiveRecommendationPayload,
     ProactiveRecommendationRouteDecision,
     ProactiveRecommendationRouteMode,
@@ -50,13 +50,13 @@ class LLMProactiveRecommendationRouter:
         *,
         model: str | None = None,
         fallback: ProactiveRecommendationRouter | None = None,
-        system_prompt_template: str = DEFAULT_V2_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT,
-        human_prompt_template: str = DEFAULT_V2_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT,
+        system_prompt_template: str = DEFAULT_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT,
+        human_prompt_template: str = DEFAULT_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT,
     ) -> None:
         self.llm_client = llm_client
         self.model = model
         self.fallback = fallback or NullProactiveRecommendationRouter()
-        self.prompt = build_v2_proactive_recommendation_prompt(
+        self.prompt = build_proactive_recommendation_prompt(
             system_prompt=system_prompt_template,
             human_prompt=human_prompt_template,
         )

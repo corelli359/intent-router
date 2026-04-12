@@ -11,13 +11,13 @@ from router_service.models.intent import GraphConfirmPolicy
 from router_service.core.domain import IntentDefinition, IntentMatch
 from router_service.core.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompt_templates import (
-    DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
-    DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
-    build_v2_unified_graph_builder_prompt,
+    DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+    DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
+    build_unified_graph_builder_prompt,
 )
 from router_service.core.recognizer import IntentRecognizer, NullIntentRecognizer, RecognitionResult, recognition_intent_payload
 from router_service.core.slot_grounding import normalize_slot_memory
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
@@ -28,7 +28,7 @@ from router_service.core.v2_domain import (
     SlotBindingSource,
     SlotBindingState,
 )
-from router_service.core.v2_planner import IntentGraphPlanner, SequentialIntentGraphPlanner
+from router_service.core.graph_planner import IntentGraphPlanner, SequentialIntentGraphPlanner
 
 
 logger = logging.getLogger(__name__)
@@ -375,15 +375,15 @@ class LLMIntentGraphBuilder:
         fallback_recognizer: IntentRecognizer | None = None,
         fallback_planner: IntentGraphPlanner | None = None,
         normalizer: GraphDraftNormalizer | None = None,
-        system_prompt_template: str = DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
-        human_prompt_template: str = DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+        system_prompt_template: str = DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
+        human_prompt_template: str = DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
     ) -> None:
         self.llm_client = llm_client
         self.model = model
         self.fallback_recognizer = fallback_recognizer or NullIntentRecognizer()
         self.fallback_planner = fallback_planner or SequentialIntentGraphPlanner()
         self.normalizer = normalizer or GraphDraftNormalizer()
-        self.prompt = build_v2_unified_graph_builder_prompt(
+        self.prompt = build_unified_graph_builder_prompt(
             system_prompt=system_prompt_template,
             human_prompt=human_prompt_template,
         )

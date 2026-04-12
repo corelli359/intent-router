@@ -24,7 +24,7 @@ from tests.support.mock_agent_client import MockStreamingAgentClient
 from router_service.core.agent_client import StreamingAgentClient
 from router_service.core.domain import IntentDefinition, IntentMatch
 from router_service.core.recognizer import RecognitionResult
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
@@ -36,8 +36,8 @@ from router_service.core.v2_domain import (
     ProactiveRecommendationRouteDecision,
     ProactiveRecommendationRouteMode,
 )
-from router_service.core.v2_orchestrator import GraphRouterOrchestrator
-from router_service.core.v2_planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
+from router_service.core.graph_orchestrator import GraphRouterOrchestrator
+from router_service.core.graph_planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
 
 
 class _StaticCatalog:
@@ -1309,7 +1309,9 @@ def test_v2_runtime_fails_closed_for_mock_scheme_agent_url() -> None:
             agent_client=StreamingAgentClient(),
         )
         app = create_router_app()
+        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
         app.dependency_overrides[get_orchestrator_v2] = lambda: orchestrator
+        app.dependency_overrides[get_event_broker] = lambda: broker
         app.dependency_overrides[get_event_broker_v2] = lambda: broker
 
         async with httpx.AsyncClient(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from router_service.core.domain import TaskStatus
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     ExecutionGraphState,
     GraphCondition,
     GraphNodeSkipReason,
@@ -9,7 +9,7 @@ from router_service.core.v2_domain import (
     GraphNodeStatus,
     GraphStatus,
 )
-from router_service.core.v2_graph_semantics import resolve_output_value
+from router_service.core.graph_semantics import resolve_output_value
 
 
 TERMINAL_NODE_STATUSES = {

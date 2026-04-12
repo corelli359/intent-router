@@ -13,11 +13,11 @@ from router_service.core.llm_client import JsonLLMClient, llm_exception_is_retry
 from router_service.core.prompt_templates import (
     DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
     DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT,
-    build_v2_slot_extractor_prompt,
+    build_slot_extractor_prompt,
 )
 from router_service.core.recognizer import recognition_intent_payload
 from router_service.core.slot_grounding import normalize_structured_slot_memory, slot_value_grounded
-from router_service.core.v2_domain import GraphNodeState, SlotBindingSource, SlotBindingState
+from router_service.core.graph_domain import GraphNodeState, SlotBindingSource, SlotBindingState
 from router_service.models.intent import IntentSlotDefinition, SlotOverwritePolicy, SlotValueType
 
 
@@ -97,7 +97,7 @@ class SlotExtractor:
     ) -> None:
         self.llm_client = llm_client
         self.model = model
-        self.prompt = build_v2_slot_extractor_prompt(
+        self.prompt = build_slot_extractor_prompt(
             system_prompt=system_prompt_template,
             human_prompt=human_prompt_template,
         )

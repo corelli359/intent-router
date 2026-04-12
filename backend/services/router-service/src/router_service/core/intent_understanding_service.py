@@ -6,9 +6,9 @@ from typing import Any
 
 from router_service.core.llm_client import llm_exception_is_retryable
 from router_service.core.recognizer import IntentRecognizer, RecognitionResult
-from router_service.core.v2_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
-from router_service.core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
-from router_service.core.v2_planner import TurnDecisionPayload, TurnInterpreter
+from router_service.core.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
+from router_service.core.graph_builder import GraphBuildResult, IntentGraphBuilder
+from router_service.core.graph_planner import TurnDecisionPayload, TurnInterpreter
 
 
 logger = logging.getLogger(__name__)

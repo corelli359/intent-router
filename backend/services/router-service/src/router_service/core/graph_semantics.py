@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from router_service.core.domain import IntentDefinition
-from router_service.core.v2_domain import ExecutionGraphState, GraphCondition, GraphEdge, GraphEdgeType, GraphNodeState
+from router_service.core.graph_domain import ExecutionGraphState, GraphCondition, GraphEdge, GraphEdgeType, GraphNodeState
 
 
 _CONTEXT_KEY_ALIASES: dict[str, set[str]] = {

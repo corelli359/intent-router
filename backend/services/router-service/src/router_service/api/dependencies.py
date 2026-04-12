@@ -23,15 +23,15 @@ from router_service.core.prompt_templates import (
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
 )
 from router_service.core.recognizer import LLMIntentRecognizer, NullIntentRecognizer
-from router_service.core.v2_graph_builder import LLMIntentGraphBuilder
-from router_service.core.v2_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
-from router_service.core.v2_planner import (
+from router_service.core.graph_builder import LLMIntentGraphBuilder
+from router_service.core.graph_orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
+from router_service.core.graph_planner import (
     BasicTurnInterpreter,
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
     SequentialIntentGraphPlanner,
 )
-from router_service.core.v2_recommendation_router import (
+from router_service.core.recommendation_router import (
     LLMProactiveRecommendationRouter,
     NullProactiveRecommendationRouter,
 )

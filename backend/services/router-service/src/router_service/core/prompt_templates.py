@@ -87,7 +87,7 @@ DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT = (
     "}}"
 )
 
-DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
+DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "你是一个多意图执行图规划器。"
     "输入里已经给出了本轮已识别出的 intent 候选，你只能使用这些 intent_code。"
     "每个 intent 定义里包含 field_catalog、slot_schema 和 graph_build_hints，你必须严格遵守。"
@@ -119,7 +119,7 @@ DEFAULT_V2_GRAPH_PLANNER_SYSTEM_PROMPT = (
     "如果能够判断槽位与原文片段的对应关系，应同时输出 slot_bindings，明确 slot_key、value、source_text 和 confidence。"
 )
 
-DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT = (
+DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT = (
     "当前用户消息:\n{message}\n\n"
     "最近对话(JSON):\n{recent_messages_json}\n\n"
     "长期记忆(JSON):\n{long_term_memory_json}\n\n"
@@ -163,7 +163,7 @@ DEFAULT_V2_GRAPH_PLANNER_HUMAN_PROMPT = (
     "}}"
 )
 
-DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
+DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
     "你是一个多意图识别与执行图构建器。"
     "你必须在一次输出里同时完成两件事："
     "第一，识别当前消息命中的 primary_intents 和 candidate_intents；"
@@ -197,7 +197,7 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
     "你必须输出 JSON，不能输出解释。"
 )
 
-DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT = (
+DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT = (
     "当前用户消息:\n{message}\n\n"
     "最近对话(JSON):\n{recent_messages_json}\n\n"
     "长期记忆(JSON):\n{long_term_memory_json}\n\n"
@@ -256,7 +256,7 @@ DEFAULT_V2_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT = (
     "}}"
 )
 
-DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT = (
+DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT = (
     "你是一个对话执行图的回合解释器。"
     "你要判断当前这条用户新消息，是在补充当前节点、取消当前节点、取消待确认图、确认待确认图，还是表达了新的意图需要重规划。"
     "你必须输出 JSON，不能输出解释。"
@@ -265,7 +265,7 @@ DEFAULT_V2_TURN_INTERPRETER_SYSTEM_PROMPT = (
     "如果消息表达了新的业务目标，且与当前等待节点不是同一意图，应返回 replan。"
 )
 
-DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT = (
+DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT = (
     "模式:\n{mode}\n\n"
     "当前用户消息:\n{message}\n\n"
     "当前等待节点(JSON):\n{waiting_node_json}\n\n"
@@ -281,7 +281,7 @@ DEFAULT_V2_TURN_INTERPRETER_HUMAN_PROMPT = (
     "}}"
 )
 
-DEFAULT_V2_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT = (
+DEFAULT_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT = (
     "你是一个主动推荐场景下的意图分流器。"
     "系统已经给用户展示了一组推荐事项。"
     "每个推荐事项都包含 recommendationItemId、intentCode、完整 slotMemory 和 executionPayload。"
@@ -298,7 +298,7 @@ DEFAULT_V2_PROACTIVE_RECOMMENDATION_SYSTEM_PROMPT = (
     "你必须输出 JSON，不能输出解释。"
 )
 
-DEFAULT_V2_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT = (
+DEFAULT_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT = (
     "系统推荐话术:\n{intro_text}\n\n"
     "推荐事项清单(JSON):\n{recommendation_items_json}\n\n"
     "用户回复:\n{message}\n\n"
@@ -323,21 +323,21 @@ def build_recognizer_prompt(*, system_prompt: str, human_prompt: str) -> ChatPro
     )
 
 
-def build_v2_graph_planner_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+def build_graph_planner_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
-def build_v2_turn_interpreter_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+def build_turn_interpreter_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
-def build_v2_unified_graph_builder_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+def build_unified_graph_builder_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
-def build_v2_proactive_recommendation_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+def build_proactive_recommendation_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)
 
 
-def build_v2_slot_extractor_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
+def build_slot_extractor_prompt(*, system_prompt: str, human_prompt: str) -> ChatPromptTemplate:
     return build_recognizer_prompt(system_prompt=system_prompt, human_prompt=human_prompt)

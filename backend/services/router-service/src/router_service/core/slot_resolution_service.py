@@ -8,7 +8,7 @@ from router_service.core.slot_grounding import (
     normalize_slot_memory,
     normalize_structured_slot_memory,
 )
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphNodeState,

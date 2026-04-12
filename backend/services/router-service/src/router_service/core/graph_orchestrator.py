@@ -25,7 +25,7 @@ from router_service.core.graph_compiler import GraphCompiler
 from router_service.core.intent_understanding_service import IntentUnderstandingService
 from router_service.core.slot_resolution_service import SlotResolutionService
 from router_service.core.understanding_validator import UnderstandingValidationResult, UnderstandingValidator
-from router_service.core.v2_domain import (
+from router_service.core.graph_domain import (
     ExecutionGraphState,
     GraphCondition,
     GraphNodeState,
@@ -42,16 +42,16 @@ from router_service.core.v2_domain import (
     SlotBindingSource,
     SlotBindingState,
 )
-from router_service.core.v2_graph_runtime import GraphRuntimeEngine
-from router_service.core.v2_presentation import GraphEventPublisher, GraphSnapshotPresenter
-from router_service.core.v2_graph_builder import GraphBuildResult, IntentGraphBuilder
-from router_service.core.v2_planner import (
+from router_service.core.graph_runtime import GraphRuntimeEngine
+from router_service.core.graph_presentation import GraphEventPublisher, GraphSnapshotPresenter
+from router_service.core.graph_builder import GraphBuildResult, IntentGraphBuilder
+from router_service.core.graph_planner import (
     BasicTurnInterpreter,
     IntentGraphPlanner,
     SequentialIntentGraphPlanner,
     TurnInterpreter,
 )
-from router_service.core.v2_recommendation_router import (
+from router_service.core.recommendation_router import (
     NullProactiveRecommendationRouter,
     ProactiveRecommendationRouter,
 )
@@ -92,7 +92,7 @@ class GraphSessionStore:
         self.long_term_memory = long_term_memory or LongTermMemoryStore()
 
     def create(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
-        resolved_session_id = session_id or f"session_v2_{uuid4().hex[:10]}"
+        resolved_session_id = session_id or f"session_graph_{uuid4().hex[:10]}"
         session = GraphSessionState(session_id=resolved_session_id, cust_id=cust_id)
         self._sessions[resolved_session_id] = session
         return session

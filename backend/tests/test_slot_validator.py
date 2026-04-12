@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from router_service.core.domain import IntentDefinition
 from router_service.core.slot_validator import SlotValidator
-from router_service.core.v2_domain import SlotBindingSource, SlotBindingState
+from router_service.core.graph_domain import SlotBindingSource, SlotBindingState
 
 
 def _gas_intent() -> IntentDefinition:

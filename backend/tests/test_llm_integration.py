@@ -18,8 +18,8 @@ from router_service.core.llm_client import (  # noqa: E402
     LangChainLLMClient,
 )
 from router_service.core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
-from router_service.core.v2_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
-from router_service.core.v2_planner import (  # noqa: E402
+from router_service.core.graph_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
+from router_service.core.graph_planner import (  # noqa: E402
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
 )
