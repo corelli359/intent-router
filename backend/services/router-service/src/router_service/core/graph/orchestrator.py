@@ -79,6 +79,14 @@ class _NoopIntentRecognizer:
 
 
 class GraphRouterOrchestrator:
+    """Top-level router runtime composed from message flow, action flow, and runtime state.
+
+    The orchestrator is intentionally thin: recognition/planning, action handling,
+    and state/event synchronization are delegated into focused collaborators. What
+    remains here is the end-to-end graph execution loop that connects session
+    state, node/task lifecycle, slot validation, and streaming agent responses.
+    """
+
     def __init__(
         self,
         publish_event: Callable[[TaskEvent], Any],
@@ -183,6 +191,7 @@ class GraphRouterOrchestrator:
         return self.session_store.create(cust_id=cust_id, session_id=session_id)
 
     def snapshot(self, session_id: str) -> GraphRouterSnapshot:
+        """Build a deep-enough read snapshot safe for API exposure."""
         session = self.session_store.get(session_id)
         return GraphRouterSnapshot(
             session_id=session.session_id,
@@ -354,6 +363,14 @@ class GraphRouterOrchestrator:
         self.runtime_engine.activate_graph(graph)
 
     async def _drain_graph(self, session: GraphSessionState, seed_input: str) -> None:
+        """Keep dispatching nodes until the graph blocks or reaches a terminal state.
+
+        This is the core execution loop:
+        1. recompute runtime-derived node states
+        2. stop if the graph is waiting for user input/confirmation
+        3. otherwise pick the next ready node and run it
+        4. repeat until no ready node remains
+        """
         graph = session.current_graph
         if graph is None:
             await self._publish_session_state(session, "session.idle")
@@ -363,6 +380,8 @@ class GraphRouterOrchestrator:
             await self._refresh_graph_state(session, graph)
             waiting_node = self._get_waiting_node(session)
             if waiting_node is not None:
+                # Waiting nodes are surfaced at session level so the API/UI can
+                # immediately know whether to show a slot prompt or confirmation.
                 session.active_node_id = waiting_node.node_id
                 await self._publish_session_state(
                     session,
@@ -375,6 +394,8 @@ class GraphRouterOrchestrator:
 
             next_node = self._next_ready_node(graph)
             if next_node is None:
+                # No waiting node and no ready node means the graph has naturally
+                # reached a terminal aggregate state such as completed/cancelled.
                 session.active_node_id = None
                 await self._emit_graph_progress(session)
                 await self._publish_session_state(session, "session.idle")
@@ -409,6 +430,7 @@ class GraphRouterOrchestrator:
         node: GraphNodeState,
         user_input: str,
     ) -> None:
+        """Dispatch one node to its backing intent agent and consume streamed chunks."""
         task = self._get_task(session, node.task_id)
         created_new_task = task is None
         node_was_waiting = node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
@@ -425,6 +447,8 @@ class GraphRouterOrchestrator:
         previous_initial_source_input = task.input_context.get("initial_source_input")
         if not (isinstance(previous_initial_source_input, str) and previous_initial_source_input):
             previous_initial_source_input = node.source_fragment or graph.source_message
+        # New tasks default to node source text, while resumed tasks consume the
+        # latest user utterance that unblocked the node.
         effective_user_input = (
             user_input
             if created_new_task and node_was_waiting
@@ -484,6 +508,7 @@ class GraphRouterOrchestrator:
         *,
         dispatch_input: str,
     ) -> Task | None:
+        """Validate slot readiness and create the agent task for a ready node."""
         active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
         intent = active_intents.get(node.intent_code)
         if intent is None:
@@ -497,6 +522,8 @@ class GraphRouterOrchestrator:
             current_message=dispatch_input,
         )
         if not validation.can_dispatch:
+            # Slot fill stays in the router layer. The downstream agent only does
+            # defensive slot checking and business execution.
             await self._mark_node_waiting_for_slots(session, graph, node, validation)
             return None
 
@@ -537,6 +564,7 @@ class GraphRouterOrchestrator:
         task: Task,
         chunk: Any,
     ) -> None:
+        """Project each streamed agent chunk back into node/session/graph state."""
         task.touch(chunk.status)
         node.slot_memory = dict(task.slot_memory)
         node.output_payload = dict(chunk.payload)
@@ -610,8 +638,11 @@ class GraphRouterOrchestrator:
         intent: IntentDefinition,
         current_message: str,
     ) -> UnderstandingValidationResult:
+        """Run router-side slot extraction/validation before agent dispatch."""
         session_context = self._build_session_context(session)
         memory_candidates = list(session_context["long_term_memory"])
+        # Expose historical slot values as lightweight textual memory so the slot
+        # extractor can reuse them without depending on a separate memory service.
         history_slot_values = self._history_slot_values(
             session,
             long_term_memory=session_context["long_term_memory"],
@@ -639,6 +670,7 @@ class GraphRouterOrchestrator:
         node: GraphNodeState,
         validation: UnderstandingValidationResult,
     ) -> None:
+        """Block the node in router space when required slots are still missing/ambiguous."""
         message = validation.prompt_message or "请补充当前事项所需信息"
         node.task_id = None
         node.touch(GraphNodeStatus.WAITING_USER_INPUT, blocking_reason=message)
@@ -675,6 +707,7 @@ class GraphRouterOrchestrator:
         node: GraphNodeState,
         content: str,
     ) -> None:
+        """Resume the same node after the user answered a router-side slot prompt."""
         graph = session.current_graph
         if graph is None:
             return
@@ -859,6 +892,7 @@ class GraphRouterOrchestrator:
         graph: ExecutionGraphState,
         task: Task | None = None,
     ) -> dict[str, Any]:
+        """Build the context payload sent to downstream agents for one graph node."""
         context = self._build_session_context(session, task=task)
         context.update(
             {
@@ -874,6 +908,7 @@ class GraphRouterOrchestrator:
         return context
 
     def _build_session_context(self, session: GraphSessionState, task: Task | None = None) -> dict[str, Any]:
+        """Assemble recent messages plus long-term memory for recognition and agents."""
         long_term_memory = self.session_store.long_term_memory.recall(session.cust_id)
         return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
 

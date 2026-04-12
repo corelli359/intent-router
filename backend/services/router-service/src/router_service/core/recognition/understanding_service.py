@@ -21,6 +21,8 @@ class TurnInterpretationResult:
 
 
 class IntentUnderstandingService:
+    """Bridges raw LLM semantics with router-friendly recognition/decision outputs."""
+
     def __init__(
         self,
         *,
@@ -49,6 +51,7 @@ class IntentUnderstandingService:
         long_term_memory: list[str],
         emit_events: bool,
     ) -> RecognitionResult:
+        """Run recognition and optionally stream semantic progress events."""
         if emit_events:
             await self.event_publisher.publish_recognition_started(session)
 
@@ -78,6 +81,7 @@ class IntentUnderstandingService:
         recognition: RecognitionResult | None,
         emit_events: bool,
     ) -> GraphBuildResult:
+        """Run the optional unified graph-builder path when enabled."""
         if emit_events:
             await self.event_publisher.publish_graph_builder_started(session)
 
@@ -107,6 +111,7 @@ class IntentUnderstandingService:
         content: str,
         pending_graph: ExecutionGraphState,
     ) -> TurnInterpretationResult:
+        """Interpret a user turn while the router is waiting for graph-level confirmation."""
         try:
             recognition = await self.recognize_message(
                 session,
@@ -135,6 +140,7 @@ class IntentUnderstandingService:
         current_graph: ExecutionGraphState,
         content: str,
     ) -> TurnInterpretationResult:
+        """Interpret a user turn while a concrete node is waiting for more input."""
         try:
             recognition = await self.recognize_message(
                 session,

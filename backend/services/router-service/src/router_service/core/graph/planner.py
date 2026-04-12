@@ -28,6 +28,8 @@ from router_service.core.shared.graph_domain import (
 
 
 class GraphPlanConditionPayload(BaseModel):
+    """LLM planner representation of a runtime edge condition."""
+
     expected_statuses: list[str] = Field(default_factory=lambda: ["completed"])
     left_key: str | None = None
     operator: Literal[">", ">=", "==", "<", "<="] | None = None
@@ -35,6 +37,8 @@ class GraphPlanConditionPayload(BaseModel):
 
 
 class GraphPlanNodePayload(BaseModel):
+    """LLM planner representation of one graph node."""
+
     intent_code: str
     title: str
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -51,6 +55,8 @@ class GraphPlanEdgePayload(BaseModel):
 
 
 class GraphPlanningPayload(BaseModel):
+    """Structured output expected from the graph planner model."""
+
     summary: str = ""
     needs_confirmation: bool = True
     nodes: list[GraphPlanNodePayload] = Field(default_factory=list)
@@ -58,6 +64,8 @@ class GraphPlanningPayload(BaseModel):
 
 
 class GraphPlanNormalizer:
+    """Normalizes planner output into executable graph domain models."""
+
     def normalize(
         self,
         *,
@@ -66,6 +74,7 @@ class GraphPlanNormalizer:
         matches: list[IntentMatch],
         intents_by_code: dict[str, IntentDefinition],
     ) -> ExecutionGraphState:
+        """Filter invalid planner output and rebuild stable runtime graph objects."""
         confidence_by_code: dict[str, float] = {}
         for match in matches:
             confidence_by_code[match.intent_code] = max(confidence_by_code.get(match.intent_code, 0.0), match.confidence)
@@ -140,6 +149,8 @@ class GraphPlanNormalizer:
 
 
 class TurnDecisionPayload(BaseModel):
+    """Structured turn interpretation result for pending graph or waiting node."""
+
     action: Literal[
         "resume_current",
         "cancel_current",

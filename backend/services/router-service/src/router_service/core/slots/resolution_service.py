@@ -22,6 +22,8 @@ from router_service.core.shared.graph_domain import (
 
 
 class SlotResolutionService:
+    """Centralizes slot defaulting, history reuse, and binding-source reconstruction."""
+
     def apply_history_prefill_policy(
         self,
         session: GraphSessionState,
@@ -32,6 +34,12 @@ class SlotResolutionService:
         recent_messages: list[str],
         long_term_memory: list[str],
     ) -> None:
+        """Inject reusable history slots into graph nodes before execution starts.
+
+        This runs at compile time, not inside the agent. The goal is to improve
+        slot fill accuracy in the router layer while still preserving provenance
+        through `history_slot_keys` and `slot_bindings`.
+        """
         history_nodes: list[GraphNodeState] = []
         history_texts = [*recent_messages, *long_term_memory]
         history_slot_values = self.history_slot_values(session, long_term_memory=long_term_memory)
@@ -91,6 +99,7 @@ class SlotResolutionService:
         *,
         long_term_memory: list[str],
     ) -> dict[str, Any]:
+        """Collect reusable slot values from recent task results and long-term memory."""
         values: dict[str, Any] = {}
 
         for task in reversed(session.tasks):
@@ -125,6 +134,7 @@ class SlotResolutionService:
         source_text: str | None,
         confidence: float,
     ) -> list[SlotBindingState]:
+        """Build binding metadata for already-structured slot payloads."""
         return [
             SlotBindingState(
                 slot_key=slot_key,
@@ -143,6 +153,7 @@ class SlotResolutionService:
         preferred_sources: dict[str, SlotBindingSource] | None = None,
         source_text: str | None = None,
     ) -> None:
+        """Rebuild node bindings from `slot_memory` after merge/normalization steps."""
         existing_by_key = {binding.slot_key: binding for binding in node.slot_bindings}
         rebuilt: list[SlotBindingState] = []
         for slot_key, value in node.slot_memory.items():
@@ -175,6 +186,7 @@ class SlotResolutionService:
         proactive_recommendation: ProactiveRecommendationPayload | None,
         intents_by_code: dict[str, IntentDefinition],
     ) -> None:
+        """Merge proactive recommendation defaults into graph nodes before dispatch."""
         if not selected_items and proactive_recommendation is None:
             return
 

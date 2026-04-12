@@ -54,6 +54,8 @@ class GraphAction(BaseModel):
 
 
 class GraphCondition(BaseModel):
+    """Runtime-evaluable edge condition produced by the planner/compiler."""
+
     source_node_id: str
     expected_statuses: list[str] = Field(default_factory=lambda: [GraphNodeStatus.COMPLETED.value])
     left_key: str | None = None
@@ -79,6 +81,8 @@ class SlotBindingSource(StrEnum):
 
 
 class SlotBindingState(BaseModel):
+    """Tracks where a slot value came from so later turns can explain or override it."""
+
     slot_key: str
     value: Any
     source: SlotBindingSource = SlotBindingSource.USER_MESSAGE
@@ -88,6 +92,8 @@ class SlotBindingState(BaseModel):
 
 
 class GraphNodeState(BaseModel):
+    """Execution-time node state for a single leaf intent in the graph."""
+
     node_id: str = Field(default_factory=lambda: f"node_{uuid4().hex[:10]}")
     intent_code: str
     title: str
@@ -121,6 +127,8 @@ class GraphNodeState(BaseModel):
 
 
 class ExecutionGraphState(BaseModel):
+    """Mutable execution graph owned by the router layer for one user turn."""
+
     graph_id: str = Field(default_factory=lambda: f"graph_{uuid4().hex[:10]}")
     source_message: str
     summary: str = ""
@@ -152,6 +160,8 @@ class ExecutionGraphState(BaseModel):
 
 
 class GraphSessionState(BaseModel):
+    """Router session state spanning messages, tasks, current graph, and pending graph."""
+
     session_id: str
     cust_id: str
     messages: list[ChatMessage] = Field(default_factory=list)
@@ -175,6 +185,8 @@ class GraphSessionState(BaseModel):
 
 
 class GraphRouterSnapshot(BaseModel):
+    """Read model returned to API callers and SSE subscribers."""
+
     session_id: str
     cust_id: str
     messages: list[ChatMessage]
@@ -195,6 +207,8 @@ class GuidedSelectionIntent(BaseModel):
 
 
 class GuidedSelectionPayload(BaseModel):
+    """Structured intent selection injected by recommendation or external UI."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     selected_intents: list[GuidedSelectionIntent] = Field(default_factory=list, alias="selectedIntents")
@@ -210,6 +224,8 @@ class RecommendationIntent(BaseModel):
 
 
 class RecommendationContextPayload(BaseModel):
+    """Non-binding recommendation context shown to the recognizer/planner."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     recommendation_id: str | None = Field(default=None, alias="recommendationId")
@@ -236,6 +252,8 @@ class ProactiveRecommendationItem(BaseModel):
 
 
 class ProactiveRecommendationPayload(BaseModel):
+    """Full proactive recommendation payload from the upstream recommendation layer."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     mode: str = "proactive_recommendation"

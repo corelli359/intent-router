@@ -33,6 +33,8 @@ class CreateSessionRequest(BaseModel):
 
 
 class MessageRequest(BaseModel):
+    """Unified message payload for both plain dialog and structured router inputs."""
+
     content: str | None = None
     message: str | None = None
     guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
@@ -49,6 +51,8 @@ class MessageRequest(BaseModel):
 
 
 class ActionRequest(BaseModel):
+    """Action payload accepted from direct API callers or the graph UI layer."""
+
     action_code: str | None = None
     actionCode: str | None = None
     source: str | None = None
@@ -128,6 +132,9 @@ async def post_message(
     request: MessageRequest,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
+    # Message APIs are the main entry for intent dialog. They can be called by a
+    # frontend chat page, a test harness, or a backend integration that wants to
+    # drive the router directly without rendering any UI.
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     try:
         snapshot = await orchestrator.handle_user_message(
@@ -149,6 +156,9 @@ async def post_action(
     request: ActionRequest,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
 ):
+    # Action APIs mutate the router state machine directly. Typical callers are
+    # the graph UI, an orchestration service, or tests that need to confirm/cancel
+    # a pending graph or interrupt the current waiting node.
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
     try:
         snapshot = await orchestrator.handle_action(
@@ -176,6 +186,8 @@ async def post_action_stream(
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
 
     async def event_generator():
+        # The broker queue must be registered before the action task starts,
+        # otherwise early graph/node events could be missed by the client.
         queue = broker.register(session_id)
         processing_task = asyncio.create_task(
             orchestrator.handle_action(
@@ -229,6 +241,9 @@ async def post_message_stream(
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
 
     async def event_generator():
+        # Streaming and non-streaming message APIs hit the same orchestrator path.
+        # The only difference is whether the caller also subscribes to router events
+        # while the turn is being processed.
         queue = broker.register(session_id)
         processing_task = asyncio.create_task(
             orchestrator.handle_user_message(

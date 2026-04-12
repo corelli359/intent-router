@@ -37,6 +37,8 @@ class GraphCompilationResult:
 
 
 class GraphCompiler:
+    """Compiles one user turn into either a pending graph or an executable graph."""
+
     def __init__(
         self,
         *,
@@ -65,6 +67,16 @@ class GraphCompiler:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         skip_history_prefill: bool = False,
     ) -> GraphCompilationResult:
+        """Compile a free-form user message into graph state.
+
+        Pipeline order:
+        1. collect session context
+        2. run unified builder or recognizer
+        3. choose active/fallback intents
+        4. plan graph if builder did not already return one
+        5. repair condition edges
+        6. inject proactive defaults and optional history prefill
+        """
         graph: ExecutionGraphState | None = None
         if recognition is None and (recent_messages is None or long_term_memory is None):
             context = build_session_context(session)
@@ -104,6 +116,8 @@ class GraphCompiler:
         matches = [match for match in recognition.primary if match.intent_code in active_intents]
 
         if not matches:
+            # Fallback is a router-level escape hatch so unmatched requests can
+            # still be dispatched to a dedicated generic agent when configured.
             fallback_intent = self.fallback_intent()
             if fallback_intent is None:
                 return GraphCompilationResult(recognition=recognition, graph=None, no_match=True)
@@ -143,6 +157,11 @@ class GraphCompiler:
         content: str,
         guided_selection: GuidedSelectionPayload,
     ) -> ExecutionGraphState:
+        """Build a deterministic graph from already-selected intents.
+
+        This bypasses recognition because the upstream recommendation/UI layer has
+        already decided which intents should enter the graph.
+        """
         active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
         graph = ExecutionGraphState(
             source_message=content,
@@ -203,6 +222,7 @@ class GraphCompiler:
         build_session_context: SessionContextBuilder,
         sanitize_recent_messages_for_planning: RecentMessageSanitizer,
     ) -> GraphCompilationResult:
+        """Compile a graph from proactive selections while preserving recommendation context."""
         context = build_session_context(session)
         return await self.compile_message(
             session,
@@ -251,6 +271,7 @@ class GraphCompiler:
         *,
         recommendation_context: RecommendationContextPayload | None,
     ) -> list[str]:
+        """Append non-binding recommendation hints for recognition/planning only."""
         if recommendation_context is None or not recommendation_context.intents:
             return recent_messages
         return [
@@ -265,6 +286,7 @@ class GraphCompiler:
         proactive_recommendation: ProactiveRecommendationPayload,
         selected_items: list[ProactiveRecommendationItem],
     ) -> list[str]:
+        """Append proactive context plus the subset already selected by the user/router."""
         return [
             *recent_messages,
             self.proactive_recommendation_context_summary(proactive_recommendation),

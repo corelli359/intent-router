@@ -29,6 +29,8 @@ TERMINAL_NODE_STATUSES = {
 
 
 class GraphActionFlow:
+    """Handles explicit graph actions such as confirm/cancel and node interruption."""
+
     def __init__(
         self,
         *,
@@ -72,6 +74,7 @@ class GraphActionFlow:
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> GraphRouterSnapshot:
+        """Entry point for action APIs and graph-originated control actions."""
         session = self.session_store.get_or_create(session_id, cust_id)
         if source not in {None, "router", "graph"}:
             raise ValueError(f"Unsupported action source: {source}")
@@ -92,12 +95,16 @@ class GraphActionFlow:
         raise ValueError(f"Unsupported action_code: {action_code}")
 
     async def cancel_current_node(self, session: GraphSessionState, *, reason: str) -> None:
+        """Cancel the currently waiting node and refresh graph progress."""
         graph = session.current_graph
         node = self.get_waiting_node(session)
         if graph is None or node is None:
             raise ValueError("No waiting node to cancel")
         task = self.get_task(session, node.task_id)
         if task is not None and task.status in {TaskStatus.WAITING_USER_INPUT, TaskStatus.WAITING_CONFIRMATION}:
+            # Only waiting tasks can be cancelled cooperatively at the agent side.
+            # Running tasks are intentionally not interrupted here to avoid hiding
+            # non-idempotent side effects behind an optimistic local cancel.
             try:
                 await self.agent_client.cancel(session.session_id, task.task_id, task.agent_url)
             except Exception as exc:
@@ -109,6 +116,7 @@ class GraphActionFlow:
         await self.emit_graph_progress(session)
 
     async def cancel_current_graph(self, session: GraphSessionState, *, reason: str) -> None:
+        """Cancel all non-terminal nodes in the current graph."""
         graph = session.current_graph
         if graph is None:
             return
@@ -134,6 +142,7 @@ class GraphActionFlow:
         graph_id: str | None,
         confirm_token: str | None,
     ) -> None:
+        """Promote `pending_graph` to `current_graph` and start draining it."""
         graph = session.pending_graph
         if graph is None or graph.status != GraphStatus.WAITING_CONFIRMATION:
             raise ValueError("No pending graph to confirm")
@@ -155,6 +164,7 @@ class GraphActionFlow:
         graph_id: str | None,
         confirm_token: str | None,
     ) -> None:
+        """Discard the proposed graph without executing any node."""
         graph = session.pending_graph
         if graph is None or graph.status != GraphStatus.WAITING_CONFIRMATION:
             raise ValueError("No pending graph to cancel")

@@ -22,6 +22,13 @@ from router_service.core.slots.resolution_service import SlotResolutionService
 
 
 class GraphStateSync:
+    """Synchronizes runtime state changes with snapshot/event presentation.
+
+    The orchestrator mutates graph/session/task state, while this helper is
+    responsible for recomputing derived states and publishing consistent router
+    events back to API consumers.
+    """
+
     def __init__(
         self,
         *,
@@ -48,6 +55,7 @@ class GraphStateSync:
         await self.event_publisher.publish_graph_waiting_hint(session, graph)
 
     async def publish_no_match_hint(self, session: GraphSessionState) -> None:
+        """Append a human-readable no-match reply and publish the idle session event."""
         message = "暂未识别到明确事项，请换一种说法或补充更多上下文。"
         session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
         session.touch()
@@ -62,6 +70,7 @@ class GraphStateSync:
         *,
         status: TaskStatus | None = None,
     ) -> None:
+        """Publish graph-level snapshots for either pending or current graph."""
         graph = session.pending_graph if event in {"graph.proposed", "graph.waiting_confirmation"} else session.current_graph
         if graph is None:
             return
@@ -96,6 +105,7 @@ class GraphStateSync:
         await self.event_publisher.publish_session_state(session, event=event)
 
     async def emit_graph_progress(self, session: GraphSessionState) -> None:
+        """Re-derive graph status and publish any user-visible terminal message."""
         graph = session.current_graph
         if graph is None:
             return
@@ -124,6 +134,7 @@ class GraphStateSync:
         return self.runtime_engine.waiting_node(session.current_graph)
 
     async def refresh_graph_state(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
+        """Refresh runtime-derived node/graph state after any node/task transition."""
         previous_statuses = {node.node_id: node.status for node in graph.nodes}
         self.refresh_node_states(graph)
         graph_status = self.graph_status(graph)
@@ -132,6 +143,8 @@ class GraphStateSync:
             previous_status = previous_statuses.get(node.node_id)
             if previous_status == node.status or node.status != GraphNodeStatus.SKIPPED:
                 continue
+            # When a node becomes skipped because of a failed condition or upstream
+            # terminal state, clients should still receive an explicit node event.
             message = self.presenter.skipped_node_message(node)
             await self.publish_node_state(
                 session,
@@ -151,6 +164,8 @@ class GraphStateSync:
                 session.touch()
 
         waiting_node = self.get_waiting_node(session)
+        # `active_node_id` is a session-level shortcut used by the API/UI to know
+        # whether the current blocker is a graph confirmation or a node-level slot prompt.
         session.active_node_id = waiting_node.node_id if waiting_node is not None else None
 
     def apply_history_prefill_policy(
@@ -163,6 +178,7 @@ class GraphStateSync:
         recent_messages: list[str],
         long_term_memory: list[str],
     ) -> None:
+        """Delegate history-based slot reuse into the shared slot resolution layer."""
         self.slot_resolution_service.apply_history_prefill_policy(
             session,
             graph,
@@ -219,6 +235,7 @@ class GraphStateSync:
         proactive_recommendation: ProactiveRecommendationPayload | None,
         intents_by_code: dict[str, IntentDefinition],
     ) -> None:
+        """Delegate proactive recommendation defaults into node slot memory."""
         self.slot_resolution_service.apply_proactive_slot_defaults(
             graph,
             selected_items=selected_items,

@@ -43,6 +43,16 @@ TERMINAL_GRAPH_STATUSES = {
 
 
 class GraphMessageFlow:
+    """Owns all router decisions triggered by a new user message.
+
+    One incoming turn can enter the system in several states:
+    - free dialog with no active graph
+    - pending graph waiting for graph-level confirmation
+    - current graph with a node waiting for more slots/confirmation
+    - guided selection from recommendation UI
+    - proactive recommendation payload from an upstream recommender
+    """
+
     def __init__(
         self,
         *,
@@ -88,6 +98,7 @@ class GraphMessageFlow:
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
     ) -> GraphRouterSnapshot:
+        """Entry point for all message-driven routing."""
         session = self.session_store.get_or_create(session_id, cust_id)
         message_content = content.strip()
         display_content = message_content or self.graph_compiler.guided_selection_display_content(guided_selection)
@@ -96,6 +107,8 @@ class GraphMessageFlow:
         session.touch()
 
         try:
+            # Proactive and guided flows are explicit upstream steering signals and
+            # should take precedence over normal free-dialog recognition.
             if proactive_recommendation is not None:
                 await self.handle_proactive_recommendation_turn(
                     session,
@@ -112,12 +125,16 @@ class GraphMessageFlow:
                 )
                 return self.snapshot_session(session.session_id)
 
+            # If the router already has a proposed graph, the new utterance is not
+            # treated as a fresh task by default. It first goes through turn interpretation.
             if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
                 await self.handle_pending_graph_turn(session, message_content)
                 return self.snapshot_session(session.session_id)
 
             waiting_node = self.get_waiting_node(session)
             if waiting_node is not None:
+                # A waiting node means slot fill is currently blocked inside the
+                # router layer. The next turn should first decide resume/cancel/replan.
                 await self.handle_waiting_node_turn(session, waiting_node, message_content)
                 return self.snapshot_session(session.session_id)
 
@@ -147,6 +164,7 @@ class GraphMessageFlow:
         content: str,
         proactive_recommendation: ProactiveRecommendationPayload,
     ) -> None:
+        """Handle one proactive recommendation turn from the upstream recommender."""
         if not proactive_recommendation.items:
             raise ValueError("proactive_recommendation.items is required")
         if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
@@ -165,6 +183,11 @@ class GraphMessageFlow:
             if recommendation_id in items_by_id
         ]
 
+        # The router distinguishes between:
+        # - explicit rejection of the recommendation batch
+        # - switching back to free dialog
+        # - direct execution of preselected items
+        # - building an interactive graph for selected items
         if decision.route_mode == ProactiveRecommendationRouteMode.NO_SELECTION:
             message = "好的，本次不执行这些推荐事项。"
             session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
@@ -205,6 +228,7 @@ class GraphMessageFlow:
         content: str,
         guided_selection: GuidedSelectionPayload,
     ) -> None:
+        """Replace any in-flight graph state with a deterministic selected-intent graph."""
         if not guided_selection.selected_intents:
             raise ValueError("guided_selection.selected_intents is required")
         if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
@@ -226,6 +250,7 @@ class GraphMessageFlow:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         skip_history_prefill: bool = False,
     ) -> None:
+        """Compile and route a normal free-form user message."""
         compile_result = await self.graph_compiler.compile_message(
             session,
             content,
@@ -245,6 +270,8 @@ class GraphMessageFlow:
             await self.state_sync.publish_no_match_hint(session)
             return
         if graph.status == GraphStatus.WAITING_CONFIRMATION:
+            # Multi-intent graphs or history-prefilled graphs may require explicit
+            # user confirmation before the first node is allowed to dispatch.
             graph.touch(GraphStatus.WAITING_CONFIRMATION)
             session.pending_graph = graph
             session.current_graph = None
@@ -265,6 +292,7 @@ class GraphMessageFlow:
         content: str,
         guided_selection: GuidedSelectionPayload,
     ) -> None:
+        """Build and start a graph directly from UI-selected intents."""
         graph = self.graph_compiler.build_guided_selection_graph(
             content=content,
             guided_selection=guided_selection,
@@ -284,6 +312,7 @@ class GraphMessageFlow:
         proactive_recommendation: ProactiveRecommendationPayload,
         selected_items: list[ProactiveRecommendationItem],
     ) -> None:
+        """Compile a graph from proactive items while preserving recommendation defaults."""
         compile_result = await self.graph_compiler.compile_proactive_interactive_graph(
             session,
             content=content,
@@ -312,6 +341,7 @@ class GraphMessageFlow:
         await self.drain_graph(session, graph.source_message)
 
     async def handle_pending_graph_turn(self, session: GraphSessionState, content: str) -> None:
+        """Interpret a turn while a proposed graph is waiting for confirmation."""
         pending_graph = session.pending_graph
         if pending_graph is None:
             return
@@ -328,6 +358,8 @@ class GraphMessageFlow:
             await self.cancel_pending_graph(session, graph_id=None, confirm_token=None)
             return
         if decision.action == "replan":
+            # Replan drops the old proposal and recompiles the turn using the
+            # interpreter's latest recognition result as a semantic hint.
             session.pending_graph = None
             await self.route_new_message(
                 session,
@@ -345,6 +377,7 @@ class GraphMessageFlow:
         waiting_node: GraphNodeState,
         content: str,
     ) -> None:
+        """Interpret a turn while the current node is blocked on user input."""
         graph = session.current_graph
         if graph is None:
             return
@@ -363,6 +396,8 @@ class GraphMessageFlow:
             await self.drain_graph(session, content)
             return
         if decision.action == "replan":
+            # Node-level replan means the user changed intent or materially changed
+            # slots, so the router cancels the current graph and recompiles from scratch.
             await self.cancel_current_graph(session, reason=decision.reason or "检测到用户修改了目标，准备重规划")
             await self.route_new_message(
                 session,
@@ -375,6 +410,7 @@ class GraphMessageFlow:
         await self.state_sync.publish_session_state(session, "session.waiting_user_input")
 
     def sanitize_recent_messages_for_planning(self, recent_messages: list[str]) -> list[str]:
+        """Keep only planning-safe synthetic messages instead of full chat history."""
         if not recent_messages:
             return []
         return [
