@@ -2,6 +2,7 @@
 
 当前优先阅读：
 
+- `router-service开发架构与代码导读.md`
 - `intent-router-prd.md`
 - `意图设计.md`
 - `slot-schema-field-catalog-design.md`
