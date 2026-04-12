@@ -18,7 +18,6 @@ from router_service.core.domain import (
     utc_now,
 )
 from router_service.core.llm_client import llm_exception_is_retryable
-from router_service.core.memory_store import LongTermMemoryStore
 from router_service.core.recognizer import IntentRecognizer, RecognitionResult
 from router_service.core.graph_compiler import GraphCompiler
 from router_service.core.intent_understanding_service import IntentUnderstandingService
@@ -55,6 +54,7 @@ from router_service.core.recommendation_router import (
     ProactiveRecommendationRouter,
 )
 from router_service.core.graph.session_store import GraphSessionStore
+from router_service.core.graph.state_sync import GraphStateSync
 
 
 logger = logging.getLogger(__name__)
@@ -112,6 +112,7 @@ class GraphRouterOrchestrator:
         understanding_validator: UnderstandingValidator | None = None,
         slot_resolution_service: SlotResolutionService | None = None,
         graph_compiler: GraphCompiler | None = None,
+        state_sync: GraphStateSync | None = None,
     ) -> None:
         self.publish_event = publish_event
         self.session_store = session_store or GraphSessionStore()
@@ -137,6 +138,12 @@ class GraphRouterOrchestrator:
 
             self.intent_catalog = _FallbackCatalog()
         self.slot_resolution_service = slot_resolution_service or SlotResolutionService()
+        self.state_sync = state_sync or GraphStateSync(
+            runtime_engine=self.runtime_engine,
+            presenter=self.presenter,
+            event_publisher=self.event_publisher,
+            slot_resolution_service=self.slot_resolution_service,
+        )
         self.understanding_validator = understanding_validator or UnderstandingValidator()
         self.understanding_service = understanding_service or IntentUnderstandingService(
             intent_catalog=self.intent_catalog,
@@ -940,23 +947,13 @@ class GraphRouterOrchestrator:
         session.pending_graph = None
 
     async def _publish_pending_graph(self, session: GraphSessionState) -> None:
-        graph = session.pending_graph
-        if graph is None:
-            return
-        await self.event_publisher.publish_pending_graph(session, graph)
+        await self.state_sync.publish_pending_graph(session)
 
     async def _publish_graph_waiting_hint(self, session: GraphSessionState) -> None:
-        graph = session.pending_graph
-        if graph is None:
-            return
-        await self.event_publisher.publish_graph_waiting_hint(session, graph)
+        await self.state_sync.publish_graph_waiting_hint(session)
 
     async def _publish_no_match_hint(self, session: GraphSessionState) -> None:
-        message = "暂未识别到明确事项，请换一种说法或补充更多上下文。"
-        session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
-        session.touch()
-        await self.event_publisher.publish_unrecognized(session, message=message)
-        await self._publish_session_state(session, "session.idle")
+        await self.state_sync.publish_no_match_hint(session)
 
     async def _publish_graph_state(
         self,
@@ -966,17 +963,7 @@ class GraphRouterOrchestrator:
         *,
         status: TaskStatus | None = None,
     ) -> None:
-        graph = session.pending_graph if event in {"graph.proposed", "graph.waiting_confirmation"} else session.current_graph
-        if graph is None:
-            return
-        await self.event_publisher.publish_graph_state(
-            session,
-            graph,
-            event=event,
-            message=message,
-            status=status,
-            pending=graph is session.pending_graph,
-        )
+        await self.state_sync.publish_graph_state(session, event, message, status=status)
 
     async def _publish_node_state(
         self,
@@ -987,45 +974,28 @@ class GraphRouterOrchestrator:
         event: str,
         message: str,
     ) -> None:
-        await self.event_publisher.publish_node_state(
-            session,
-            graph,
-            node,
-            task_status=task_status,
-            event=event,
-            message=message,
-        )
+        await self.state_sync.publish_node_state(session, graph, node, task_status, event, message)
 
     async def _publish_session_state(self, session: GraphSessionState, event: str) -> None:
-        await self.event_publisher.publish_session_state(session, event=event)
+        await self.state_sync.publish_session_state(session, event)
 
     async def _emit_graph_progress(self, session: GraphSessionState) -> None:
-        graph = session.current_graph
-        if graph is None:
-            return
-        previous_status = graph.status
-        graph.touch(self._graph_status(graph))
-        event_name = self.presenter.graph_event_name(graph.status)
-        message = self.presenter.graph_message(graph)
-        if self.presenter.should_append_graph_terminal_message(graph, previous_status):
-            session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
-            session.touch()
-        await self._publish_graph_state(session, event_name, message)
+        await self.state_sync.emit_graph_progress(session)
 
     def _refresh_node_states(self, graph: ExecutionGraphState) -> None:
-        self.runtime_engine.refresh_node_states(graph)
+        self.state_sync.refresh_node_states(graph)
 
     def _condition_matches_from_condition(self, source: GraphNodeState, condition: GraphCondition | None) -> bool:
-        return self.runtime_engine.condition_matches(source, condition)
+        return self.state_sync.condition_matches_from_condition(source, condition)
 
     def _graph_status(self, graph: ExecutionGraphState) -> GraphStatus:
-        return self.runtime_engine.graph_status(graph)
+        return self.state_sync.graph_status(graph)
 
     def _next_ready_node(self, graph: ExecutionGraphState) -> GraphNodeState | None:
-        return self.runtime_engine.next_ready_node(graph)
+        return self.state_sync.next_ready_node(graph)
 
     def _get_waiting_node(self, session: GraphSessionState) -> GraphNodeState | None:
-        return self.runtime_engine.waiting_node(session.current_graph)
+        return self.state_sync.get_waiting_node(session)
 
     def _get_task(self, session: GraphSessionState, task_id: str | None) -> Task | None:
         if task_id is None:
@@ -1036,34 +1006,7 @@ class GraphRouterOrchestrator:
         return None
 
     async def _refresh_graph_state(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
-        previous_statuses = {node.node_id: node.status for node in graph.nodes}
-        self._refresh_node_states(graph)
-        graph_status = self._graph_status(graph)
-
-        for node in graph.nodes:
-            previous_status = previous_statuses.get(node.node_id)
-            if previous_status == node.status or node.status != GraphNodeStatus.SKIPPED:
-                continue
-            message = self.presenter.skipped_node_message(node)
-            await self._publish_node_state(
-                session,
-                graph,
-                node,
-                TaskStatus.COMPLETED,
-                "node.skipped",
-                message,
-            )
-            if node.skip_reason_code == GraphNodeSkipReason.CONDITION_NOT_MET.value and graph_status not in {
-                GraphStatus.COMPLETED,
-                GraphStatus.PARTIALLY_COMPLETED,
-                GraphStatus.FAILED,
-                GraphStatus.CANCELLED,
-            }:
-                session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
-                session.touch()
-
-        waiting_node = self._get_waiting_node(session)
-        session.active_node_id = waiting_node.node_id if waiting_node is not None else None
+        await self.state_sync.refresh_graph_state(session, graph)
 
     def _apply_history_prefill_policy(
         self,
@@ -1075,7 +1018,7 @@ class GraphRouterOrchestrator:
         recent_messages: list[str],
         long_term_memory: list[str],
     ) -> None:
-        self.slot_resolution_service.apply_history_prefill_policy(
+        self.state_sync.apply_history_prefill_policy(
             session,
             graph,
             source_message=source_message,
@@ -1090,7 +1033,7 @@ class GraphRouterOrchestrator:
         *,
         long_term_memory: list[str],
     ) -> dict[str, Any]:
-        return self.slot_resolution_service.history_slot_values(
+        return self.state_sync.history_slot_values(
             session,
             long_term_memory=long_term_memory,
         )
@@ -1103,7 +1046,7 @@ class GraphRouterOrchestrator:
         source_text: str | None,
         confidence: float,
     ) -> list[SlotBindingState]:
-        return self.slot_resolution_service.structured_slot_bindings(
+        return self.state_sync.structured_slot_bindings(
             slot_memory=slot_memory,
             source=source,
             source_text=source_text,
@@ -1117,7 +1060,7 @@ class GraphRouterOrchestrator:
         preferred_sources: dict[str, SlotBindingSource] | None = None,
         source_text: str | None = None,
     ) -> None:
-        self.slot_resolution_service.rebuild_node_slot_bindings(
+        self.state_sync.rebuild_node_slot_bindings(
             node,
             preferred_sources=preferred_sources,
             source_text=source_text,
@@ -1164,10 +1107,10 @@ class GraphRouterOrchestrator:
         return getter()
 
     def _node_status_for_task_status(self, status: TaskStatus) -> GraphNodeStatus:
-        return self.runtime_engine.node_status_for_task_status(status)
+        return self.state_sync.node_status_for_task_status(status)
 
     def _task_status_for_graph(self, status: GraphStatus) -> TaskStatus:
-        return self.runtime_engine.task_status_for_graph(status)
+        return self.state_sync.task_status_for_graph(status)
 
     def _guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:
         return self.graph_compiler.guided_selection_display_content(guided_selection)
@@ -1234,7 +1177,7 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload | None,
         intents_by_code: dict[str, IntentDefinition],
     ) -> None:
-        self.slot_resolution_service.apply_proactive_slot_defaults(
+        self.state_sync.apply_proactive_slot_defaults(
             graph,
             selected_items=selected_items,
             proactive_recommendation=proactive_recommendation,
