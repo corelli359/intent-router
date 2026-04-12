@@ -13,7 +13,6 @@ from router_service.core.domain import (
     ChatMessage,
     IntentDefinition,
     IntentMatch,
-    RouterSnapshot,
     Task,
     TaskEvent,
     TaskStatus,

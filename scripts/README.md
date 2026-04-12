@@ -34,9 +34,10 @@ python scripts/verify_router_lifecycle.py --base-url "$INTENT_ROUTER_BASE_URL"
 
 Default assumptions:
 
-- events stream: `GET /api/router/sessions/{session_id}/events` (SSE)
-- message submit: `POST /api/router/sessions/{session_id}/messages`
-- expected event sequence: `task.waiting_user_input -> task.completed`
+- events stream: `GET /api/router/v2/sessions/{session_id}/events` (SSE)
+- message submit: `POST /api/router/v2/sessions/{session_id}/messages`
+- default scenario: transfer flow with first-turn partial slots, then follow-up slot补充
+- expected event sequence: `session.waiting_user_input -> node.completed`
 
 ### 3) One-shot launcher
 

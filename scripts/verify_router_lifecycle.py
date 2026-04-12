@@ -79,15 +79,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify router lifecycle via SSE.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--session-id", default="mvp-session-001")
-    parser.add_argument("--events-path", default="/api/router/sessions/{session_id}/events")
+    parser.add_argument("--events-path", default="/api/router/v2/sessions/{session_id}/events")
     parser.add_argument(
-        "--message-path", default="/api/router/sessions/{session_id}/messages"
+        "--message-path", default="/api/router/v2/sessions/{session_id}/messages"
     )
-    parser.add_argument("--initial-message", default="check order and cancel appointment")
-    parser.add_argument("--followup-message", default="order id is 123")
+    parser.add_argument("--initial-message", default="帮我给李四转 5000 元")
+    parser.add_argument(
+        "--followup-message",
+        default="收款卡号 6222020100049999999，收款人手机号后四位 1234",
+    )
     parser.add_argument(
         "--expected-events",
-        default="task.waiting_user_input,task.completed",
+        default="session.waiting_user_input,node.completed",
         help="Comma separated ordered events to wait for.",
     )
     parser.add_argument("--timeout-seconds", type=float, default=40.0)
@@ -170,7 +173,7 @@ def main() -> int:
 
         print(f"[SSE] event={evt.event} data={evt.data}")
 
-        if evt.event == "task.waiting_user_input" and not saw_waiting:
+        if evt.event == "session.waiting_user_input" and not saw_waiting:
             saw_waiting = True
             try:
                 follow_status = _http_json(
@@ -202,4 +205,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
