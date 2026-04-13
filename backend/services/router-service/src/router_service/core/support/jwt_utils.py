@@ -41,7 +41,7 @@ class AuthHTTPClient(httpx.AsyncClient):
             # 每次请求前生成新的 JWT
             token = generate_jwt()
             request.headers["Authorization"] = f"Bearer {token}"
-            request.headers["x-app-id"] = Config.X_APP_ID
+            request.headers["x-app-id"] = X_APP_ID
         except Exception as e:
             print(f"[ERROR] Failed to generate JWT: {e}")
             raise
