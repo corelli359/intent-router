@@ -14,7 +14,7 @@ def generate_jwt(salt: str = '', expire_seconds: int = 3600) -> str:
     Returns:
         JWT token 字符串
     """
-    if salt is None:
+    if not salt:
         salt = JWT_SALT
 
     if not salt:
