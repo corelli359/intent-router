@@ -224,7 +224,7 @@ def _build_llm_client() -> LangChainLLMClient | None:
         return None
     return LangChainLLMClient(
         base_url=settings.llm_api_base_url or "",
-        api_key=settings.llm_api_key,
+        api_key=settings.effective_llm_api_key,
         default_model=settings.default_llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
         rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),

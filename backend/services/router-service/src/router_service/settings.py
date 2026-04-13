@@ -111,6 +111,8 @@ class Settings(BaseModel):
     router_drain_iteration_floor: int = Field(default=8, gt=0)
     llm_api_base_url: str | None = Field(default=None)
     llm_api_key: str | None = Field(default=None)
+    llm_auth_mode: Literal["api_key", "bearer_jwt"] = Field(default="api_key")
+    llm_bearer_jwt: str | None = Field(default=None)
     llm_model: str | None = Field(default=None)
     llm_recognizer_model: str | None = Field(default=None)
     llm_recognizer_system_prompt_template: str | None = Field(default=None)
@@ -128,6 +130,13 @@ class Settings(BaseModel):
     def default_llm_model(self) -> str | None:
         """Return the default model name for generic router LLM calls."""
         return self.llm_recognizer_model or self.llm_model
+
+    @property
+    def effective_llm_api_key(self) -> str | None:
+        """Return the token that should populate the Authorization bearer header."""
+        if self.llm_auth_mode == "bearer_jwt":
+            return self.llm_bearer_jwt or self.llm_api_key
+        return self.llm_api_key
 
     @property
     def llm_connection_ready(self) -> bool:
@@ -176,6 +185,8 @@ class Settings(BaseModel):
             ),
             llm_api_base_url=os.getenv("ROUTER_LLM_API_BASE_URL"),
             llm_api_key=os.getenv("ROUTER_LLM_API_KEY"),
+            llm_auth_mode=os.getenv("ROUTER_LLM_AUTH_MODE", "api_key"),
+            llm_bearer_jwt=os.getenv("ROUTER_LLM_BEARER_JWT"),
             llm_model=os.getenv("ROUTER_LLM_MODEL"),
             llm_recognizer_model=os.getenv("ROUTER_LLM_RECOGNIZER_MODEL"),
             llm_recognizer_system_prompt_template=os.getenv("ROUTER_LLM_RECOGNIZER_SYSTEM_PROMPT_TEMPLATE"),

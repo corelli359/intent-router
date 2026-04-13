@@ -221,6 +221,8 @@ class AgentLLMSettings(BaseModel):
     service_name: str
     llm_api_base_url: str | None = None
     llm_api_key: str | None = None
+    llm_auth_mode: Literal["api_key", "bearer_jwt"] = "api_key"
+    llm_bearer_jwt: str | None = None
     llm_model: str | None = None
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
     llm_rate_limit_max_retries: int = Field(default=2, ge=0)
@@ -231,6 +233,12 @@ class AgentLLMSettings(BaseModel):
     def connection_ready(self) -> bool:
         return bool(self.llm_api_base_url and self.llm_model)
 
+    @property
+    def effective_llm_api_key(self) -> str | None:
+        if self.llm_auth_mode == "bearer_jwt":
+            return self.llm_bearer_jwt or self.llm_api_key
+        return self.llm_api_key
+
     @classmethod
     def from_env(cls, *, prefix: str, service_name: str) -> "AgentLLMSettings":
         _load_local_env_files()
@@ -238,6 +246,8 @@ class AgentLLMSettings(BaseModel):
             service_name=service_name,
             llm_api_base_url=_env_first(f"{prefix}_LLM_API_BASE_URL", "ROUTER_LLM_API_BASE_URL"),
             llm_api_key=_env_first(f"{prefix}_LLM_API_KEY", "ROUTER_LLM_API_KEY"),
+            llm_auth_mode=_env_first(f"{prefix}_LLM_AUTH_MODE", "ROUTER_LLM_AUTH_MODE") or "api_key",
+            llm_bearer_jwt=_env_first(f"{prefix}_LLM_BEARER_JWT", "ROUTER_LLM_BEARER_JWT"),
             llm_model=_env_first(f"{prefix}_LLM_MODEL", "ROUTER_LLM_AGENT_MODEL", "ROUTER_LLM_MODEL"),
             llm_timeout_seconds=_env_float(
                 30.0,
@@ -284,7 +294,7 @@ class LangChainJsonObjectRunner:
         model = ChatOpenAI(
             model_name=self.settings.llm_model,
             temperature=0,
-            openai_api_key=self.settings.llm_api_key,
+            openai_api_key=self.settings.effective_llm_api_key,
             openai_api_base=self.settings.llm_api_base_url,
             request_timeout=self.settings.llm_timeout_seconds,
             default_headers=self.settings.llm_headers or None,
