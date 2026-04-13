@@ -13,6 +13,7 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 - `backend/services/agents/forex-agent`: forex exchange agent source of truth
 - `backend/services/agents/fallback-agent`: fallback agent source of truth
 - `frontend/`: chat web, admin web, shared packages
+- `prod_target/`: generated target-cluster frontend artifacts and rendered manifests
 - `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
 - `scripts/`: local verification and cluster helper scripts
@@ -168,3 +169,39 @@ Chat entries after startup:
 
 - V1: `http://127.0.0.1:3000/chat`
 - V2: `http://127.0.0.1:3000/chat/v2`
+
+## Target Cluster Frontend Build
+
+For target or test clusters where hostname and external path prefixes differ from local Minikube,
+generate standalone frontend artifacts plus rendered manifests into `prod_target/`:
+
+```bash
+./scripts/build_prod_target.sh
+```
+
+Common overrides:
+
+```bash
+INGRESS_HOST=test.example.com \
+CHAT_BASE_PATH=/intent-test/chat \
+ADMIN_BASE_PATH=/intent-test/admin \
+ROUTER_API_EXTERNAL_PATH=/intent-test/api/router \
+ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
+./scripts/build_prod_target.sh
+```
+
+The generated web deployments run directly from `prod_target/chat-web` and `prod_target/admin-web`
+instead of rebuilding Next.js inside the cluster.
+
+## Analyze-Only Verification
+
+To verify intent recognition and slot filling without dispatching downstream agents, call:
+
+- `POST /api/router/v2/sessions/{session_id}/messages/analyze`
+- or `POST /api/router/v2/sessions/{session_id}/messages` with `"executionMode": "analyze_only"`
+
+Helper script:
+
+```bash
+python scripts/verify_router_understanding.py --base-url http://127.0.0.1:8000
+```

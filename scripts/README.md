@@ -68,7 +68,44 @@ Pytest wrapper:
 RUN_REAL_LLM_TEST=1 pytest backend/tests/integration/test_real_llm_runtime_script.py
 ```
 
-### 5) Register additional financial intents
+### 5) Analyze-only understanding verification
+
+This calls the router without dispatching intent agents, so you can inspect:
+
+- recognized primary intents
+- candidate intents
+- compiled graph
+- per-node slot memory
+- conditional edges
+
+```bash
+python scripts/verify_router_understanding.py --base-url "$INTENT_ROUTER_BASE_URL"
+```
+
+### 6) Build target-cluster frontend artifacts
+
+This generates:
+
+- `prod_target/chat-web`
+- `prod_target/admin-web`
+- `prod_target/k8s/intent/*.yaml`
+
+```bash
+./scripts/build_prod_target.sh
+```
+
+Example with external prefixes:
+
+```bash
+INGRESS_HOST=test.example.com \
+CHAT_BASE_PATH=/intent-test/chat \
+ADMIN_BASE_PATH=/intent-test/admin \
+ROUTER_API_EXTERNAL_PATH=/intent-test/api/router \
+ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
+./scripts/build_prod_target.sh
+```
+
+### 7) Register additional financial intents
 
 This upserts the extra V2 financial intents used by the multi-agent runtime:
 

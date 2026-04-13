@@ -72,6 +72,18 @@ class GraphRouterOrchestratorConfig:
     drain_iteration_floor: int = 8
 
 
+@dataclass(slots=True)
+class MessageAnalysisResult:
+    """Non-executing analysis result used to inspect recognition and slot filling."""
+
+    session_id: str
+    cust_id: str
+    content: str
+    recognition: RecognitionResult
+    graph: ExecutionGraphState | None
+    no_match: bool = False
+
+
 class _NoopIntentRecognizer:
     """Recognizer fallback that always returns an empty result."""
 
@@ -232,6 +244,55 @@ class GraphRouterOrchestrator:
             guided_selection=guided_selection,
             recommendation_context=recommendation_context,
             proactive_recommendation=proactive_recommendation,
+        )
+
+    async def analyze_user_message(
+        self,
+        session_id: str,
+        cust_id: str,
+        content: str,
+        *,
+        guided_selection: GuidedSelectionPayload | None = None,
+        recommendation_context: RecommendationContextPayload | None = None,
+        proactive_recommendation: ProactiveRecommendationPayload | None = None,
+    ) -> MessageAnalysisResult:
+        """Compile one turn into recognition and slots without dispatching any agent."""
+        if proactive_recommendation is not None:
+            raise ValueError("analyze_only does not support proactive_recommendation yet")
+
+        session = self.session_store.get_or_create(session_id, cust_id)
+        message_content = content.strip()
+        display_content = message_content or self._guided_selection_display_content(guided_selection)
+
+        if guided_selection is not None:
+            graph = self.graph_compiler.build_guided_selection_graph(
+                content=message_content,
+                guided_selection=guided_selection,
+            )
+            return MessageAnalysisResult(
+                session_id=session.session_id,
+                cust_id=session.cust_id,
+                content=display_content,
+                recognition=RecognitionResult(primary=[], candidates=[]),
+                graph=graph,
+                no_match=False,
+            )
+
+        compile_result = await self.graph_compiler.compile_message(
+            session,
+            message_content,
+            build_session_context=self._build_session_context,
+            sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
+            recommendation_context=recommendation_context,
+            emit_events=False,
+        )
+        return MessageAnalysisResult(
+            session_id=session.session_id,
+            cust_id=session.cust_id,
+            content=display_content,
+            recognition=compile_result.recognition,
+            graph=compile_result.graph,
+            no_match=compile_result.no_match,
         )
 
     async def _handle_proactive_recommendation_turn(

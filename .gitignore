@@ -38,3 +38,6 @@ node_modules/
 /backend/services/**/build/
 /.codex
 *.ipynb
+/prod_target/*
+!/prod_target/.gitignore
+!/prod_target/README.md

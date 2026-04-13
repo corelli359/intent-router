@@ -2165,3 +2165,69 @@ def test_v2_router_guided_selection_with_prefilled_slots_dispatches() -> None:
             assert snapshot["messages"][-1]["content"] == "已为燃气户号 88001234 缴费 88 元"
 
     asyncio.run(run())
+
+
+def test_v2_router_message_analyze_endpoint_returns_recognition_slots_and_conditions_without_execution() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(planner=_ConditionalPlanner())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages/analyze",
+                json={"content": "先查余额，再给我媳妇儿转账，然后再给我弟弟转账"},
+            )
+            assert response.status_code == 200
+            payload = response.json()["analysis"]
+            assert [item["intent_code"] for item in payload["recognition"]["primary"]] == [
+                "query_account_balance",
+                "transfer_money",
+            ]
+            assert payload["graph"]["status"] == "waiting_confirmation"
+            assert [node["intent_code"] for node in payload["slot_nodes"]] == [
+                "query_account_balance",
+                "transfer_money",
+                "transfer_money",
+            ]
+            assert payload["slot_nodes"][1]["slot_memory"] == {"recipient_name": "我媳妇儿", "amount": "1000"}
+            assert payload["slot_nodes"][2]["slot_memory"] == {"recipient_name": "我弟弟", "amount": "1000"}
+            assert len(payload["conditional_edges"]) == 2
+            assert payload["conditional_edges"][0]["condition"]["left_key"] == "balance"
+            assert payload["conditional_edges"][0]["condition"]["right_value"] == 8000
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.messages == []
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is None
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_execution_mode_analyze_only_returns_analysis_payload() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(planner=_ConditionalPlanner())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "先查余额，再给我媳妇儿转账，然后再给我弟弟转账",
+                    "executionMode": "analyze_only",
+                },
+            )
+            assert response.status_code == 200
+            assert "analysis" in response.json()
+            assert "snapshot" not in response.json()
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is None
+
+    asyncio.run(run())

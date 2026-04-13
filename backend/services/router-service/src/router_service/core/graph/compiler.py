@@ -85,6 +85,7 @@ class GraphCompiler:
         proactive_defaults: list[ProactiveRecommendationItem] | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         skip_history_prefill: bool = False,
+        emit_events: bool = True,
     ) -> GraphCompilationResult:
         """Compile a free-form user message into graph state.
 
@@ -117,7 +118,7 @@ class GraphCompiler:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
                 recognition=recognition,
-                emit_events=True,
+                emit_events=emit_events,
             )
             recognition = build_result.recognition
             graph = build_result.graph
@@ -127,7 +128,7 @@ class GraphCompiler:
                 content,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
-                emit_events=True,
+                emit_events=emit_events,
             )
 
         recognition = recognition or RecognitionResult(primary=[], candidates=[])

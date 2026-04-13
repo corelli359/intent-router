@@ -74,6 +74,8 @@ Reason:
 - Source is mounted into Minikube node at `/mnt/intent-router`.
 - Router runtime config is mounted from ConfigMap `intent-router-api-env` to `/etc/intent-router/.env.local`.
 - The deploy script generates that ConfigMap from the repo-root `.env.local` on the mounted workspace.
+- For non-Minikube target clusters with different external hosts or path prefixes, generate
+  `prod_target/k8s/intent/*.yaml` via `scripts/build_prod_target.sh` and deploy those rendered manifests instead.
 - Pods now install only their own local service package on startup.
 - Deployment startup no longer depends on `backend/src` or the monorepo root package.
 - New financial agents are deployed one by one instead of piggybacking on the legacy two-agent topology.

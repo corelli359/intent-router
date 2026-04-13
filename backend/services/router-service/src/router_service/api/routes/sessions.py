@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import StrEnum
 import json
 from contextlib import suppress
 
@@ -10,16 +11,26 @@ from starlette.responses import StreamingResponse
 
 from router_service.api.dependencies import get_event_broker, get_orchestrator
 from router_service.api.sse.broker import EventBroker
-from router_service.core.shared.domain import TaskEvent, TaskStatus
+from router_service.core.shared.domain import IntentMatch, TaskEvent, TaskStatus
 from router_service.core.shared.graph_domain import (
+    ExecutionGraphState,
+    GraphEdge,
+    GraphNodeState,
     GuidedSelectionPayload,
     ProactiveRecommendationPayload,
     RecommendationContextPayload,
 )
-from router_service.core.graph.orchestrator import GraphRouterOrchestrator
+from router_service.core.graph.orchestrator import GraphRouterOrchestrator, MessageAnalysisResult
 
 
 router = APIRouter(tags=["router"])
+
+
+class MessageExecutionMode(StrEnum):
+    """Execution behavior selected for one message request."""
+
+    EXECUTE = "execute"
+    ANALYZE_ONLY = "analyze_only"
 
 
 class CreateSessionResponse(BaseModel):
@@ -41,6 +52,7 @@ class MessageRequest(BaseModel):
 
     content: str | None = None
     message: str | None = None
+    execution_mode: MessageExecutionMode = Field(default=MessageExecutionMode.EXECUTE, alias="executionMode")
     guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
     recommendation_context: RecommendationContextPayload | None = Field(default=None, alias="recommendationContext")
     proactive_recommendation: ProactiveRecommendationPayload | None = Field(default=None, alias="proactiveRecommendation")
@@ -53,6 +65,26 @@ class MessageRequest(BaseModel):
         if not self.content and (self.guided_selection is None or not self.guided_selection.selected_intents):
             raise ValueError("content/message or guided_selection is required")
         return self
+
+
+class RecognitionAnalysis(BaseModel):
+    """Recognition buckets returned by analyze-only mode."""
+
+    primary: list[IntentMatch] = Field(default_factory=list)
+    candidates: list[IntentMatch] = Field(default_factory=list)
+
+
+class MessageAnalysisPayload(BaseModel):
+    """Structured analyze-only payload for intent and slot verification."""
+
+    session_id: str
+    cust_id: str
+    content: str
+    no_match: bool = False
+    recognition: RecognitionAnalysis
+    graph: ExecutionGraphState | None = None
+    slot_nodes: list[GraphNodeState] = Field(default_factory=list)
+    conditional_edges: list[GraphEdge] = Field(default_factory=list)
 
 
 class ActionRequest(BaseModel):
@@ -114,6 +146,24 @@ def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
     return f"event: {event_name}\ndata: {body}\n\n"
 
 
+def _build_message_analysis_payload(result: MessageAnalysisResult) -> MessageAnalysisPayload:
+    """Convert orchestrator analysis output into an API response model."""
+    graph = result.graph.model_copy(deep=True) if result.graph is not None else None
+    return MessageAnalysisPayload(
+        session_id=result.session_id,
+        cust_id=result.cust_id,
+        content=result.content,
+        no_match=result.no_match,
+        recognition=RecognitionAnalysis(
+            primary=list(result.recognition.primary),
+            candidates=list(result.recognition.candidates),
+        ),
+        graph=graph,
+        slot_nodes=list(graph.nodes) if graph is not None else [],
+        conditional_edges=[edge for edge in graph.edges if edge.condition is not None] if graph is not None else [],
+    )
+
+
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: CreateSessionRequest | None = None,
@@ -149,6 +199,16 @@ async def post_message(
     # drive the router directly without rendering any UI.
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     try:
+        if request.execution_mode == MessageExecutionMode.ANALYZE_ONLY:
+            analysis = await orchestrator.analyze_user_message(
+                session_id=session_id,
+                cust_id=resolved_cust_id,
+                content=request.content or "",
+                guided_selection=request.guided_selection,
+                recommendation_context=request.recommendation_context,
+                proactive_recommendation=request.proactive_recommendation,
+            )
+            return {"ok": True, "analysis": _build_message_analysis_payload(analysis).model_dump(mode="json")}
         snapshot = await orchestrator.handle_user_message(
             session_id=session_id,
             cust_id=resolved_cust_id,
@@ -160,6 +220,28 @@ async def post_message(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
+
+
+@router.post("/sessions/{session_id}/messages/analyze")
+async def analyze_message(
+    session_id: str,
+    request: MessageRequest,
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
+):
+    """Analyze one message turn without executing downstream agents."""
+    resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
+    try:
+        analysis = await orchestrator.analyze_user_message(
+            session_id=session_id,
+            cust_id=resolved_cust_id,
+            content=request.content or "",
+            guided_selection=request.guided_selection,
+            recommendation_context=request.recommendation_context,
+            proactive_recommendation=request.proactive_recommendation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "analysis": _build_message_analysis_payload(analysis).model_dump(mode="json")}
 
 
 @router.post("/sessions/{session_id}/actions")
@@ -254,6 +336,8 @@ async def post_message_stream(
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     """Execute one message turn while streaming router events over SSE."""
+    if request.execution_mode == MessageExecutionMode.ANALYZE_ONLY:
+        raise HTTPException(status_code=400, detail="analyze_only is not supported on the stream endpoint")
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
 
     async def event_generator():
