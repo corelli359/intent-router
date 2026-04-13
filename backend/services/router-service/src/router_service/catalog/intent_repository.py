@@ -17,6 +17,10 @@ class IntentNotFoundError(IntentRepositoryError):
     """Raised when an intent cannot be found."""
 
 
+class IntentRepositoryReadOnlyError(IntentRepositoryError):
+    """Raised when a repository backend does not support writes."""
+
+
 class IntentRepository(ABC):
     """Abstract repository interface for admin-managed intent definitions."""
 

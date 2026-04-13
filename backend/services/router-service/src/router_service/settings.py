@@ -92,8 +92,9 @@ class Settings(BaseModel):
 
     app_name: str = Field(default="Intent Router API")
     env: str = Field(default="dev")
-    repository_backend: Literal["memory", "database", "postgres"] = Field(default="memory")
+    repository_backend: Literal["memory", "database", "postgres", "file"] = Field(default="memory")
     database_url: str | None = Field(default=None)
+    router_intent_catalog_file: str | None = Field(default=None)
     recognizer_backend: Literal["rules", "llm"] = Field(default="llm")
     router_v2_graph_build_mode: Literal["legacy", "unified"] = Field(default="legacy")
     router_v2_understanding_mode: Literal["flat", "hierarchical"] = Field(default="flat")
@@ -111,6 +112,7 @@ class Settings(BaseModel):
     router_drain_iteration_floor: int = Field(default=8, gt=0)
     llm_api_base_url: str | None = Field(default=None)
     llm_api_key: str | None = Field(default=None)
+    llm_auth_http_client_enabled: bool = Field(default=False)
     llm_model: str | None = Field(default=None)
     llm_recognizer_model: str | None = Field(default=None)
     llm_recognizer_system_prompt_template: str | None = Field(default=None)
@@ -145,6 +147,7 @@ class Settings(BaseModel):
             database_url=os.getenv("ROUTER_INTENT_CATALOG_DATABASE_URL")
             or os.getenv("ADMIN_DATABASE_URL")
             or os.getenv("ADMIN_POSTGRES_DSN"),
+            router_intent_catalog_file=os.getenv("ROUTER_INTENT_CATALOG_FILE"),
             recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "llm"),
             router_v2_graph_build_mode=os.getenv("ROUTER_V2_GRAPH_BUILD_MODE", "legacy"),
             router_v2_understanding_mode=os.getenv("ROUTER_V2_UNDERSTANDING_MODE", "flat"),
@@ -176,6 +179,10 @@ class Settings(BaseModel):
             ),
             llm_api_base_url=os.getenv("ROUTER_LLM_API_BASE_URL"),
             llm_api_key=os.getenv("ROUTER_LLM_API_KEY"),
+            llm_auth_http_client_enabled=_parse_bool_env(
+                "ROUTER_LLM_AUTH_HTTP_CLIENT_ENABLED",
+                False,
+            ),
             llm_model=os.getenv("ROUTER_LLM_MODEL"),
             llm_recognizer_model=os.getenv("ROUTER_LLM_RECOGNIZER_MODEL"),
             llm_recognizer_system_prompt_template=os.getenv("ROUTER_LLM_RECOGNIZER_SYSTEM_PROMPT_TEMPLATE"),

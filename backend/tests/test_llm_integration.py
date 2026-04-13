@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
 import json
 import sys
 from pathlib import Path
@@ -242,6 +243,31 @@ def test_langchain_llm_client_passes_custom_http_async_client_to_chat_openai(mon
 
     assert captured["http_async_client"] is custom_client
     assert captured["openai_api_key"] == "jwt-auth-placeholder"
+
+
+def test_langchain_llm_client_uses_empty_api_key_with_plain_httpx_client(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("router_service.core.support.llm_client.ChatOpenAI", _FakeChatOpenAI)
+    plain_client = httpx.AsyncClient()
+    client = LangChainLLMClient(
+        base_url="https://example.com/v1",
+        api_key=None,
+        default_model="test-model",
+        http_async_client=plain_client,
+    )
+
+    try:
+        client._create_model()
+    finally:
+        asyncio.run(plain_client.aclose())
+
+    assert captured["http_async_client"] is plain_client
+    assert captured["openai_api_key"] == ""
 
 
 def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:

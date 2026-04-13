@@ -12,6 +12,7 @@ import httpx
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
+from router_service.core.support.jwt_utils import AuthHTTPClient
 
 AsyncDeltaCallback = Callable[[str], Awaitable[None]]
 logger = logging.getLogger(__name__)
@@ -144,11 +145,11 @@ class LangChainLLMClient:
 
     def _effective_api_key(self) -> str | None:
         """Return the API key expected by ChatOpenAI, using a placeholder for custom auth clients."""
-        if self.api_key:
+        if self.api_key is not None:
             return self.api_key
-        if self.http_async_client is not None:
+        if isinstance(self.http_async_client, AuthHTTPClient):
             return "jwt-auth-placeholder"
-        return None
+        return ""
 
     async def aclose(self) -> None:
         """Close the owned async HTTP client when present."""

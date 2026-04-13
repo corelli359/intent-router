@@ -1,52 +1,78 @@
-import jwt
-import time
-from router_service.settings import JWT_SALT, X_APP_ID
-import httpx
+from __future__ import annotations
+
+from datetime import UTC, datetime
 import logging
+import time
+from typing import Any
+from uuid import uuid4
+
+import httpx
+import jwt
+
+from router_service.settings import JWT_SALT, X_APP_ID
 
 
 logger = logging.getLogger(__name__)
 
-def generate_jwt(salt: str = '', expire_seconds: int = 3600) -> str:
-    """
-    生成 JWT token
+def _unix_timestamp(value: datetime) -> int:
+    """Convert one datetime to a UTC unix timestamp."""
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return int(aware.timestamp())
 
-    Args:
-        salt: JWT 密钥，如果不提供则使用配置中的 JWT_SALT
-        expire_seconds: 过期时间（秒），默认 1 小时
 
-    Returns:
-        JWT token 字符串
-    """
-    if not salt:
-        salt = JWT_SALT
-
-    if not salt:
+def generate_jwt(
+    secret: str | None = None,
+    *,
+    issuer: str | None = None,
+    subject: str | None = None,
+    audience: str | None = None,
+    issued_at: datetime | None = None,
+    expires_in_seconds: int = 3600,
+    not_before: datetime | None = None,
+    jwt_id: str | None = None,
+    extra_claims: dict[str, Any] | None = None,
+    extra_headers: dict[str, Any] | None = None,
+) -> str:
+    """Build a signed HS256 JWT for outbound LLM gateway authentication."""
+    resolved_secret = secret or JWT_SALT
+    if not resolved_secret:
         raise ValueError("JWT_SALT is not configured")
 
-    # 生成 payload
-    payload = {
-        "iat": int(time.time()),  # 签发时间
-        "exp": int(time.time()) + expire_seconds,  # 过期时间
-        "app_id": X_APP_ID,  # 可选：将 app_id 也放入 payload
+    now = issued_at or datetime.now(UTC)
+    payload: dict[str, Any] = {
+        "iat": _unix_timestamp(now),
+        "exp": _unix_timestamp(now) + expires_in_seconds,
+        "jti": jwt_id or str(uuid4()),
     }
+    if X_APP_ID:
+        payload["app_id"] = X_APP_ID
+    if issuer:
+        payload["iss"] = issuer
+    if subject:
+        payload["sub"] = subject
+    if audience:
+        payload["aud"] = audience
+    if not_before is not None:
+        payload["nbf"] = _unix_timestamp(not_before)
+    if extra_claims:
+        payload.update(extra_claims)
 
-    # 生成 JWT
-    token = jwt.encode(payload, salt, algorithm="HS256")
+    headers: dict[str, Any] = {}
+    if extra_headers:
+        headers.update(extra_headers)
+    return jwt.encode(payload, resolved_secret, algorithm="HS256", headers=headers)
 
-    return token
 
 class AuthHTTPClient(httpx.AsyncClient):
-    """自定义 HTTP 客户端，每次请求前动态添加认证 headers"""
+    """Inject JWT headers into each outbound request before it is sent."""
 
     async def send(self, request, *args, **kwargs):
-        """重写 send 方法，在发送请求前添加认证 headers"""
+        """Generate a fresh JWT and attach it to the outbound request."""
         try:
-            # 每次请求前生成新的 JWT
             token = generate_jwt()
             request.headers["Authorization"] = f"Bearer {token}"
             request.headers["x-app-id"] = X_APP_ID
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to generate JWT before outbound LLM request")
             raise
 

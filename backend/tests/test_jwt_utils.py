@@ -6,7 +6,7 @@ import hmac
 import json
 from datetime import UTC, datetime
 
-from router_service.core.support.jwt_utils import genarate_jwt
+from router_service.core.support.jwt_utils import generate_jwt
 
 
 def _b64decode(segment: str) -> dict[str, object]:
@@ -14,10 +14,10 @@ def _b64decode(segment: str) -> dict[str, object]:
     return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
 
 
-def test_genarate_jwt_builds_hs256_token_with_standard_claims() -> None:
+def test_generate_jwt_builds_hs256_token_with_standard_claims() -> None:
     issued_at = datetime(2026, 4, 13, 10, 0, tzinfo=UTC)
 
-    token = genarate_jwt(
+    token = generate_jwt(
         "secret-key",
         issuer="intent-router",
         subject="router-service",
@@ -49,8 +49,8 @@ def test_genarate_jwt_builds_hs256_token_with_standard_claims() -> None:
     assert signature_segment == expected_signature
 
 
-def test_genarate_jwt_supports_nbf_and_custom_claims() -> None:
-    token = genarate_jwt(
+def test_generate_jwt_supports_nbf_and_custom_claims() -> None:
+    token = generate_jwt(
         "secret-key",
         not_before=datetime(2026, 4, 13, 10, 5, tzinfo=UTC),
         extra_claims={"tenant": "test"},

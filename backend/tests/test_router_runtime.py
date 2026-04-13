@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from router_service.core.support.jwt_utils import AuthHTTPClient  # noqa: E402
 from router_service.catalog.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
 from router_service.api import dependencies  # noqa: E402
 from router_service.core.recognition.hierarchical_intent_recognizer import HierarchicalIntentRecognizer  # noqa: E402
@@ -40,6 +41,55 @@ def test_build_router_runtime_shares_single_recognizer_instance(monkeypatch) -> 
         assert runtime.orchestrator.recognizer is not None
     finally:
         asyncio.run(runtime.agent_client.close())
+
+
+def test_build_llm_client_uses_plain_httpx_client_when_auth_switch_is_off(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        llm_connection_ready=True,
+        default_llm_model="test-model",
+        llm_api_base_url="https://example.com/v1",
+        llm_api_key="env-api-key",
+        llm_auth_http_client_enabled=False,
+        llm_timeout_seconds=5.0,
+        llm_rate_limit_max_retries=2,
+        llm_rate_limit_retry_delay_seconds=2.0,
+        llm_headers={},
+        llm_structured_output_method="json_mode",
+    )
+    monkeypatch.setattr(dependencies, "get_settings", lambda: settings)
+
+    client = dependencies._build_llm_client()
+    assert client is not None
+    try:
+        assert isinstance(client.http_async_client, dependencies.httpx.AsyncClient)
+        assert not isinstance(client.http_async_client, AuthHTTPClient)
+        assert client.api_key == "env-api-key"
+    finally:
+        asyncio.run(client.aclose())
+
+
+def test_build_llm_client_uses_auth_http_client_when_auth_switch_is_on(monkeypatch) -> None:
+    settings = SimpleNamespace(
+        llm_connection_ready=True,
+        default_llm_model="test-model",
+        llm_api_base_url="https://example.com/v1",
+        llm_api_key="ignored-when-auth-client-enabled",
+        llm_auth_http_client_enabled=True,
+        llm_timeout_seconds=5.0,
+        llm_rate_limit_max_retries=2,
+        llm_rate_limit_retry_delay_seconds=2.0,
+        llm_headers={},
+        llm_structured_output_method="json_mode",
+    )
+    monkeypatch.setattr(dependencies, "get_settings", lambda: settings)
+
+    client = dependencies._build_llm_client()
+    assert client is not None
+    try:
+        assert isinstance(client.http_async_client, AuthHTTPClient)
+        assert client.api_key == "ignored-when-auth-client-enabled"
+    finally:
+        asyncio.run(client.aclose())
 
 
 def test_build_router_runtime_can_enable_unified_v2_graph_builder(monkeypatch) -> None:

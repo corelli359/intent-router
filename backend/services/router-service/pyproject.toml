@@ -15,8 +15,9 @@ dependencies = [
   "PyJWT>=2.9,<3.0",
   "sqlalchemy>=2.0,<3.0",
   "pymysql>=1.1,<2.0",
-  "langchain-core>=1.2,<2.0",
-  "langchain-openai>=1.1,<2.0",
+  "openai==2.30.0",
+  "langchain-core==1.2.26",
+  "langchain-openai==1.1.12",
 ]
 
 [tool.setuptools.packages.find]

@@ -73,12 +73,14 @@ Reason:
 
 - Source is mounted into Minikube node at `/mnt/intent-router`.
 - Router runtime config is mounted from ConfigMap `intent-router-api-env` to `/etc/intent-router/.env.local`.
+- Router file-mode catalog is mounted from ConfigMap `intent-router-intent-catalog` to `/etc/intent-router/intent-catalog.json`.
 - The deploy script generates that ConfigMap from the repo-root `.env.local` on the mounted workspace.
+- The deploy script also exports builtin finance intents to `k8s/intent/router-intent-catalog.json` and regenerates the router catalog ConfigMap before rollout.
 - For non-Minikube target clusters with different external hosts or path prefixes, generate
   `prod_target/k8s/intent/*.yaml` via `scripts/build_prod_target.sh` and deploy those rendered manifests instead.
 - Pods now install only their own local service package on startup.
 - Deployment startup no longer depends on `backend/src` or the monorepo root package.
 - New financial agents are deployed one by one instead of piggybacking on the legacy two-agent topology.
 - If cluster resources become tight later, the deployment script is the place to stop after the last healthy standalone rollout.
-- Router reads active intent registry from admin-owned storage and refreshes cache periodically.
+- Router can read active intent registry either from admin-owned storage or from the mounted JSON catalog file, and refreshes cache periodically.
 - Ingress should keep sticky affinity for SSE sessions when router is scaled.

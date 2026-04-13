@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
+import httpx
 import logging
 
 from fastapi import Request
 
+from router_service.catalog.file_intent_repository import FileIntentRepository
 from router_service.catalog.in_memory_intent_repository import InMemoryIntentRepository
 from router_service.catalog.intent_repository import IntentRepository
 from router_service.catalog.sql_intent_repository import DatabaseIntentRepository
@@ -45,7 +47,6 @@ from router_service.core.slots.extractor import SlotExtractor
 from router_service.core.slots.validator import SlotValidator
 from router_service.core.slots.understanding_validator import UnderstandingValidator
 from router_service.settings import Settings
-from router_service.settings import JWT_SALT, X_APP_ID
 
 
 logger = logging.getLogger(__name__)
@@ -63,9 +64,15 @@ def get_intent_repository() -> IntentRepository:
     settings = get_settings()
     if settings.repository_backend == "memory":
         return InMemoryIntentRepository()
+    if settings.repository_backend == "file":
+        if not settings.router_intent_catalog_file:
+            raise RuntimeError("ROUTER_INTENT_CATALOG_FILE is required when backend=file")
+        return FileIntentRepository(settings.router_intent_catalog_file)
     if settings.repository_backend in {"database", "postgres"}:
         if not settings.database_url:
-            raise RuntimeError("ADMIN_DATABASE_URL is required when backend=database")
+            raise RuntimeError(
+                "ROUTER_INTENT_CATALOG_DATABASE_URL or ADMIN_DATABASE_URL is required when backend=database"
+            )
         return DatabaseIntentRepository(settings.database_url)
     raise RuntimeError(f"Unsupported repository backend: {settings.repository_backend}")
 
@@ -224,10 +231,10 @@ def _build_llm_client() -> LangChainLLMClient | None:
     settings = get_settings()
     if not settings.llm_connection_ready or settings.default_llm_model is None:
         return None
-    auth_http_client = (
+    http_async_client = (
         AuthHTTPClient(timeout=settings.llm_timeout_seconds)
-        if JWT_SALT and X_APP_ID
-        else None
+        if settings.llm_auth_http_client_enabled
+        else httpx.AsyncClient(timeout=settings.llm_timeout_seconds)
     )
     return LangChainLLMClient(
         base_url=settings.llm_api_base_url or "",
@@ -238,7 +245,7 @@ def _build_llm_client() -> LangChainLLMClient | None:
         rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),
         extra_headers=settings.llm_headers,
         structured_output_method=settings.llm_structured_output_method,
-        http_async_client=auth_http_client,
+        http_async_client=http_async_client,
     )
 
 

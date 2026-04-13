@@ -41,3 +41,21 @@ def test_router_settings_missing_explicit_env_file_is_safe(monkeypatch, tmp_path
 
     assert settings.llm_api_base_url is None
     assert settings.llm_model is None
+
+
+def test_router_settings_support_file_catalog_backend(monkeypatch) -> None:
+    monkeypatch.setenv("ROUTER_INTENT_CATALOG_BACKEND", "file")
+    monkeypatch.setenv("ROUTER_INTENT_CATALOG_FILE", "/etc/intent-router/catalog.json")
+
+    settings = Settings.from_env()
+
+    assert settings.repository_backend == "file"
+    assert settings.router_intent_catalog_file == "/etc/intent-router/catalog.json"
+
+
+def test_router_settings_supports_llm_auth_http_client_switch(monkeypatch) -> None:
+    monkeypatch.setenv("ROUTER_LLM_AUTH_HTTP_CLIENT_ENABLED", "true")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_auth_http_client_enabled is True

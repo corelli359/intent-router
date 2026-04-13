@@ -12,6 +12,7 @@ MOUNT_CONTAINER="${MOUNT_CONTAINER:-intent-router-mount}"
 PROXY_CONTAINER="${PROXY_CONTAINER:-intent-router-ingress-http}"
 INGRESS_HOST="${INGRESS_HOST:-intent-router.kkrrc-359.top}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-$(docker inspect "${MINIKUBE_PROFILE}" --format '{{.Config.Image}}')}"
+INTENT_CATALOG_SOURCE_FILE="${INTENT_CATALOG_SOURCE_FILE:-${ROOT_DIR}/k8s/intent/router-intent-catalog.json}"
 
 minikube_cmd() {
   MINIKUBE_HOME="${MINIKUBE_HOME_ROOT}" minikube "$@"
@@ -75,6 +76,9 @@ ensure_ingress() {
 
 ensure_ingress
 node_kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=5m || true
+
+python "${ROOT_DIR}/scripts/export_router_intent_catalog.py" --output "${INTENT_CATALOG_SOURCE_FILE}"
+
 start_mount_container
 wait_for_mount
 node_kubectl -n "${NAMESPACE}" delete ingress intent-router-chat --ignore-not-found || true
@@ -90,6 +94,18 @@ minikube_cmd ssh --profile "${MINIKUBE_PROFILE}" "
   KCTL=\$(echo /var/lib/minikube/binaries/*/kubectl)
   sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" -n '${NAMESPACE}' create configmap intent-router-api-env \
     --from-file=.env.local='${TARGET_PATH}/.env.local' \
+    --dry-run=client -o yaml | sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" apply -f -
+"
+
+minikube_cmd ssh --profile "${MINIKUBE_PROFILE}" "
+  set -e
+  if [ ! -f '${TARGET_PATH}/k8s/intent/router-intent-catalog.json' ]; then
+    echo 'Missing ${TARGET_PATH}/k8s/intent/router-intent-catalog.json for router intent catalog ConfigMap generation' >&2
+    exit 1
+  fi
+  KCTL=\$(echo /var/lib/minikube/binaries/*/kubectl)
+  sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" -n '${NAMESPACE}' create configmap intent-router-intent-catalog \
+    --from-file=intent-catalog.json='${TARGET_PATH}/k8s/intent/router-intent-catalog.json' \
     --dry-run=client -o yaml | sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" apply -f -
 "
 

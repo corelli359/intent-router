@@ -85,8 +85,9 @@ Minimum runtime env:
    - `ROUTER_LLM_API_BASE_URL`
    - `ROUTER_LLM_API_KEY`
    - `ROUTER_LLM_MODEL`
-   - `ADMIN_REPOSITORY_BACKEND=database`
-   - `ADMIN_DATABASE_URL` (SQLite or MySQL DSN)
+   - one catalog backend mode:
+     - `ROUTER_INTENT_CATALOG_BACKEND=database` plus `ROUTER_INTENT_CATALOG_DATABASE_URL` or `ADMIN_DATABASE_URL`
+     - or `ROUTER_INTENT_CATALOG_BACKEND=file` plus `ROUTER_INTENT_CATALOG_FILE`
 3. Set recognizer backend with `ROUTER_RECOGNIZER_BACKEND=llm`.
 
 Supported `agent_url`:
@@ -100,6 +101,7 @@ Intent lifecycle:
 - Router recognizes only active non-fallback intents.
 - Fallback intent is excluded from recognizer candidates and dispatched only when no match is selected.
 - Shared field semantics can now be managed in Admin under `/api/admin/fields`; intent registration may reference these global fields through `slot_schema[].field_code`.
+- When `ROUTER_INTENT_CATALOG_BACKEND=file`, router loads intents, domains, field catalogs, and slot schemas directly from the mounted JSON file and does not depend on admin/sqlite at runtime.
 
 ## Deployment Requirements
 

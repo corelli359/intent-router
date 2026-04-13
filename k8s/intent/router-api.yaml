@@ -65,6 +65,10 @@ spec:
               mountPath: /etc/intent-router/.env.local
               subPath: .env.local
               readOnly: true
+            - name: router-intent-catalog
+              mountPath: /etc/intent-router/intent-catalog.json
+              subPath: intent-catalog.json
+              readOnly: true
       volumes:
         - name: repo
           hostPath:
@@ -76,6 +80,12 @@ spec:
             items:
               - key: .env.local
                 path: .env.local
+        - name: router-intent-catalog
+          configMap:
+            name: intent-router-intent-catalog
+            items:
+              - key: intent-catalog.json
+                path: intent-catalog.json
 ---
 apiVersion: v1
 kind: Service
