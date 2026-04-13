@@ -41,3 +41,4 @@ node_modules/
 /prod_target/*
 !/prod_target/.gitignore
 !/prod_target/README.md
+zip_abc
