@@ -39,6 +39,7 @@ from router_service.core.shared.graph_domain import (
     SlotBindingState,
 )
 from router_service.core.graph.runtime import GraphRuntimeEngine
+from router_service.core.graph.constants import TERMINAL_NODE_STATUSES
 from router_service.core.graph.presentation import GraphEventPublisher, GraphSnapshotPresenter
 from router_service.core.graph.builder import GraphBuildResult, IntentGraphBuilder
 from router_service.core.graph.planner import (
@@ -59,13 +60,6 @@ from router_service.core.graph.message_flow import GraphMessageFlow
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_NODE_STATUSES = {
-    GraphNodeStatus.COMPLETED,
-    GraphNodeStatus.FAILED,
-    GraphNodeStatus.CANCELLED,
-    GraphNodeStatus.SKIPPED,
-}
-
 
 @dataclass(slots=True)
 class GraphRouterOrchestratorConfig:
@@ -73,6 +67,9 @@ class GraphRouterOrchestratorConfig:
 
     intent_switch_threshold: float = 0.80
     agent_timeout_seconds: float = 60.0
+    max_drain_iterations: int | None = None
+    drain_iteration_multiplier: int = 3
+    drain_iteration_floor: int = 8
 
 
 class _NoopIntentRecognizer:
@@ -399,7 +396,17 @@ class GraphRouterOrchestrator:
             await self._publish_session_state(session, "session.idle")
             return
 
+        iterations = 0
+        max_iterations = self._resolve_max_drain_iterations(graph)
         while True:
+            iterations += 1
+            if iterations > max_iterations:
+                await self._fail_drain_graph(
+                    session,
+                    graph,
+                    max_iterations=max_iterations,
+                )
+                return
             await self._refresh_graph_state(session, graph)
             waiting_node = self._get_waiting_node(session)
             if waiting_node is not None:
@@ -445,6 +452,47 @@ class GraphRouterOrchestrator:
                 next_node.status,
             )
             return
+
+    def _resolve_max_drain_iterations(self, graph: ExecutionGraphState) -> int:
+        """Return the guardrail threshold for one graph drain loop."""
+        if self.config.max_drain_iterations is not None:
+            return max(1, self.config.max_drain_iterations)
+        return max(
+            1,
+            self.config.drain_iteration_floor,
+            len(graph.nodes) * self.config.drain_iteration_multiplier,
+        )
+
+    async def _fail_drain_graph(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        *,
+        max_iterations: int,
+    ) -> None:
+        """Fail the current graph when the drain loop exceeds its guardrail."""
+        status_summary = {
+            node.node_id: node.status.value
+            for node in graph.nodes
+        }
+        message = (
+            "执行图执行失败：graph drain 超过最大迭代次数"
+            f"（{max_iterations}），疑似存在未收敛的节点状态"
+        )
+        logger.error(
+            "Graph drain iteration guard tripped for session=%s graph=%s max_iterations=%s node_statuses=%s",
+            session.session_id,
+            graph.graph_id,
+            max_iterations,
+            status_summary,
+        )
+        graph.touch(GraphStatus.FAILED)
+        graph.summary = f"{graph.summary}；{message}" if graph.summary else message
+        session.active_node_id = None
+        session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
+        session.touch()
+        await self._publish_graph_state(session, "graph.failed", message, status=TaskStatus.FAILED)
+        await self._publish_session_state(session, "session.idle")
 
     async def _run_node(
         self,
@@ -532,7 +580,7 @@ class GraphRouterOrchestrator:
         dispatch_input: str,
     ) -> Task | None:
         """Validate slot readiness and create the agent task for a ready node."""
-        active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
+        active_intents = dict(self.intent_catalog.active_intents_by_code())
         intent = active_intents.get(node.intent_code)
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")

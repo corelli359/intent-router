@@ -68,6 +68,14 @@ def _env_headers(name: str) -> dict[str, str]:
     return {str(key): str(value) for key, value in parsed.items()}
 
 
+def _parse_bool_env(name: str, default: bool) -> bool:
+    """Interpret a boolean configuration from an environment variable."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings(BaseModel):
     """Runtime configuration for the router API and its downstream integrations."""
 
@@ -84,6 +92,11 @@ class Settings(BaseModel):
     router_agent_timeout_seconds: float = Field(default=60.0, gt=0)
     router_sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
     router_sse_max_idle_seconds: float = Field(default=300.0, gt=0)
+    router_session_cleanup_enabled: bool = Field(default=True)
+    router_session_cleanup_interval_seconds: float = Field(default=60.0, gt=0)
+    router_drain_max_iterations: int | None = Field(default=None, gt=0)
+    router_drain_iteration_multiplier: int = Field(default=3, gt=0)
+    router_drain_iteration_floor: int = Field(default=8, gt=0)
     llm_api_base_url: str | None = Field(default=None)
     llm_api_key: str | None = Field(default=None)
     llm_model: str | None = Field(default=None)
@@ -131,6 +144,21 @@ class Settings(BaseModel):
             router_agent_timeout_seconds=float(os.getenv("ROUTER_AGENT_TIMEOUT_SECONDS", "60")),
             router_sse_heartbeat_seconds=float(os.getenv("ROUTER_SSE_HEARTBEAT_SECONDS", "15")),
             router_sse_max_idle_seconds=float(os.getenv("ROUTER_SSE_MAX_IDLE_SECONDS", "300")),
+            router_session_cleanup_enabled=_parse_bool_env("ROUTER_SESSION_CLEANUP_ENABLED", True),
+            router_session_cleanup_interval_seconds=float(
+                os.getenv("ROUTER_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
+            ),
+            router_drain_max_iterations=(
+                int(os.getenv("ROUTER_DRAIN_MAX_ITERATIONS"))
+                if os.getenv("ROUTER_DRAIN_MAX_ITERATIONS")
+                else None
+            ),
+            router_drain_iteration_multiplier=int(
+                os.getenv("ROUTER_DRAIN_ITERATION_MULTIPLIER", "3")
+            ),
+            router_drain_iteration_floor=int(
+                os.getenv("ROUTER_DRAIN_ITERATION_FLOOR", "8")
+            ),
             llm_api_base_url=os.getenv("ROUTER_LLM_API_BASE_URL"),
             llm_api_key=os.getenv("ROUTER_LLM_API_KEY"),
             llm_model=os.getenv("ROUTER_LLM_MODEL"),

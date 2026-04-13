@@ -6,7 +6,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from router_service.api.dependencies import build_router_runtime, close_router_runtime, get_settings, run_intent_catalog_refresh
+from router_service.api.dependencies import (
+    build_router_runtime,
+    close_router_runtime,
+    get_settings,
+    run_intent_catalog_refresh,
+    run_session_cleanup,
+)
 from router_service.api.routes.sessions import router as graph_session_router
 
 
@@ -27,14 +33,30 @@ def create_router_app() -> FastAPI:
                 refresh_interval_seconds=settings.router_intent_refresh_interval_seconds,
             )
         )
+        session_cleanup_task: asyncio.Task[None] | None = None
+        session_cleanup_stop: asyncio.Event | None = None
+        if settings.router_session_cleanup_enabled:
+            session_cleanup_stop = asyncio.Event()
+            session_cleanup_task = asyncio.create_task(
+                run_session_cleanup(
+                    session_cleanup_stop,
+                    session_store=runtime.session_store,
+                    cleanup_interval_seconds=settings.router_session_cleanup_interval_seconds,
+                )
+            )
         app.state.router_runtime = runtime
         app.state.intent_catalog_refresh_stop = stop_event
         app.state.intent_catalog_refresh_task = refresh_task
+        app.state.router_session_cleanup_task = session_cleanup_task
+        app.state.router_session_cleanup_stop = session_cleanup_stop
         try:
             yield
         finally:
             stop_event.set()
             await refresh_task
+            if session_cleanup_task is not None and session_cleanup_stop is not None:
+                session_cleanup_stop.set()
+                await session_cleanup_task
             await close_router_runtime(runtime)
 
     app = FastAPI(title="Intent Router API", version="0.1.0", lifespan=lifespan)

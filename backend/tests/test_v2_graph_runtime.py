@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import logging
 
 from router_service.core.shared.graph_domain import (  # noqa: E402
     ExecutionGraphState,
@@ -82,3 +83,26 @@ def test_graph_runtime_engine_prefers_lowest_position_ready_node() -> None:
 
     assert next_node is not None
     assert next_node.title == "前面的节点"
+
+
+def test_graph_runtime_engine_logs_condition_type_mismatch(caplog) -> None:
+    engine = GraphRuntimeEngine()
+    source = GraphNodeState(
+        intent_code="query_account_balance",
+        title="查询余额",
+        confidence=0.98,
+        status=GraphNodeStatus.COMPLETED,
+        output_payload={"balance": "1000"},
+    )
+    condition = GraphCondition(
+        source_node_id=source.node_id,
+        left_key="balance",
+        operator=">",
+        right_value=100,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        matched = engine.condition_matches(source, condition)
+
+    assert matched is False
+    assert "Graph condition type mismatch" in caplog.text

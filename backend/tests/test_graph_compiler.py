@@ -12,10 +12,14 @@ from router_service.core.slots.resolution_service import SlotResolutionService
 
 class _StaticCatalog:
     def __init__(self, intents: list[IntentDefinition]) -> None:
-        self._intents = intents
+        self._intents = list(intents)
+        self._index = {intent.intent_code: intent for intent in intents}
 
     def list_active(self) -> list[IntentDefinition]:
         return list(self._intents)
+
+    def active_intents_by_code(self) -> dict[str, IntentDefinition]:
+        return dict(self._index)
 
     def get_fallback_intent(self) -> IntentDefinition | None:
         return None

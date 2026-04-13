@@ -67,7 +67,7 @@ class IntentUnderstandingService:
 
         recognition = await self.recognizer.recognize(
             message=content,
-            intents=self.intent_catalog.list_active(),
+            intents=self.intent_catalog.active_intents_by_code().values(),
             recent_messages=recent_messages,
             long_term_memory=long_term_memory,
             on_delta=publish_recognition_delta if emit_events else None,
@@ -100,7 +100,7 @@ class IntentUnderstandingService:
             raise RuntimeError("graph_builder is not configured")
         result = await self.graph_builder.build(
             message=content,
-            intents=self.intent_catalog.list_active(),
+            intents=self.intent_catalog.active_intents_by_code().values(),
             recent_messages=recent_messages,
             long_term_memory=long_term_memory,
             recognition=recognition,

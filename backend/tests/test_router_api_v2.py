@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 
 import httpx
 import sys
@@ -46,6 +47,12 @@ class _StaticCatalog:
 
     def list_active(self) -> list[IntentDefinition]:
         return list(self._intents)
+
+    def active_intents_by_code(self) -> Mapping[str, IntentDefinition]:
+        return {intent.intent_code: intent for intent in self._intents if not intent.is_fallback}
+
+    def get_active_intent(self, intent_code: str) -> IntentDefinition | None:
+        return self.active_intents_by_code().get(intent_code)
 
     def get_fallback_intent(self) -> IntentDefinition | None:
         return next((intent for intent in self._intents if intent.is_fallback), None)
@@ -1294,6 +1301,12 @@ def test_v2_runtime_fails_closed_for_mock_scheme_agent_url() -> None:
                     dispatch_priority=100,
                 )
             ]
+
+        def active_intents_by_code(self) -> Mapping[str, IntentDefinition]:
+            return {intent.intent_code: intent for intent in self.list_active()}
+
+        def get_active_intent(self, intent_code: str) -> IntentDefinition | None:
+            return self.active_intents_by_code().get(intent_code)
 
         def get_fallback_intent(self) -> IntentDefinition | None:
             return None

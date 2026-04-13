@@ -24,6 +24,7 @@ from router_service.core.prompts.prompt_templates import (
 )
 from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer
 from router_service.core.graph.builder import LLMIntentGraphBuilder
+from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
 from router_service.core.graph.planner import (
     BasicTurnInterpreter,
@@ -75,6 +76,7 @@ class RouterRuntime:
     intent_catalog: RepositoryIntentCatalog
     agent_client: StreamingAgentClient
     orchestrator: GraphRouterOrchestrator
+    session_store: GraphSessionStore
 
 
 def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
@@ -93,6 +95,7 @@ def build_router_runtime() -> RouterRuntime:
     """Assemble the full router runtime from repository, LLM, graph, and agent components."""
     settings = get_settings()
     planning_policy = getattr(settings, "router_v2_planning_policy", "auto")
+    session_store = GraphSessionStore()
     event_broker = EventBroker(
         heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
         max_idle_seconds=settings.router_sse_max_idle_seconds,
@@ -145,6 +148,7 @@ def build_router_runtime() -> RouterRuntime:
     )
     orchestrator = GraphRouterOrchestrator(
         publish_event=event_broker.publish,
+        session_store=session_store,
         intent_catalog=intent_catalog,
         recognizer=recognizer,
         graph_builder=(
@@ -191,6 +195,9 @@ def build_router_runtime() -> RouterRuntime:
         config=GraphRouterOrchestratorConfig(
             intent_switch_threshold=settings.router_intent_switch_threshold,
             agent_timeout_seconds=settings.router_agent_timeout_seconds,
+            max_drain_iterations=getattr(settings, "router_drain_max_iterations", None),
+            drain_iteration_multiplier=getattr(settings, "router_drain_iteration_multiplier", 3),
+            drain_iteration_floor=getattr(settings, "router_drain_iteration_floor", 8),
         ),
         planning_policy=planning_policy,
         understanding_validator=understanding_validator,
@@ -201,6 +208,7 @@ def build_router_runtime() -> RouterRuntime:
         intent_catalog=intent_catalog,
         agent_client=agent_client,
         orchestrator=orchestrator,
+        session_store=session_store,
     )
 
 
@@ -287,5 +295,33 @@ async def run_intent_catalog_refresh(
                 )
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=refresh_interval_seconds)
+        except asyncio.TimeoutError:
+            continue
+
+
+async def run_session_cleanup(
+    stop_event: asyncio.Event,
+    *,
+    session_store: GraphSessionStore,
+    cleanup_interval_seconds: float,
+) -> None:
+    """Periodically purge expired sessions until the application shuts down."""
+    consecutive_failures = 0
+    while not stop_event.is_set():
+        try:
+            expired_sessions = await asyncio.to_thread(session_store.purge_expired)
+            if expired_sessions:
+                logger.debug("purged %s expired sessions", len(expired_sessions))
+            consecutive_failures = 0
+        except Exception as exc:
+            consecutive_failures += 1
+            logger.warning("session cleanup failed: %s", exc)
+            if consecutive_failures >= 3:
+                logger.error(
+                    "session cleanup has failed %s consecutive times",
+                    consecutive_failures,
+                )
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=cleanup_interval_seconds)
         except asyncio.TimeoutError:
             continue

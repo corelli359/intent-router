@@ -16,7 +16,14 @@ from router_service.core.prompts.prompt_templates import (
     build_slot_extractor_prompt,
 )
 from router_service.core.recognition.recognizer import recognition_intent_payload
-from router_service.core.slots.grounding import normalize_structured_slot_memory, slot_value_grounded
+from router_service.core.slots.grounding import (
+    CURRENCY_ALIASES_BY_CODE,
+    combine_distinct_text,
+    normalize_structured_slot_memory,
+    slot_has_currency_semantics,
+    slot_semantic_signature,
+    slot_value_grounded_with_currency_fallback,
+)
 from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingSource, SlotBindingState
 from router_service.models.intent import IntentSlotDefinition, SlotOverwritePolicy, SlotValueType
 
@@ -35,14 +42,6 @@ NAME_RE = re.compile(
     r"(?:给|向|转给|转账给)([\u4e00-\u9fffA-Za-z]{2,16}?)(?=(?:转账|转|汇款|付款|支付|卡号|银行卡|手机号|尾号|后4位|后四位|金额|[，,。\s]|$))"
 )
 DATE_RE = re.compile(r"(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}月\d{1,2}日)")
-
-_CURRENCY_TOKENS = {
-    "CNY": ("人民币", "CNY"),
-    "USD": ("美元", "USD"),
-    "HKD": ("港币", "港元", "HKD"),
-    "EUR": ("欧元", "EUR"),
-    "JPY": ("日元", "JPY"),
-}
 
 
 class SlotExtractionItemPayload(BaseModel):
@@ -125,7 +124,7 @@ class SlotExtractor:
         slot_schema = intent.slot_schema
         slot_defs_by_key = {slot.slot_key: slot for slot in slot_schema}
         history_text = "\n".join(entry for entry in (long_term_memory or []) if entry)
-        grounding_text = self._combined_text(graph_source_message, node.source_fragment, current_message)
+        grounding_text = combine_distinct_text(graph_source_message, node.source_fragment, current_message)
         seed_bindings = {binding.slot_key: binding for binding in node.slot_bindings}
 
         merged_memory: dict[str, Any] = {}
@@ -243,7 +242,7 @@ class SlotExtractor:
         if source == SlotBindingSource.HISTORY or from_history:
             if not slot_def.allow_from_history:
                 return None, False
-            evidence_text = self._combined_text(
+            evidence_text = combine_distinct_text(
                 binding.source_text if binding is not None else None,
                 history_text,
             )
@@ -412,20 +411,10 @@ class SlotExtractor:
         text: str,
     ) -> tuple[Any | None, str | None]:
         """Extract currency-like string slots such as source or target currency."""
-        slot_signature = " ".join(
-            part.lower()
-            for part in (
-                slot_def.slot_key,
-                slot_def.label,
-                slot_def.description,
-                slot_def.semantic_definition,
-                " ".join(slot_def.aliases),
-            )
-            if part
-        )
+        slot_signature = slot_semantic_signature(slot_def)
         upper_text = text.upper()
-        if "币种" in slot_signature or "currency" in slot_signature:
-            for currency_code, aliases in _CURRENCY_TOKENS.items():
+        if slot_has_currency_semantics(slot_def):
+            for currency_code, aliases in CURRENCY_ALIASES_BY_CODE.items():
                 for alias in aliases:
                     if alias.upper() in upper_text or alias in text:
                         if "source" in slot_signature or "sell" in slot_signature or "卖出" in slot_signature:
@@ -444,18 +433,7 @@ class SlotExtractor:
         text: str,
     ) -> tuple[Any | None, str | None]:
         """Extract generic string slots with special handling for currency semantics."""
-        slot_signature = " ".join(
-            part.lower()
-            for part in (
-                slot_def.slot_key,
-                slot_def.label,
-                slot_def.description,
-                slot_def.semantic_definition,
-                " ".join(slot_def.aliases),
-            )
-            if part
-        )
-        if "币种" in slot_signature or "currency" in slot_signature:
+        if slot_has_currency_semantics(slot_def):
             return self._extract_currency_like_slot(slot_def=slot_def, text=text)
         return None, None
 
@@ -466,17 +444,7 @@ class SlotExtractor:
         text: str,
     ) -> re.Match[str] | None:
         """Find an account-like identifier using slot-specific regex patterns."""
-        slot_signature = " ".join(
-            part.lower()
-            for part in (
-                slot_def.slot_key,
-                slot_def.label,
-                slot_def.description,
-                slot_def.semantic_definition,
-                " ".join(slot_def.aliases),
-            )
-            if part
-        )
+        slot_signature = slot_semantic_signature(slot_def)
         patterns: list[str] = []
         if any(token in slot_signature for token in ("gas", "燃气", "户号")):
             patterns.extend([r"(?:燃气户号|户号)\D*(\d{6,20})"])
@@ -503,17 +471,7 @@ class SlotExtractor:
         text: str,
     ) -> re.Match[str] | None:
         """Find phone-last4 values using recipient-aware and self-aware regex patterns."""
-        slot_signature = " ".join(
-            part.lower()
-            for part in (
-                slot_def.slot_key,
-                slot_def.label,
-                slot_def.description,
-                slot_def.semantic_definition,
-                " ".join(slot_def.aliases),
-            )
-            if part
-        )
+        slot_signature = slot_semantic_signature(slot_def)
         patterns: list[str] = []
         if any(token in slot_signature for token in ("recipient", "收款", "对方")):
             patterns.extend(
@@ -628,16 +586,6 @@ class SlotExtractor:
             return allow_replace_existing_user_message and existing.value != incoming.value
         return existing.value != incoming.value
 
-    def _combined_text(self, *parts: str | None) -> str:
-        """Join distinct non-empty text fragments in stable order."""
-        ordered_parts: list[str] = []
-        for part in parts:
-            cleaned = (part or "").strip()
-            if not cleaned or cleaned in ordered_parts:
-                continue
-            ordered_parts.append(cleaned)
-        return "\n".join(ordered_parts)
-
     def _value_is_grounded(
         self,
         *,
@@ -646,26 +594,8 @@ class SlotExtractor:
         grounding_text: str,
     ) -> bool:
         """Apply grounding checks, including currency-specific fallback matching."""
-        if slot_value_grounded(slot_def=slot_def, value=value, grounding_text=grounding_text):
-            return True
-        if slot_def.value_type != SlotValueType.STRING:
-            return False
-        slot_signature = " ".join(
-            part.lower()
-            for part in (
-                slot_def.slot_key,
-                slot_def.label,
-                slot_def.description,
-                slot_def.semantic_definition,
-                " ".join(slot_def.aliases),
-            )
-            if part
+        return slot_value_grounded_with_currency_fallback(
+            slot_def=slot_def,
+            value=value,
+            grounding_text=grounding_text,
         )
-        if "币种" not in slot_signature and "currency" not in slot_signature:
-            return False
-        currency_code = str(value).upper()
-        aliases = _CURRENCY_TOKENS.get(currency_code)
-        if not aliases:
-            return False
-        upper_text = grounding_text.upper()
-        return any(alias.upper() in upper_text or alias in grounding_text for alias in aliases)

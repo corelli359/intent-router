@@ -14,6 +14,14 @@ _DIGIT_VALUE_TYPES = {
     SlotValueType.IDENTIFIER,
 }
 
+CURRENCY_ALIASES_BY_CODE: dict[str, tuple[str, ...]] = {
+    "CNY": ("人民币", "CNY"),
+    "USD": ("美元", "USD"),
+    "HKD": ("港币", "港元", "HKD"),
+    "EUR": ("欧元", "EUR"),
+    "JPY": ("日元", "JPY"),
+}
+
 
 def normalize_text(value: str) -> str:
     """Normalize text for loose containment checks during slot grounding."""
@@ -23,6 +31,43 @@ def normalize_text(value: str) -> str:
 def normalize_digits(value: str) -> str:
     """Extract only digits for number-like slot grounding checks."""
     return "".join(character for character in value if character.isdigit())
+
+
+def combine_distinct_text(*parts: str | None) -> str:
+    """Join distinct non-empty text fragments in stable order."""
+    ordered_parts: list[str] = []
+    for part in parts:
+        cleaned = (part or "").strip()
+        if not cleaned or cleaned in ordered_parts:
+            continue
+        ordered_parts.append(cleaned)
+    return "\n".join(ordered_parts)
+
+
+def slot_semantic_signature(slot_def: IntentSlotDefinition) -> str:
+    """Build the semantic signature used by slot heuristics and grounding fallback."""
+    return " ".join(
+        part.lower()
+        for part in (
+            slot_def.slot_key,
+            slot_def.label,
+            slot_def.description,
+            slot_def.semantic_definition,
+            " ".join(slot_def.aliases),
+        )
+        if part
+    )
+
+
+def slot_has_currency_semantics(slot_def: IntentSlotDefinition) -> bool:
+    """Return whether one slot semantically represents a currency-like concept."""
+    signature = slot_semantic_signature(slot_def)
+    return "币种" in signature or "currency" in signature
+
+
+def currency_aliases(currency_code: str) -> tuple[str, ...] | None:
+    """Return known natural-language aliases for one currency code."""
+    return CURRENCY_ALIASES_BY_CODE.get(currency_code.upper())
 
 
 def slot_value_grounded(
@@ -50,6 +95,24 @@ def slot_value_grounded(
     if slot_def is not None:
         candidates |= {normalize_text(alias) for alias in slot_def.aliases if alias}
     return any(candidate and candidate in normalized_grounding_text for candidate in candidates)
+
+
+def slot_value_grounded_with_currency_fallback(
+    *,
+    slot_def: IntentSlotDefinition,
+    value: Any,
+    grounding_text: str,
+) -> bool:
+    """Apply default grounding plus a currency-specific alias fallback."""
+    if slot_value_grounded(slot_def=slot_def, value=value, grounding_text=grounding_text):
+        return True
+    if slot_def.value_type != SlotValueType.STRING or not slot_has_currency_semantics(slot_def):
+        return False
+    aliases = currency_aliases(str(value))
+    if not aliases:
+        return False
+    upper_text = grounding_text.upper()
+    return any(alias.upper() in upper_text or alias in grounding_text for alias in aliases)
 
 
 def normalize_slot_memory(

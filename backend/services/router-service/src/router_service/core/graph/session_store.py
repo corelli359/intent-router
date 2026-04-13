@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
+from router_service.core.shared.domain import utc_now
 from router_service.core.shared.graph_domain import GraphSessionState
 from router_service.core.support.memory_store import LongTermMemoryStore
 
@@ -55,3 +56,15 @@ class GraphSessionStore:
                 self.tasks = source.tasks
 
         return _Compat(session)
+
+    def purge_expired(self) -> list[str]:
+        """Promote and remove any sessions whose TTL has elapsed."""
+        now = utc_now()
+        expired_sessions: list[str] = []
+        for session_id, session in list(self._sessions.items()):
+            if not session.is_expired(now=now):
+                continue
+            self.long_term_memory.promote_session(self._compat_session_view(session))
+            expired_sessions.append(session_id)
+            del self._sessions[session_id]
+        return expired_sessions

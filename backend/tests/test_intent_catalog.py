@@ -68,12 +68,15 @@ def test_catalog_keeps_cached_snapshot_until_refresh_now() -> None:
 
     assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
     assert catalog.priorities() == {"query_order_status": 100}
+    assert catalog.active_intents_by_code()["query_order_status"].intent_code == "query_order_status"
 
     assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
 
     catalog.refresh_now()
     assert catalog.list_active() == []
     assert catalog.priorities() == {}
+
+    assert catalog.active_intents_by_code() == {}
 
 
 def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_dispatch() -> None:
@@ -92,6 +95,7 @@ def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_d
     assert catalog.get_fallback_intent() is not None
     assert catalog.get_fallback_intent().intent_code == "fallback_general"
     assert catalog.priorities()["fallback_general"] == 1
+    assert "fallback_general" not in catalog.active_intents_by_code()
 
 
 def test_catalog_reads_cached_snapshot_without_sync_refresh() -> None:
@@ -177,3 +181,16 @@ def test_catalog_excludes_non_leaf_intents_from_routable_snapshot() -> None:
 
     assert [intent.intent_code for intent in catalog.list_active()] == ["pay_electricity"]
     assert [intent.intent_code for intent in catalog.list_active_leaf_intents("payment")] == ["pay_electricity"]
+
+
+def test_catalog_active_intent_lookup_methods() -> None:
+    repository = InMemoryIntentRepository()
+    repository.create_intent(_payload(intent_code="pay_water", status=IntentStatus.ACTIVE))
+    repository.create_intent(_payload(intent_code="transfer_money", status=IntentStatus.ACTIVE))
+    catalog = RepositoryIntentCatalog(repository)
+    catalog.refresh_now()
+
+    index = catalog.active_intents_by_code()
+    assert set(index) == {"pay_water", "transfer_money"}
+    assert catalog.get_active_intent("transfer_money") is index["transfer_money"]
+    assert catalog.get_active_intent("unknown") is None

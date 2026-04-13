@@ -14,18 +14,12 @@ from router_service.core.shared.graph_domain import (
     GraphSessionState,
     GraphStatus,
 )
+from router_service.core.graph.constants import TERMINAL_NODE_STATUSES
 from router_service.core.graph.presentation import GraphEventPublisher
 from router_service.core.graph.session_store import GraphSessionStore
 
 
 logger = logging.getLogger(__name__)
-
-TERMINAL_NODE_STATUSES = {
-    GraphNodeStatus.COMPLETED,
-    GraphNodeStatus.FAILED,
-    GraphNodeStatus.CANCELLED,
-    GraphNodeStatus.SKIPPED,
-}
 
 
 class GraphActionFlow:

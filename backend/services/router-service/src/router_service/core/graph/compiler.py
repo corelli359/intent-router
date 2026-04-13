@@ -131,8 +131,9 @@ class GraphCompiler:
             )
 
         recognition = recognition or RecognitionResult(primary=[], candidates=[])
-        active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
-        matches = [match for match in recognition.primary if match.intent_code in active_intents]
+        active_intent_index = self.intent_catalog.active_intents_by_code()
+        matches = [match for match in recognition.primary if match.intent_code in active_intent_index]
+        intents_by_code = dict(active_intent_index)
 
         if not matches:
             # Fallback is a router-level escape hatch so unmatched requests can
@@ -141,29 +142,29 @@ class GraphCompiler:
             if fallback_intent is None:
                 return GraphCompilationResult(recognition=recognition, graph=None, no_match=True)
             matches = [IntentMatch(intent_code=fallback_intent.intent_code, confidence=0.0, reason="fallback")]
-            active_intents[fallback_intent.intent_code] = fallback_intent
+            intents_by_code[fallback_intent.intent_code] = fallback_intent
 
         if graph is None:
             graph = await self._plan_graph(
                 message=content,
                 matches=matches,
-                intents_by_code=active_intents,
+                intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
-        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
+        repair_unexecutable_condition_edges(graph=graph, intents_by_code=intents_by_code)
         self.slot_resolution_service.apply_proactive_slot_defaults(
             graph,
             selected_items=proactive_defaults or [],
             proactive_recommendation=proactive_recommendation,
-            intents_by_code=active_intents,
+            intents_by_code=intents_by_code,
         )
         if not skip_history_prefill:
             self.slot_resolution_service.apply_history_prefill_policy(
                 session,
                 graph,
                 source_message=content,
-                intents_by_code=active_intents,
+                intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
@@ -256,7 +257,7 @@ class GraphCompiler:
         This bypasses recognition because the upstream recommendation/UI layer has
         already decided which intents should enter the graph.
         """
-        active_intents = {intent.intent_code: intent for intent in self.intent_catalog.list_active()}
+        active_intent_index = self.intent_catalog.active_intents_by_code()
         graph = ExecutionGraphState(
             source_message=content,
             summary=self.guided_selection_summary(guided_selection),
@@ -265,7 +266,7 @@ class GraphCompiler:
         )
 
         for index, selected in enumerate(guided_selection.selected_intents):
-            intent = active_intents.get(selected.intent_code)
+            intent = active_intent_index.get(selected.intent_code)
             if intent is None:
                 raise ValueError(f"Selected intent is not active: {selected.intent_code}")
             slot_memory = normalize_structured_slot_memory(
@@ -303,7 +304,7 @@ class GraphCompiler:
                 )
             )
 
-        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intents)
+        repair_unexecutable_condition_edges(graph=graph, intents_by_code=active_intent_index)
         return graph
 
     async def compile_proactive_interactive_graph(

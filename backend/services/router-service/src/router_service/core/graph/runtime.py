@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from router_service.core.shared.domain import TaskStatus
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
@@ -9,21 +11,11 @@ from router_service.core.shared.graph_domain import (
     GraphNodeStatus,
     GraphStatus,
 )
+from router_service.core.graph.constants import ACTIVE_NODE_STATUSES, TERMINAL_NODE_STATUSES
 from router_service.core.graph.semantics import resolve_output_value
 
 
-TERMINAL_NODE_STATUSES = {
-    GraphNodeStatus.COMPLETED,
-    GraphNodeStatus.FAILED,
-    GraphNodeStatus.CANCELLED,
-    GraphNodeStatus.SKIPPED,
-}
-
-ACTIVE_NODE_STATUSES = {
-    GraphNodeStatus.RUNNING,
-    GraphNodeStatus.WAITING_USER_INPUT,
-    GraphNodeStatus.WAITING_CONFIRMATION,
-}
+logger = logging.getLogger(__name__)
 
 
 class GraphRuntimeEngine:
@@ -143,6 +135,16 @@ class GraphRuntimeEngine:
                 return left <= right
             return left == right
         except TypeError:
+            logger.warning(
+                "Graph condition type mismatch for node %s: left_key=%s operator=%s left=%r (%s) right=%r (%s)",
+                source.node_id,
+                condition.left_key,
+                operator,
+                left,
+                type(left).__name__,
+                right,
+                type(right).__name__,
+            )
             return False
 
     def graph_status(self, graph: ExecutionGraphState) -> GraphStatus:
