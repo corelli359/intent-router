@@ -92,6 +92,7 @@ def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> Nu
 def build_router_runtime() -> RouterRuntime:
     """Assemble the full router runtime from repository, LLM, graph, and agent components."""
     settings = get_settings()
+    planning_policy = getattr(settings, "router_v2_planning_policy", "auto")
     event_broker = EventBroker(
         heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
         max_idle_seconds=settings.router_sse_max_idle_seconds,
@@ -155,6 +156,7 @@ def build_router_runtime() -> RouterRuntime:
             )
             if llm_client is not None
             and settings.router_v2_graph_build_mode == "unified"
+            and planning_policy == "always"
             and settings.router_v2_understanding_mode != "hierarchical"
             else None
         ),
@@ -190,6 +192,7 @@ def build_router_runtime() -> RouterRuntime:
             intent_switch_threshold=settings.router_intent_switch_threshold,
             agent_timeout_seconds=settings.router_agent_timeout_seconds,
         ),
+        planning_policy=planning_policy,
         understanding_validator=understanding_validator,
     )
     return RouterRuntime(

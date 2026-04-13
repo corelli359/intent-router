@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+import re
+from typing import Any, Callable, Literal
 
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
 from router_service.core.recognition.understanding_service import IntentUnderstandingService
@@ -10,6 +11,7 @@ from router_service.core.slots.grounding import normalize_structured_slot_memory
 from router_service.core.slots.resolution_service import SlotResolutionService
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
+    GraphAction,
     GraphEdge,
     GraphEdgeType,
     GraphNodeState,
@@ -22,11 +24,21 @@ from router_service.core.shared.graph_domain import (
     SlotBindingSource,
 )
 from router_service.core.graph.semantics import repair_unexecutable_condition_edges
-from router_service.core.graph.planner import IntentGraphPlanner
+from router_service.core.graph.planner import IntentGraphPlanner, SequentialIntentGraphPlanner
+from router_service.models.intent import GraphConfirmPolicy
 
 
 SessionContextBuilder = Callable[[GraphSessionState], dict[str, Any]]
 RecentMessageSanitizer = Callable[[list[str]], list[str]]
+GraphPlanningPolicy = Literal["always", "never", "multi_intent_only", "auto"]
+
+_COMPLEX_GRAPH_SIGNAL_PATTERNS = (
+    re.compile(r"(如果|若|要是).*(就|则)"),
+    re.compile(r"先.+再"),
+    re.compile(r"(然后|之后|接着|随后|同时|并且|另外|顺便|分别)"),
+    re.compile(r"再(给|转|查|做|办|交|缴|买|换|付|执行)"),
+    re.compile(r"还(给|转|查|做|办|交|缴|买|换|付|大于|小于|超过|低于|剩|够)"),
+)
 
 
 @dataclass(slots=True)
@@ -48,12 +60,16 @@ class GraphCompiler:
         planner: IntentGraphPlanner,
         understanding_service: IntentUnderstandingService,
         slot_resolution_service: SlotResolutionService,
+        planning_policy: GraphPlanningPolicy = "always",
+        fallback_planner: IntentGraphPlanner | None = None,
     ) -> None:
         """Initialize the compiler with catalog, planning, understanding, and slot services."""
         self.intent_catalog = intent_catalog
         self.planner = planner
         self.understanding_service = understanding_service
         self.slot_resolution_service = slot_resolution_service
+        self.planning_policy = planning_policy
+        self.fallback_planner = fallback_planner or SequentialIntentGraphPlanner()
 
     async def compile_message(
         self,
@@ -94,7 +110,7 @@ class GraphCompiler:
             recommendation_context=recommendation_context,
         )
 
-        if self.understanding_service.has_graph_builder:
+        if self.understanding_service.has_graph_builder and self.planning_policy == "always":
             build_result = await self.understanding_service.build_graph_from_message(
                 session,
                 content,
@@ -128,7 +144,7 @@ class GraphCompiler:
             active_intents[fallback_intent.intent_code] = fallback_intent
 
         if graph is None:
-            graph = await self.planner.plan(
+            graph = await self._plan_graph(
                 message=content,
                 matches=matches,
                 intents_by_code=active_intents,
@@ -153,6 +169,81 @@ class GraphCompiler:
             )
 
         return GraphCompilationResult(recognition=recognition, graph=graph, no_match=False)
+
+    async def _plan_graph(
+        self,
+        *,
+        message: str,
+        matches: list[IntentMatch],
+        intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+    ) -> ExecutionGraphState:
+        """Choose between heavy planning and deterministic fallback planning."""
+        planner = (
+            self.planner
+            if self._should_use_heavy_planner(message=message, matches=matches)
+            else self.fallback_planner
+        )
+        graph = await planner.plan(
+            message=message,
+            matches=matches,
+            intents_by_code=intents_by_code,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+        )
+        if planner is self.fallback_planner:
+            self._apply_single_node_confirmation_policy(graph=graph, intents_by_code=intents_by_code)
+        return graph
+
+    def _should_use_heavy_planner(
+        self,
+        *,
+        message: str,
+        matches: list[IntentMatch],
+    ) -> bool:
+        """Return whether this turn should go through the heavier LLM planning path."""
+        if self.planning_policy == "always":
+            return True
+        if self.planning_policy == "never":
+            return False
+        if len(matches) > 1:
+            return True
+        if self.planning_policy == "multi_intent_only":
+            return False
+        return self._message_has_complex_graph_signal(message)
+
+    def _message_has_complex_graph_signal(self, message: str) -> bool:
+        """Detect conditions, sequencing, or repeated actions in a single-intent turn."""
+        normalized = " ".join(part for part in message.split() if part).strip()
+        if not normalized:
+            return False
+        return any(pattern.search(normalized) for pattern in _COMPLEX_GRAPH_SIGNAL_PATTERNS)
+
+    def _apply_single_node_confirmation_policy(
+        self,
+        *,
+        graph: ExecutionGraphState,
+        intents_by_code: dict[str, IntentDefinition],
+    ) -> None:
+        """Honor per-intent confirmation hints after deterministic single-node compilation."""
+        if len(graph.nodes) != 1:
+            return
+        intent = intents_by_code.get(graph.nodes[0].intent_code)
+        if intent is None:
+            return
+        confirm_policy = intent.graph_build_hints.confirm_policy
+        if confirm_policy == GraphConfirmPolicy.ALWAYS:
+            graph.touch(GraphStatus.WAITING_CONFIRMATION)
+            if not graph.actions:
+                graph.actions = [
+                    GraphAction(code="confirm_graph", label="开始执行"),
+                    GraphAction(code="cancel_graph", label="取消"),
+                ]
+            return
+        if confirm_policy == GraphConfirmPolicy.NEVER:
+            graph.touch(GraphStatus.DRAFT)
+            graph.actions = []
 
     def build_guided_selection_graph(
         self,

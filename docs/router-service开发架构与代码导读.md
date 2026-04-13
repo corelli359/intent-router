@@ -141,6 +141,7 @@ GraphRouterOrchestrator
 | --- | --- |
 | `ROUTER_V2_UNDERSTANDING_MODE` | `flat` 或 `hierarchical`，决定是否使用大类到小类的层级识别 |
 | `ROUTER_V2_GRAPH_BUILD_MODE` | `legacy` 或 `unified`，决定是否使用统一识别建图 |
+| `ROUTER_V2_PLANNING_POLICY` | `always`、`never`、`multi_intent_only`、`auto`，决定首轮消息何时进入重规划 |
 | `ROUTER_INTENT_REFRESH_INTERVAL_SECONDS` | 意图目录刷新周期 |
 | `ROUTER_INTENT_SWITCH_THRESHOLD` | 意图切换阈值，当前主要保留在 orchestrator 配置中 |
 | `ROUTER_AGENT_TIMEOUT_SECONDS` | 节点执行超时时间 |
@@ -153,16 +154,35 @@ GraphRouterOrchestrator
 
 | 识别模式 | 建图模式 | 实际行为 |
 | --- | --- | --- |
-| `flat` | `legacy` | 先识别主意图，再用 planner 规划 graph |
-| `flat` | `unified` | 走 `graph_builder`，一次完成识别和 graph draft 输出 |
-| `hierarchical` | `legacy` | 先做 domain 路由，再 leaf 路由，再用 planner 建图 |
-| `hierarchical` | `unified` | 当前装配上不会启用 unified builder，仍然走层级识别 + planner |
+| `flat` | `legacy` | 先识别主意图，再按 `ROUTER_V2_PLANNING_POLICY` 选择重规划或轻量确定性编译 |
+| `flat` | `unified` | 只有 `ROUTER_V2_PLANNING_POLICY=always` 时才启用 unified builder |
+| `hierarchical` | `legacy` | 先做 domain 路由，再 leaf 路由，再按 `ROUTER_V2_PLANNING_POLICY` 决定是否走重规划 |
+| `hierarchical` | `unified` | 当前装配上不会启用 unified builder，仍然走层级识别 + 策略化 graph 编译 |
 
 原因在于 `dependencies.py` 中，`graph_builder` 只有在以下条件同时满足时才会启用：
 
 - 有可用 LLM 客户端
 - `router_v2_graph_build_mode == "unified"`
+- `router_v2_planning_policy == "always"`
 - `router_v2_understanding_mode != "hierarchical"`
+
+### 4.5 规划策略
+
+`ROUTER_V2_PLANNING_POLICY` 当前支持四种模式：
+
+| 策略值 | 行为 |
+| --- | --- |
+| `always` | 所有首轮消息都走重规划；如果配置了 unified builder，也允许直接走 unified builder |
+| `never` | 不走重规划，统一回落到确定性顺序编译 |
+| `multi_intent_only` | 只有识别到多个主意图时才走重规划；单意图走确定性编译 |
+| `auto` | 多意图一定走重规划；单意图只有在检测到条件、顺序、重复动作等复杂信号时才走重规划 |
+
+这里有个关键边界：
+
+- graph 仍然会创建
+- 但“是否创建 graph”不再等于“是否调用重型 LLM planner”
+- 简单单意图 graph 可以由确定性编译路径生成
+- 只有多意图或复杂单意图才进入高成本规划
 
 ## 5. API 层接口与入口职责
 
@@ -687,12 +707,15 @@ core/graph/
 1. 准备 `recent_messages` 和 `long_term_memory`
 2. 过滤适合规划的 recent messages
 3. 注入推荐上下文
-4. 如果存在 unified builder，则走 `build_graph_from_message()`
-5. 否则先识别，再走 planner
-6. 若没有命中意图，则尝试 fallback intent
-7. 对 graph 做语义修复 `repair_unexecutable_condition_edges()`
-8. 注入 proactive recommendation 默认槽位
-9. 应用历史槽位预填策略
+4. 如果存在 unified builder 且规划策略为 `always`，则走 `build_graph_from_message()`
+5. 否则先识别，拿到 `RecognitionResult`
+6. 根据 `ROUTER_V2_PLANNING_POLICY` 决定：
+   - 进入重型 planner
+   - 或回落到确定性顺序编译
+7. 若没有命中意图，则尝试 fallback intent
+8. 对 graph 做语义修复 `repair_unexecutable_condition_edges()`
+9. 注入 proactive recommendation 默认槽位
+10. 应用历史槽位预填策略
 
 它还额外提供：
 
@@ -706,7 +729,7 @@ core/graph/
 
 职责：
 
-- 根据识别出的多个意图，规划 graph 结构。
+- 根据识别出的意图，规划 graph 结构。
 - 解释 pending graph / waiting node 的用户回复意图。
 
 这个文件里实际有两块能力：
@@ -722,6 +745,14 @@ core/graph/
    - `TurnDecisionPayload`
 
 可以把它理解为“规划器 + 交互解释器”。
+
+现在 `SequentialIntentGraphPlanner` 不只是“LLM planner 失败时的兜底”。
+
+在 `ROUTER_V2_PLANNING_POLICY=never|multi_intent_only|auto` 的部分路径下，它也承担“轻量确定性编译”的职责：
+
+- 单意图简单请求：不再调用重型 planner
+- 多意图但显式关闭重规划：按识别顺序生成基础 graph
+- 复杂单意图 / 多意图：仍然可以升级回 `LLMIntentGraphPlanner`
 
 ### 10.8 `graph/builder.py`
 
@@ -1343,7 +1374,7 @@ POST /api/router/v2/sessions/{session_id}/messages
    所以进入 `route_new_message()`
 4. `route_new_message()` 调 [compiler.py](/root/intent-router/backend/services/router-service/src/router_service/core/graph/compiler.py) 的 `compile_message()`
 5. `compile_message()` 调 [recognition/understanding_service.py](/root/intent-router/backend/services/router-service/src/router_service/core/recognition/understanding_service.py)
-   如果当前不是 unified build，就会先 `recognize_message()`，再由 planner 生成 graph
+   如果当前不是 unified build，就会先 `recognize_message()`，再按 `ROUTER_V2_PLANNING_POLICY` 决定是否进入重型 planner
 6. 由于只有一个主意图，graph 往往直接是 `DRAFT`，不会先要求整图确认
 7. `message_flow.route_new_message()` 激活 graph，然后回到 `orchestrator._drain_graph()`
 8. `_drain_graph()` 找到第一个 `READY` 节点，进入 `_run_node()`
@@ -1458,7 +1489,7 @@ POST /api/router/v2/sessions/{session_id}/messages
 2. 识别层拿到多个主意图，例如：
    - `query_account_balance`
    - `transfer_money`
-3. planner 或 unified builder 生成多节点 graph
+3. 因为是多意图，请求会进入重规划，planner 或 unified builder 生成多节点 graph
 4. 因为是多节点 graph，通常会进入 `GraphStatus.WAITING_CONFIRMATION`
 5. `message_flow.route_new_message()` 不会立即激活 graph，而是：
    - `session.pending_graph = graph`

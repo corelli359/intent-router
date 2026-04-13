@@ -78,6 +78,7 @@ class Settings(BaseModel):
     recognizer_backend: Literal["rules", "llm"] = Field(default="llm")
     router_v2_graph_build_mode: Literal["legacy", "unified"] = Field(default="legacy")
     router_v2_understanding_mode: Literal["flat", "hierarchical"] = Field(default="flat")
+    router_v2_planning_policy: Literal["always", "never", "multi_intent_only", "auto"] = Field(default="auto")
     router_intent_refresh_interval_seconds: float = Field(default=5.0, gt=0)
     router_intent_switch_threshold: float = Field(default=0.80, ge=0, le=1)
     router_agent_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -122,6 +123,7 @@ class Settings(BaseModel):
             recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "llm"),
             router_v2_graph_build_mode=os.getenv("ROUTER_V2_GRAPH_BUILD_MODE", "legacy"),
             router_v2_understanding_mode=os.getenv("ROUTER_V2_UNDERSTANDING_MODE", "flat"),
+            router_v2_planning_policy=os.getenv("ROUTER_V2_PLANNING_POLICY", "auto"),
             router_intent_refresh_interval_seconds=float(
                 os.getenv("ROUTER_INTENT_REFRESH_INTERVAL_SECONDS", "5")
             ),

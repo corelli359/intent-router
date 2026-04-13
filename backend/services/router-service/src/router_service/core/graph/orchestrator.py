@@ -18,7 +18,7 @@ from router_service.core.shared.domain import (
     utc_now,
 )
 from router_service.core.recognition.recognizer import IntentRecognizer, RecognitionResult
-from router_service.core.graph.compiler import GraphCompiler
+from router_service.core.graph.compiler import GraphCompiler, GraphPlanningPolicy
 from router_service.core.recognition.understanding_service import IntentUnderstandingService
 from router_service.core.slots.resolution_service import SlotResolutionService
 from router_service.core.slots.understanding_validator import UnderstandingValidationResult, UnderstandingValidator
@@ -111,6 +111,7 @@ class GraphRouterOrchestrator:
         understanding_service: IntentUnderstandingService | None = None,
         understanding_validator: UnderstandingValidator | None = None,
         slot_resolution_service: SlotResolutionService | None = None,
+        planning_policy: GraphPlanningPolicy = "always",
         graph_compiler: GraphCompiler | None = None,
         state_sync: GraphStateSync | None = None,
         action_flow: GraphActionFlow | None = None,
@@ -164,6 +165,7 @@ class GraphRouterOrchestrator:
             planner=self.planner,
             understanding_service=self.understanding_service,
             slot_resolution_service=self.slot_resolution_service,
+            planning_policy=planning_policy,
         )
         self.action_flow = action_flow or GraphActionFlow(
             session_store=self.session_store,
