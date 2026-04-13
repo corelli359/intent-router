@@ -81,6 +81,18 @@ node_kubectl -n "${NAMESPACE}" delete ingress intent-router-chat --ignore-not-fo
 node_kubectl -n "${NAMESPACE}" delete service intent-backend --ignore-not-found || true
 node_kubectl -n "${NAMESPACE}" delete deployment intent-backend --ignore-not-found || true
 
+minikube_cmd ssh --profile "${MINIKUBE_PROFILE}" "
+  set -e
+  if [ ! -f '${TARGET_PATH}/.env.local' ]; then
+    echo 'Missing ${TARGET_PATH}/.env.local for router ConfigMap generation' >&2
+    exit 1
+  fi
+  KCTL=\$(echo /var/lib/minikube/binaries/*/kubectl)
+  sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" -n '${NAMESPACE}' create configmap intent-router-api-env \
+    --from-file=.env.local='${TARGET_PATH}/.env.local' \
+    --dry-run=client -o yaml | sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" apply -f -
+"
+
 manifests=(
   namespace.yaml
   router-api.yaml

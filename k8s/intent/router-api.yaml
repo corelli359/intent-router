@@ -22,6 +22,8 @@ spec:
           env:
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
+            - name: ROUTER_ENV_FILE
+              value: /etc/intent-router/.env.local
           command:
             - /bin/sh
             - -lc
@@ -59,11 +61,21 @@ spec:
           volumeMounts:
             - name: repo
               mountPath: /workspace
+            - name: router-config
+              mountPath: /etc/intent-router/.env.local
+              subPath: .env.local
+              readOnly: true
       volumes:
         - name: repo
           hostPath:
             path: /mnt/intent-router
             type: Directory
+        - name: router-config
+          configMap:
+            name: intent-router-api-env
+            items:
+              - key: .env.local
+                path: .env.local
 ---
 apiVersion: v1
 kind: Service

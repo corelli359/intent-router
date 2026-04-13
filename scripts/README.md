@@ -49,10 +49,17 @@ If `RUN_ROUTER_SSE_TEST` is not `1`, the SSE check is skipped.
 
 ### 4) Real LLM runtime smoke test
 
-This test reads local router runtime env from `.env` / `.env.local` and calls the configured model directly through the backend LangChain client.
+This test reads router runtime env from the explicit file pointed to by `ROUTER_ENV_FILE`.
+If `ROUTER_ENV_FILE` is unset, the script defaults it to the repo-root `.env.local`.
 
 ```bash
 python scripts/verify_real_llm_runtime.py
+```
+
+Explicit file example:
+
+```bash
+ROUTER_ENV_FILE=/etc/intent-router/.env.local python scripts/verify_real_llm_runtime.py
 ```
 
 Pytest wrapper:

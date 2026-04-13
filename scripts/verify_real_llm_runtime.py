@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -31,9 +32,12 @@ def _masked_key(api_key: str | None) -> str | None:
 
 
 async def _run() -> None:
+    os_env_file = ROOT / ".env.local"
+
+    os.environ.setdefault("ROUTER_ENV_FILE", str(os_env_file))
     settings = Settings.from_env()
     if not settings.llm_connection_ready or not settings.llm_api_key:
-        raise RuntimeError("ROUTER_LLM_* env is incomplete. Please fill .env.local first.")
+        raise RuntimeError("ROUTER_LLM_* env is incomplete. Please fill the file pointed to by ROUTER_ENV_FILE.")
 
     client = LangChainLLMClient(
         base_url=settings.llm_api_base_url or "",

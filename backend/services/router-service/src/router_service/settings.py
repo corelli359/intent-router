@@ -8,54 +8,39 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-ENV_FILENAMES = (".env", ".env.local")
+ROUTER_ENV_FILE_ENV = "ROUTER_ENV_FILE"
+DEFAULT_ROUTER_ENV_FILE = "/etc/intent-router/.env.local"
 
 
-def _env_search_roots() -> tuple[Path, ...]:
-    """Return candidate directories that may contain local environment files."""
-    roots: list[Path] = []
-    seen: set[Path] = set()
-
-    for candidate in (Path.cwd(), Path("/workspace")):
-        resolved = candidate.expanduser().resolve()
-        if not resolved.exists() or resolved in seen:
+def _load_env_file(env_path: str | os.PathLike[str] | None) -> None:
+    """Load one explicit env file without scanning parent directories."""
+    if env_path is None:
+        return
+    path = Path(env_path).expanduser()
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
             continue
-        roots.append(resolved)
-        seen.add(resolved)
-
-    for parent in Path(__file__).resolve().parents:
-        if parent in seen:
+        if line.startswith("export "):
+            line = line.removeprefix("export ").strip()
+        if "=" not in line:
             continue
-        roots.append(parent)
-        seen.add(parent)
-        if (parent / ".git").exists() or (parent / "AGENTS.md").is_file():
-            break
-    return tuple(roots)
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
 
 
-def _load_local_env_files() -> None:
-    """Load local env files without overriding variables already present in the process."""
-    for root in _env_search_roots():
-        for filename in ENV_FILENAMES:
-            env_path = root / filename
-            if not env_path.is_file():
-                continue
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("export "):
-                    line = line.removeprefix("export ").strip()
-                if "=" not in line:
-                    continue
-                key, raw_value = line.split("=", 1)
-                key = key.strip()
-                if not key or key in os.environ:
-                    continue
-                value = raw_value.strip()
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-                    value = value[1:-1]
-                os.environ[key] = value
+def _configured_env_file() -> str:
+    """Return the single explicit env file path used by the router runtime."""
+    return os.getenv(ROUTER_ENV_FILE_ENV, DEFAULT_ROUTER_ENV_FILE)
+
 
 def _env_headers(name: str) -> dict[str, str]:
     """Parse a JSON-encoded HTTP header map from an environment variable."""
@@ -151,8 +136,8 @@ class Settings(BaseModel):
 
     @classmethod
     def from_env(cls) -> "Settings":
-        """Build settings from process environment plus local env files."""
-        _load_local_env_files()
+        """Build settings from process environment plus one explicit env file."""
+        _load_env_file(_configured_env_file())
         return cls(
             app_name=os.getenv("ROUTER_API_APP_NAME", "Intent Router API"),
             env=os.getenv("ROUTER_API_ENV", "dev"),
