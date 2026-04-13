@@ -291,9 +291,21 @@ class GraphEventPublisher:
         message: str,
         status: TaskStatus | None = None,
         pending: bool = False,
+        payload_overrides: dict[str, Any] | None = None,
     ) -> None:
         """Publish one graph-level state update."""
         resolved_status = status or self.runtime_engine.task_status_for_graph(graph.status)
+        payload: dict[str, Any] = {
+            "cust_id": session.cust_id,
+            "graph": self.presenter.graph_payload(
+                graph,
+                include_actions=graph.status == GraphStatus.WAITING_CONFIRMATION,
+                pending=pending,
+            ),
+            "interaction": self.presenter.graph_interaction(graph, pending=pending),
+        }
+        if payload_overrides:
+            payload.update(payload_overrides)
         await self.publish(
             TaskEvent(
                 event=event,
@@ -303,18 +315,7 @@ class GraphEventPublisher:
                 status=resolved_status,
                 message=message,
                 ishandover=resolved_status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED},
-                payload=self.presenter.normalize_interaction_payload(
-                    {
-                        "cust_id": session.cust_id,
-                        "graph": self.presenter.graph_payload(
-                            graph,
-                            include_actions=graph.status == GraphStatus.WAITING_CONFIRMATION,
-                            pending=pending,
-                        ),
-                        "interaction": self.presenter.graph_interaction(graph, pending=pending),
-                    },
-                    source="router",
-                ),
+                payload=self.presenter.normalize_interaction_payload(payload, source="router"),
             )
         )
 

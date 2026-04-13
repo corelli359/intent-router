@@ -115,6 +115,7 @@ class GraphActionFlow:
         graph = session.current_graph
         if graph is None:
             return
+        cancel_failures: list[dict[str, str]] = []
         for node in graph.nodes:
             if node.status in TERMINAL_NODE_STATUSES:
                 continue
@@ -123,12 +124,30 @@ class GraphActionFlow:
                 try:
                     await self.agent_client.cancel(session.session_id, task.task_id, task.agent_url)
                 except Exception as exc:
+                    failure_reason = str(exc)
+                    cancel_failures.append({"task_id": task.task_id, "reason": failure_reason})
                     logger.warning("Failed to cancel graph task %s: %s", task.task_id, exc)
                 task.touch(TaskStatus.CANCELLED)
             node.touch(GraphNodeStatus.CANCELLED, blocking_reason=reason)
         graph.touch(GraphStatus.CANCELLED)
         session.active_node_id = None
-        await self.publish_graph_state(session, "graph.cancelled", reason, status=TaskStatus.CANCELLED)
+        payload_overrides: dict[str, Any] | None = None
+        event_message = reason or "执行图已取消"
+        if cancel_failures:
+            failure_items = "；".join(f"{item['task_id']}({item['reason']})" for item in cancel_failures)
+            failure_summary = f"部分节点取消失败：{failure_items}"
+            event_message = f"{event_message}；{failure_summary}"
+            payload_overrides = {
+                "cancel_failures": cancel_failures,
+                "cancel_failure_summary": failure_summary,
+            }
+        await self.publish_graph_state(
+            session,
+            "graph.cancelled",
+            event_message,
+            status=TaskStatus.CANCELLED,
+            payload_overrides=payload_overrides,
+        )
 
     async def confirm_pending_graph(
         self,

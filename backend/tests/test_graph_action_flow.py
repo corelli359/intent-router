@@ -17,10 +17,13 @@ from router_service.core.shared.graph_domain import (
 
 
 class DummyAgentClient:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_cancel_tasks: set[str] | None = None) -> None:
         self.cancelled_tasks: list[str] = []
+        self.fail_cancel_tasks = set(fail_cancel_tasks or [])
 
     async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        if task_id in self.fail_cancel_tasks:
+            raise RuntimeError("agent cancel failure")
         self.cancelled_tasks.append(task_id)
 
     async def close(self) -> None:
@@ -39,6 +42,7 @@ class ActionFlowHelper:
     def __init__(self) -> None:
         self.actions: list[tuple[str, Any]] = []
         self.publisher = DummyEventPublisher()
+        self.graph_state_events: list[dict[str, Any]] = []
 
     def activate_graph(self, graph: ExecutionGraphState) -> None:
         self.actions.append(("activate_graph", graph.graph_id))
@@ -70,8 +74,17 @@ class ActionFlowHelper:
         message: str,
         *,
         status: TaskStatus | None = None,
+        payload_overrides: dict[str, Any] | None = None,
     ) -> None:
         self.actions.append(("publish_graph_state", event))
+        self.graph_state_events.append(
+            {
+                "event": event,
+                "message": message,
+                "status": status,
+                "payload_overrides": payload_overrides,
+            }
+        )
 
 
 def snapshot_builder(session_store: GraphSessionStore):
@@ -110,10 +123,10 @@ def get_task(session: GraphSessionState, task_id: str | None) -> Task | None:
     return None
 
 
-def build_action_flow() -> tuple[GraphActionFlow, GraphSessionStore, ActionFlowHelper, DummyAgentClient]:
+def build_action_flow(*, fail_cancel_tasks: set[str] | None = None) -> tuple[GraphActionFlow, GraphSessionStore, ActionFlowHelper, DummyAgentClient]:
     session_store = GraphSessionStore()
     helper = ActionFlowHelper()
-    agent_client = DummyAgentClient()
+    agent_client = DummyAgentClient(fail_cancel_tasks=fail_cancel_tasks)
     flow = GraphActionFlow(
         session_store=session_store,
         agent_client=agent_client,
@@ -231,3 +244,56 @@ def test_cancel_current_graph_marks_nodes_cancelled() -> None:
     assert node2.status == GraphNodeStatus.CANCELLED
     assert ("publish_graph_state", "graph.cancelled") in helper.actions
     assert node1.task_id in agent_client.cancelled_tasks
+    assert helper.graph_state_events[-1]["payload_overrides"] is None
+
+
+def test_cancel_current_graph_records_cancel_failures() -> None:
+    flow, store, helper, agent_client = build_action_flow(fail_cancel_tasks={"task-b"})
+    session = store.create(cust_id="cust", session_id="session-id")
+    graph = make_graph(GraphStatus.RUNNING)
+    node1 = GraphNodeState(
+        intent_code="intent_a",
+        title="node A",
+        confidence=0.4,
+        status=GraphNodeStatus.RUNNING,
+    )
+    node1.task_id = "task-a"
+    node2 = GraphNodeState(
+        intent_code="intent_b",
+        title="node B",
+        confidence=0.6,
+        status=GraphNodeStatus.READY,
+    )
+    node2.task_id = "task-b"
+    graph.nodes.extend([node1, node2])
+    session.current_graph = graph
+    session.tasks.append(
+        Task(
+            session_id=session.session_id,
+            intent_code="intent_a",
+            agent_url="http://agent",
+            confidence=0.5,
+            status=TaskStatus.WAITING_USER_INPUT,
+        )
+    )
+    session.tasks.append(
+        Task(
+            session_id=session.session_id,
+            intent_code="intent_b",
+            agent_url="http://agent",
+            confidence=0.5,
+            status=TaskStatus.WAITING_USER_INPUT,
+        )
+    )
+    session.tasks[0].task_id = node1.task_id
+    session.tasks[1].task_id = node2.task_id
+
+    asyncio.run(flow.cancel_current_graph(session, reason="user cancel"))
+
+    event = helper.graph_state_events[-1]
+    assert event["event"] == "graph.cancelled"
+    assert "取消失败" in event["message"]
+    payload = event["payload_overrides"]
+    assert payload is not None
+    assert payload["cancel_failures"][0]["task_id"] == "task-b"
+    assert "task-b" not in agent_client.cancelled_tasks

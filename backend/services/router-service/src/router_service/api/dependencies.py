@@ -14,6 +14,7 @@ from router_service.api.sse.broker import EventBroker
 from router_service.core.support.agent_client import StreamingAgentClient
 from router_service.core.support.intent_catalog import RepositoryIntentCatalog
 from router_service.core.support.llm_client import LangChainLLMClient
+from router_service.core.support.memory_store import LongTermMemoryStore
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
     DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
@@ -95,7 +96,11 @@ def build_router_runtime() -> RouterRuntime:
     """Assemble the full router runtime from repository, LLM, graph, and agent components."""
     settings = get_settings()
     planning_policy = getattr(settings, "router_v2_planning_policy", "auto")
-    session_store = GraphSessionStore()
+    session_store = GraphSessionStore(
+        long_term_memory=LongTermMemoryStore(
+            fact_limit=getattr(settings, "router_long_term_memory_fact_limit", 100)
+        )
+    )
     event_broker = EventBroker(
         heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
         max_idle_seconds=settings.router_sse_max_idle_seconds,

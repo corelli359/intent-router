@@ -862,9 +862,16 @@ class GraphRouterOrchestrator:
         message: str,
         *,
         status: TaskStatus | None = None,
+        payload_overrides: dict[str, Any] | None = None,
     ) -> None:
         """Delegate graph-state publication into the state-sync layer."""
-        await self.state_sync.publish_graph_state(session, event, message, status=status)
+        await self.state_sync.publish_graph_state(
+            session,
+            event,
+            message,
+            status=status,
+            payload_overrides=payload_overrides,
+        )
 
     async def _publish_node_state(
         self,

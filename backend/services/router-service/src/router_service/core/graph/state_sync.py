@@ -72,6 +72,7 @@ class GraphStateSync:
         message: str,
         *,
         status: TaskStatus | None = None,
+        payload_overrides: dict[str, Any] | None = None,
     ) -> None:
         """Publish graph-level snapshots for either pending or current graph."""
         graph = session.pending_graph if event in {"graph.proposed", "graph.waiting_confirmation"} else session.current_graph
@@ -84,6 +85,7 @@ class GraphStateSync:
             message=message,
             status=status,
             pending=graph is session.pending_graph,
+            payload_overrides=payload_overrides,
         )
 
     async def publish_node_state(

@@ -76,6 +76,32 @@ def _parse_bool_env(name: str, default: bool) -> bool:
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+ROUTER_LONG_TERM_MEMORY_FACT_LIMIT_ENV = "ROUTER_LONG_TERM_MEMORY_FACT_LIMIT"
+DEFAULT_LONG_TERM_MEMORY_FACT_LIMIT = 100
+
+
+def parse_long_term_memory_fact_limit(
+    raw_value: str | None, default: int | None = DEFAULT_LONG_TERM_MEMORY_FACT_LIMIT
+) -> int | None:
+    """Normalize the long-term memory fact limit configuration."""
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    if lowered in {"none", "null", "unbounded", "unlimited"}:
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{ROUTER_LONG_TERM_MEMORY_FACT_LIMIT_ENV} must be an integer or one of "
+            f"none/null/unbounded, got {raw_value!r}"
+        ) from exc
+    return parsed if parsed > 0 else None
+
+
 class Settings(BaseModel):
     """Runtime configuration for the router API and its downstream integrations."""
 
@@ -92,6 +118,7 @@ class Settings(BaseModel):
     router_agent_timeout_seconds: float = Field(default=60.0, gt=0)
     router_sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
     router_sse_max_idle_seconds: float = Field(default=300.0, gt=0)
+    router_long_term_memory_fact_limit: int | None = Field(default=DEFAULT_LONG_TERM_MEMORY_FACT_LIMIT)
     router_session_cleanup_enabled: bool = Field(default=True)
     router_session_cleanup_interval_seconds: float = Field(default=60.0, gt=0)
     router_drain_max_iterations: int | None = Field(default=None, gt=0)
@@ -144,6 +171,9 @@ class Settings(BaseModel):
             router_agent_timeout_seconds=float(os.getenv("ROUTER_AGENT_TIMEOUT_SECONDS", "60")),
             router_sse_heartbeat_seconds=float(os.getenv("ROUTER_SSE_HEARTBEAT_SECONDS", "15")),
             router_sse_max_idle_seconds=float(os.getenv("ROUTER_SSE_MAX_IDLE_SECONDS", "300")),
+            router_long_term_memory_fact_limit=parse_long_term_memory_fact_limit(
+                os.getenv(ROUTER_LONG_TERM_MEMORY_FACT_LIMIT_ENV)
+            ),
             router_session_cleanup_enabled=_parse_bool_env("ROUTER_SESSION_CLEANUP_ENABLED", True),
             router_session_cleanup_interval_seconds=float(
                 os.getenv("ROUTER_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
