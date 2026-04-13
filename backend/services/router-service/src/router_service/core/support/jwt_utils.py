@@ -2,6 +2,10 @@ import jwt
 import time
 from router_service.settings import JWT_SALT, X_APP_ID
 import httpx
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 def generate_jwt(salt: str = '', expire_seconds: int = 3600) -> str:
     """
@@ -43,8 +47,7 @@ class AuthHTTPClient(httpx.AsyncClient):
             request.headers["Authorization"] = f"Bearer {token}"
             request.headers["x-app-id"] = X_APP_ID
         except Exception as e:
-            print(f"[ERROR] Failed to generate JWT: {e}")
+            logger.exception("Failed to generate JWT before outbound LLM request")
             raise
 
         return await super().send(request, *args, **kwargs)
-

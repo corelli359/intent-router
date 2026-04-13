@@ -14,6 +14,7 @@ from router_service.api.sse.broker import EventBroker
 from router_service.core.support.agent_client import StreamingAgentClient
 from router_service.core.support.intent_catalog import RepositoryIntentCatalog
 from router_service.core.support.llm_client import LangChainLLMClient
+from router_service.core.support.jwt_utils import AuthHTTPClient
 from router_service.core.support.memory_store import LongTermMemoryStore
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
@@ -44,6 +45,7 @@ from router_service.core.slots.extractor import SlotExtractor
 from router_service.core.slots.validator import SlotValidator
 from router_service.core.slots.understanding_validator import UnderstandingValidator
 from router_service.settings import Settings
+from router_service.settings import JWT_SALT, X_APP_ID
 
 
 logger = logging.getLogger(__name__)
@@ -222,6 +224,11 @@ def _build_llm_client() -> LangChainLLMClient | None:
     settings = get_settings()
     if not settings.llm_connection_ready or settings.default_llm_model is None:
         return None
+    auth_http_client = (
+        AuthHTTPClient(timeout=settings.llm_timeout_seconds)
+        if JWT_SALT and X_APP_ID
+        else None
+    )
     return LangChainLLMClient(
         base_url=settings.llm_api_base_url or "",
         api_key=settings.llm_api_key,
@@ -231,6 +238,7 @@ def _build_llm_client() -> LangChainLLMClient | None:
         rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),
         extra_headers=settings.llm_headers,
         structured_output_method=settings.llm_structured_output_method,
+        http_async_client=auth_http_client,
     )
 
 
@@ -275,6 +283,8 @@ def get_orchestrator_v2(request: Request) -> GraphRouterOrchestrator:
 
 async def close_router_runtime(runtime: RouterRuntime) -> None:
     """Release network resources held by the runtime before application shutdown."""
+    if runtime.llm_client is not None:
+        await runtime.llm_client.aclose()
     await runtime.agent_client.close()
 
 

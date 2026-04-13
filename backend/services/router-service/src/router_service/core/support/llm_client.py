@@ -135,12 +135,25 @@ class LangChainLLMClient:
         return ChatOpenAI(
             model_name=model or self.default_model,
             temperature=0,
-            openai_api_key=self.api_key,
+            openai_api_key=self._effective_api_key(),
             openai_api_base=self.base_url,
             request_timeout=self.timeout_seconds,
             default_headers=self.extra_headers or None,
             http_async_client=self.http_async_client,
         )
+
+    def _effective_api_key(self) -> str | None:
+        """Return the API key expected by ChatOpenAI, using a placeholder for custom auth clients."""
+        if self.api_key:
+            return self.api_key
+        if self.http_async_client is not None:
+            return "jwt-auth-placeholder"
+        return None
+
+    async def aclose(self) -> None:
+        """Close the owned async HTTP client when present."""
+        if self.http_async_client is not None:
+            await self.http_async_client.aclose()
 
     async def _stream_prompt(
         self,

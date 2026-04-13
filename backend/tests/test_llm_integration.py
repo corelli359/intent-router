@@ -17,6 +17,7 @@ from router_service.core.support.llm_client import (  # noqa: E402
     IntentRecognitionPayload,
     LangChainLLMClient,
 )
+from router_service.core.support.jwt_utils import AuthHTTPClient  # noqa: E402
 from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
 from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
 from router_service.core.graph.planner import (  # noqa: E402
@@ -219,6 +220,28 @@ def test_langchain_llm_client_retries_rate_limited_requests_once() -> None:
         assert client.calls == 2
 
     asyncio.run(run())
+
+
+def test_langchain_llm_client_passes_custom_http_async_client_to_chat_openai(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("router_service.core.support.llm_client.ChatOpenAI", _FakeChatOpenAI)
+    custom_client = AuthHTTPClient()
+    client = LangChainLLMClient(
+        base_url="https://example.com/v1",
+        api_key=None,
+        default_model="test-model",
+        http_async_client=custom_client,
+    )
+
+    client._create_model()
+
+    assert captured["http_async_client"] is custom_client
+    assert captured["openai_api_key"] == "jwt-auth-placeholder"
 
 
 def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
