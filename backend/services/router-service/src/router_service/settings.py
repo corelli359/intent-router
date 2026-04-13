@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 ROUTER_ENV_FILE_ENV = "ROUTER_ENV_FILE"
 DEFAULT_ROUTER_ENV_FILE = "/etc/intent-router/.env.local"
-JWT_SALT = ''
-X_APP_ID = ''
+JWT_SALT = 'a358f520-6477-484e-8a48-91899677152a'
+X_APP_ID = 'app-test'
 
 def _load_env_file(env_path: str | os.PathLike[str] | None) -> None:
     """Load one explicit env file without scanning parent directories."""
