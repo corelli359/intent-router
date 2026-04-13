@@ -4,13 +4,13 @@ import json
 import os
 from pathlib import Path
 from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
 ROUTER_ENV_FILE_ENV = "ROUTER_ENV_FILE"
 DEFAULT_ROUTER_ENV_FILE = "/etc/intent-router/.env.local"
-
+JWT_SALT = ''
+X_APP_ID = ''
 
 def _load_env_file(env_path: str | os.PathLike[str] | None) -> None:
     """Load one explicit env file without scanning parent directories."""
