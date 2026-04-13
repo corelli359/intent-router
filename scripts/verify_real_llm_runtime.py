@@ -56,10 +56,9 @@ async def _run() -> None:
                 "config": {
                     "base_url": settings.llm_api_base_url,
                     "model": settings.default_llm_model,
-                    "auth_mode": settings.llm_auth_mode,
                     "recognizer_backend": settings.recognizer_backend,
                     "structured_output_method": settings.llm_structured_output_method,
-                    "api_key_masked": _masked_key(settings.effective_llm_api_key),
+                    "api_key_masked": _masked_key(settings.llm_api_key),
                 }
             },
             ensure_ascii=False,

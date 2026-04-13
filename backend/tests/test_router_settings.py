@@ -41,28 +41,3 @@ def test_router_settings_missing_explicit_env_file_is_safe(monkeypatch, tmp_path
 
     assert settings.llm_api_base_url is None
     assert settings.llm_model is None
-
-
-def test_router_settings_can_resolve_bearer_jwt_auth(monkeypatch, tmp_path: Path) -> None:
-    env_file = tmp_path / "router.env"
-    env_file.write_text(
-        "\n".join(
-            (
-                "ROUTER_LLM_API_BASE_URL=https://example.test/v1",
-                "ROUTER_LLM_MODEL=gpt-test",
-                "ROUTER_LLM_AUTH_MODE=bearer_jwt",
-                "ROUTER_LLM_BEARER_JWT=test-jwt-token",
-            )
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("ROUTER_ENV_FILE", str(env_file))
-    monkeypatch.delenv("ROUTER_LLM_API_BASE_URL", raising=False)
-    monkeypatch.delenv("ROUTER_LLM_MODEL", raising=False)
-    monkeypatch.delenv("ROUTER_LLM_AUTH_MODE", raising=False)
-    monkeypatch.delenv("ROUTER_LLM_BEARER_JWT", raising=False)
-
-    settings = Settings.from_env()
-
-    assert settings.llm_auth_mode == "bearer_jwt"
-    assert settings.effective_llm_api_key == "test-jwt-token"
