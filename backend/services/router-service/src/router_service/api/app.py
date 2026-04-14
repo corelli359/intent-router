@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,10 @@ from router_service.api.routes.sessions import router as graph_session_router
 def create_router_app() -> FastAPI:
     """Create the FastAPI application and wire runtime lifecycle hooks."""
     settings = get_settings()
+    app_logger = logging.getLogger("router_service")
+    app_logger.handlers = list(logging.getLogger("uvicorn.error").handlers)
+    app_logger.setLevel(logging.INFO)
+    app_logger.propagate = False
     runtime = build_router_runtime()
 
     @asynccontextmanager
