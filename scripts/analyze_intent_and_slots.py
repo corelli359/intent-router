@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from typing import Any
 import urllib.error
@@ -11,8 +10,10 @@ import urllib.request
 from uuid import uuid4
 
 
-DEFAULT_BASE_URL = "http://intent-router.kkrrc-359.top"
-DEFAULT_MESSAGE = "帮我查一下余额，如果大于1000，就给小红转200，如果还大于1000，就再给小明转200"
+BASE_URL = "http://intent-router.kkrrc-359.top"
+CUST_ID = "cust_demo"
+MESSAGE = "帮我查一下余额，如果大于1000，就给小红转200，如果还大于1000，就再给小明转200"
+PRINT_RAW_RESPONSE = False
 
 
 def _request_json(
@@ -63,30 +64,15 @@ def _build_summary(response: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    """Parse args, call the router analyze endpoint, and print the result."""
-    parser = argparse.ArgumentParser(
-        description="Analyze one message through the router and return intent plus slot results only."
-    )
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Router ingress base URL.")
-    parser.add_argument("--cust-id", default="cust_demo", help="Customer id sent to the router.")
-    parser.add_argument("--session-id", default=None, help="Optional session id. Auto-generated when omitted.")
-    parser.add_argument("--message", default=DEFAULT_MESSAGE, help="User message to analyze.")
-    parser.add_argument(
-        "--print-raw",
-        action="store_true",
-        help="Print the full raw API response instead of the intent-and-slot summary.",
-    )
-    args = parser.parse_args()
-
-    session_id = args.session_id or f"analyze-{uuid4().hex}"
-    base_url = args.base_url.rstrip("/")
-    url = f"{base_url}/api/router/v2/sessions/{session_id}/messages/analyze"
+    """Call the analyze endpoint with the constants defined at the top of this file."""
+    session_id = f"analyze-{uuid4().hex}"
+    url = f"{BASE_URL.rstrip('/')}/api/router/v2/sessions/{session_id}/messages/analyze"
     payload = {
-        "cust_id": args.cust_id,
-        "content": args.message,
+        "cust_id": CUST_ID,
+        "content": MESSAGE,
     }
     response = _request_json(method="POST", url=url, payload=payload)
-    output = response if args.print_raw else _build_summary(response)
+    output = response if PRINT_RAW_RESPONSE else _build_summary(response)
     print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
 
