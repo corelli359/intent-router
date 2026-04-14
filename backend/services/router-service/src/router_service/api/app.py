@@ -21,7 +21,12 @@ def create_router_app() -> FastAPI:
     """Create the FastAPI application and wire runtime lifecycle hooks."""
     settings = get_settings()
     app_logger = logging.getLogger("router_service")
-    app_logger.handlers = list(logging.getLogger("uvicorn.error").handlers)
+    handlers = list(logging.getLogger("uvicorn.error").handlers)
+    if not handlers:
+        handlers = list(logging.getLogger().handlers)
+    if not handlers:
+        handlers = [logging.StreamHandler()]
+    app_logger.handlers = handlers
     app_logger.setLevel(logging.INFO)
     app_logger.propagate = False
     runtime = build_router_runtime()
