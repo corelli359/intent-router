@@ -419,6 +419,16 @@ class _ProactiveFreeDialogRecognizer:
         )
 
 
+class _DirectTransferRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del intents, recent_messages, long_term_memory, on_delta
+        assert message == "给小红转200"
+        return RecognitionResult(
+            primary=[IntentMatch(intent_code="transfer_money", confidence=0.98, reason="fixed")],
+            candidates=[],
+        )
+
+
 class _StaticRecommendationRouter:
     def __init__(self, decision: ProactiveRecommendationRouteDecision) -> None:
         self._decision = decision
@@ -2226,6 +2236,34 @@ def test_v2_router_message_execution_mode_analyze_only_returns_analysis_payload(
             assert "snapshot" not in response.json()
 
             session = orchestrator.session_store.get(session_id)
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is None
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_analyze_endpoint_extracts_slots_for_single_intent_without_execution() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(recognizer=_DirectTransferRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages/analyze",
+                json={"content": "给小红转200"},
+            )
+            assert response.status_code == 200
+            payload = response.json()["analysis"]
+            assert [item["intent_code"] for item in payload["recognition"]["primary"]] == ["transfer_money"]
+            assert [node["intent_code"] for node in payload["slot_nodes"]] == ["transfer_money"]
+            assert payload["slot_nodes"][0]["slot_memory"]["recipient_name"] == "小红"
+            assert payload["slot_nodes"][0]["slot_memory"]["amount"] == "200"
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.messages == []
             assert session.tasks == []
             assert session.current_graph is None
             assert session.pending_graph is None

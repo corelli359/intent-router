@@ -286,6 +286,12 @@ class GraphRouterOrchestrator:
             recommendation_context=recommendation_context,
             emit_events=False,
         )
+        if compile_result.graph is not None:
+            await self._hydrate_analysis_graph_understanding(
+                session,
+                compile_result.graph,
+                current_message=message_content,
+            )
         return MessageAnalysisResult(
             session_id=session.session_id,
             cust_id=session.cust_id,
@@ -294,6 +300,27 @@ class GraphRouterOrchestrator:
             graph=compile_result.graph,
             no_match=compile_result.no_match,
         )
+
+    async def _hydrate_analysis_graph_understanding(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        *,
+        current_message: str,
+    ) -> None:
+        """Populate per-node slot understanding for analyze-only responses without dispatching."""
+        active_intents = dict(self.intent_catalog.active_intents_by_code())
+        for node in graph.nodes:
+            intent = active_intents.get(node.intent_code)
+            if intent is None:
+                continue
+            await self._validate_node_understanding(
+                session,
+                graph,
+                node,
+                intent=intent,
+                current_message=current_message,
+            )
 
     async def _handle_proactive_recommendation_turn(
         self,
