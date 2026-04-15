@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from router_service.core.shared.domain import ChatMessage, IntentMatch, SESSION_TTL, Task, utc_now
+from router_service.core.shared.diagnostics import RouterDiagnostic
 
 
 class GraphEdgeType(StrEnum):
@@ -123,6 +124,7 @@ class GraphNodeState(BaseModel):
     slot_memory: dict[str, Any] = Field(default_factory=dict)
     slot_bindings: list[SlotBindingState] = Field(default_factory=list)
     history_slot_keys: list[str] = Field(default_factory=list)
+    diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -153,6 +155,7 @@ class ExecutionGraphState(BaseModel):
     nodes: list[GraphNodeState] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
     actions: list[GraphAction] = Field(default_factory=list)
+    diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -186,6 +189,7 @@ class GraphSessionState(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     tasks: list[Task] = Field(default_factory=list)
     candidate_intents: list[IntentMatch] = Field(default_factory=list)
+    last_diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
     current_graph: ExecutionGraphState | None = None
     pending_graph: ExecutionGraphState | None = None
     active_node_id: str | None = None
@@ -212,6 +216,7 @@ class GraphRouterSnapshot(BaseModel):
     cust_id: str
     messages: list[ChatMessage]
     candidate_intents: list[IntentMatch]
+    last_diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
     current_graph: ExecutionGraphState | None = None
     pending_graph: ExecutionGraphState | None = None
     active_node_id: str | None = None

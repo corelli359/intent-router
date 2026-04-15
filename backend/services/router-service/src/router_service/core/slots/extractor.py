@@ -9,6 +9,12 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from router_service.core.shared.domain import IntentDefinition
+from router_service.core.shared.diagnostics import (
+    RouterDiagnostic,
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
 from router_service.core.support.llm_client import JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
@@ -59,6 +65,7 @@ class SlotExtractionPayload(BaseModel):
 
     slots: list[SlotExtractionItemPayload] = Field(default_factory=list)
     ambiguous_slot_keys: list[str] = Field(default_factory=list, alias="ambiguousSlotKeys")
+    diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -90,6 +97,7 @@ class SlotExtractionResult:
     slot_bindings: list[SlotBindingState]
     history_slot_keys: list[str]
     ambiguous_slot_keys: list[str]
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class SlotExtractor:
@@ -180,6 +188,7 @@ class SlotExtractor:
             for slot in slot_schema
         )
         ambiguous_slot_keys: list[str] = []
+        diagnostics: list[RouterDiagnostic] = []
         if self.llm_client is not None and (llm_missing_required or not merged_memory):
             llm_result = await self._extract_with_llm(
                 intent=intent,
@@ -189,6 +198,7 @@ class SlotExtractor:
             )
             if llm_result is not None:
                 ambiguous_slot_keys = list(llm_result.ambiguous_slot_keys)
+                diagnostics = merge_diagnostics(diagnostics, llm_result.diagnostics)
                 self._merge_items(
                     merged_memory=merged_memory,
                     merged_bindings=merged_bindings,
@@ -209,6 +219,7 @@ class SlotExtractor:
                 for slot_key in ambiguous_slot_keys
                 if slot_key in slot_defs_by_key and slot_key not in merged_memory
             ],
+            diagnostics=diagnostics,
         )
 
     def _normalize_seed_binding(
@@ -311,10 +322,38 @@ class SlotExtractor:
                     "Slot extraction LLM is temporarily unavailable, preserving heuristic extraction",
                     exc_info=True,
                 )
-                return None
+                return SlotExtractionPayload.model_validate(
+                    {
+                        "slots": [],
+                        "ambiguousSlotKeys": [],
+                        "diagnostics": [
+                            diagnostic(
+                                RouterDiagnosticCode.SLOT_EXTRACTOR_LLM_RETRYABLE_UNAVAILABLE,
+                                source="slot_extractor",
+                                message="提槽 LLM 暂时不可用，已仅保留启发式提取结果",
+                                details={"error_type": type(exc).__name__},
+                            ).model_dump(mode="json")
+                        ],
+                    }
+                )
             logger.warning("Slot extraction LLM failed, falling back to heuristic extraction", exc_info=True)
-            return None
-        return SlotExtractionPayload.model_validate(raw_response)
+            return SlotExtractionPayload.model_validate(
+                {
+                    "slots": [],
+                    "ambiguousSlotKeys": [],
+                    "diagnostics": [
+                        diagnostic(
+                            RouterDiagnosticCode.SLOT_EXTRACTOR_LLM_FAILED_HEURISTIC_ONLY,
+                            source="slot_extractor",
+                            message="提槽 LLM 失败，已仅保留启发式提取结果",
+                            details={"error_type": type(exc).__name__},
+                        ).model_dump(mode="json")
+                    ],
+                }
+            )
+        payload = SlotExtractionPayload.model_validate(raw_response)
+        payload.diagnostics = payload.diagnostics or []
+        return payload
 
     def _extract_with_heuristics(
         self,

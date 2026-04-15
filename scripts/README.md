@@ -96,6 +96,25 @@ python scripts/analyze_intent_only.py
 
 Router file-mode export now writes the split directory `k8s/intent/router-intent-catalog/`, and the Minikube deploy script refreshes that directory from the current sqlite snapshot before rollout.
 
+Before that export, the deploy script now runs:
+
+```bash
+python scripts/sync_financial_intents_to_db.py
+```
+
+This keeps the sqlite snapshot aligned with the latest builtin finance intent definitions before the file-mode catalog ConfigMap is regenerated.
+
+Creative transfer multiturn intent+slot replay:
+
+```bash
+python scripts/verify_transfer_multiturn_dataset.py
+```
+
+Default dataset:
+
+- `docs/examples/transfer_money_multiturn_cases.csv`
+- answer fields come first, then `user_turn_*`, then the merged `dialogue_text`
+
 ### 6) Build target-cluster frontend artifacts
 
 This generates:

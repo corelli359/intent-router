@@ -6,6 +6,11 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, Field, model_validator
 
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.shared.diagnostics import (
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
 from router_service.core.support.llm_client import JsonLLMClient
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
@@ -395,14 +400,29 @@ class LLMIntentGraphPlanner:
                 model=self.model,
             )
             payload = GraphPlanningPayload.model_validate(raw_payload)
-        except Exception:
-            return await self.fallback.plan(
+        except Exception as exc:
+            graph = await self.fallback.plan(
                 message=message,
                 matches=matches,
                 intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
+            graph.diagnostics = merge_diagnostics(
+                graph.diagnostics,
+                [
+                    diagnostic(
+                        RouterDiagnosticCode.GRAPH_PLANNER_LLM_FAILED_FALLBACK,
+                        source="planner",
+                        message="图规划 LLM 失败，已降级到顺序规划器",
+                        details={
+                            "fallback": type(self.fallback).__name__,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+                ],
+            )
+            return graph
 
         graph = self.normalizer.normalize(
             payload=payload,
@@ -411,13 +431,25 @@ class LLMIntentGraphPlanner:
             intents_by_code=intents_by_code,
         )
         if not graph.nodes:
-            return await self.fallback.plan(
+            fallback_graph = await self.fallback.plan(
                 message=message,
                 matches=matches,
                 intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
+            fallback_graph.diagnostics = merge_diagnostics(
+                fallback_graph.diagnostics,
+                [
+                    diagnostic(
+                        RouterDiagnosticCode.GRAPH_PLANNER_EMPTY_GRAPH_FALLBACK,
+                        source="planner",
+                        message="图规划未产出节点，已降级到顺序规划器",
+                        details={"fallback": type(self.fallback).__name__},
+                    )
+                ],
+            )
+            return fallback_graph
         return graph
 
 class LLMGraphTurnInterpreter:

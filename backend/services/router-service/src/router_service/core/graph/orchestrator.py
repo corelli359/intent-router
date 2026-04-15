@@ -56,6 +56,7 @@ from router_service.core.graph.action_flow import GraphActionFlow
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.state_sync import GraphStateSync
 from router_service.core.graph.message_flow import GraphMessageFlow
+from router_service.core.shared.diagnostics import RouterDiagnostic, merge_diagnostics
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class MessageAnalysisResult:
     recognition: RecognitionResult
     graph: ExecutionGraphState | None
     no_match: bool = False
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class _NoopIntentRecognizer:
@@ -89,7 +91,7 @@ class _NoopIntentRecognizer:
 
     async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
         """Return an empty recognition result without performing any semantic work."""
-        return RecognitionResult(primary=[], candidates=[])
+        return RecognitionResult(primary=[], candidates=[], diagnostics=[])
 
 
 class GraphRouterOrchestrator:
@@ -220,6 +222,7 @@ class GraphRouterOrchestrator:
             cust_id=session.cust_id,
             messages=list(session.messages),
             candidate_intents=list(session.candidate_intents),
+            last_diagnostics=list(session.last_diagnostics),
             current_graph=session.current_graph.model_copy(deep=True) if session.current_graph is not None else None,
             pending_graph=session.pending_graph.model_copy(deep=True) if session.pending_graph is not None else None,
             active_node_id=session.active_node_id,
@@ -281,6 +284,7 @@ class GraphRouterOrchestrator:
                 recognition=recognition,
                 graph=None,
                 no_match=not recognition.primary,
+                diagnostics=merge_diagnostics(recognition.diagnostics),
             )
 
         if guided_selection is not None:
@@ -292,9 +296,10 @@ class GraphRouterOrchestrator:
                 session_id=session.session_id,
                 cust_id=session.cust_id,
                 content=display_content,
-                recognition=RecognitionResult(primary=[], candidates=[]),
+                recognition=RecognitionResult(primary=[], candidates=[], diagnostics=[]),
                 graph=graph,
                 no_match=False,
+                diagnostics=[],
             )
 
         compile_result = await self.graph_compiler.compile_message(
@@ -311,6 +316,14 @@ class GraphRouterOrchestrator:
                 compile_result.graph,
                 current_message=message_content,
             )
+        diagnostics = merge_diagnostics(
+            compile_result.diagnostics,
+            compile_result.graph.diagnostics if compile_result.graph is not None else [],
+            *(
+                node.diagnostics
+                for node in (compile_result.graph.nodes if compile_result.graph is not None else [])
+            ),
+        )
         return MessageAnalysisResult(
             session_id=session.session_id,
             cust_id=session.cust_id,
@@ -318,6 +331,7 @@ class GraphRouterOrchestrator:
             recognition=compile_result.recognition,
             graph=compile_result.graph,
             no_match=compile_result.no_match,
+            diagnostics=diagnostics,
         )
 
     async def _hydrate_analysis_graph_understanding(
@@ -704,6 +718,7 @@ class GraphRouterOrchestrator:
             # defensive slot checking and business execution.
             await self._mark_node_waiting_for_slots(session, graph, node, validation)
             return None
+        session.last_diagnostics = list(validation.diagnostics or [])
 
         context = self._build_graph_task_context(session, graph=graph)
         context.update(
@@ -840,6 +855,7 @@ class GraphRouterOrchestrator:
         node.slot_memory = dict(validation.slot_memory)
         node.slot_bindings = list(validation.slot_bindings)
         node.history_slot_keys = list(validation.history_slot_keys)
+        node.diagnostics = list(validation.diagnostics or [])
         return validation
 
     async def _mark_node_waiting_for_slots(
@@ -853,7 +869,9 @@ class GraphRouterOrchestrator:
         message = validation.prompt_message or "请补充当前事项所需信息"
         node.task_id = None
         node.touch(GraphNodeStatus.WAITING_USER_INPUT, blocking_reason=message)
+        node.diagnostics = list(validation.diagnostics or [])
         graph.touch(GraphStatus.WAITING_USER_INPUT)
+        session.last_diagnostics = list(validation.diagnostics or [])
         session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
         session.touch()
         await self._publish_node_state(

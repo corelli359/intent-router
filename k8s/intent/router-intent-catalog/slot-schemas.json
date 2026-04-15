@@ -2,458 +2,511 @@
   "slot_schemas": {
     "query_account_balance": [
       {
+        "slot_key": "card_number",
+        "field_code": "account_card_number",
+        "role": "account_identity",
+        "label": "银行卡号",
+        "description": "需要查询余额的银行卡卡号。",
+        "semantic_definition": "当前余额查询任务对应的目标银行卡号。",
+        "value_type": "account_number",
+        "required": true,
+        "allow_from_history": true,
         "aliases": [
           "卡号",
           "银行卡号",
           "账户卡号"
         ],
-        "allow_from_context": false,
-        "allow_from_history": true,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
+        "examples": [
+          "6222020100043219999"
+        ],
         "counter_examples": [
           "6666",
           "88元"
         ],
-        "description": "需要查询余额的银行卡卡号。",
-        "examples": [
-          "6222020100043219999"
-        ],
-        "field_code": "account_card_number",
-        "label": "银行卡号",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "优先识别当前任务明确提到的卡号，允许从同一用户历史确认信息中复用。",
-        "required": true,
-        "role": "account_identity",
-        "semantic_definition": "当前余额查询任务对应的目标银行卡号。",
-        "slot_key": "card_number",
-        "value_type": "account_number"
+        "prompt_hint": "优先识别当前任务明确提到的卡号，允许从同一用户历史确认信息中复用。"
       },
       {
+        "slot_key": "phone_last_four",
+        "field_code": "bound_phone_last_four",
+        "role": "customer_verification",
+        "label": "手机号后4位",
+        "description": "银行卡绑定手机号后4位。",
+        "semantic_definition": "用于余额查询身份核验的手机号后4位。",
+        "value_type": "phone_last4",
+        "required": true,
+        "allow_from_history": true,
         "aliases": [
           "手机号后4位",
           "手机尾号",
           "后四位"
         ],
-        "allow_from_context": false,
-        "allow_from_history": true,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
+        "examples": [
+          "6666"
+        ],
         "counter_examples": [
           "6222020100043219999",
           "100"
         ],
-        "description": "银行卡绑定手机号后4位。",
-        "examples": [
-          "6666"
-        ],
-        "field_code": "bound_phone_last_four",
-        "label": "手机号后4位",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "如果用户给出完整手机号，只保留最后 4 位。",
-        "required": true,
-        "role": "customer_verification",
-        "semantic_definition": "用于余额查询身份核验的手机号后4位。",
-        "slot_key": "phone_last_four",
-        "value_type": "phone_last4"
+        "prompt_hint": "如果用户给出完整手机号，只保留最后 4 位。"
       }
     ],
     "transfer_money": [
       {
-        "aliases": [
-          "收款人",
-          "对方姓名",
-          "收款人姓名"
-        ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "6222020100043219999",
-          "500"
-        ],
-        "description": "本次转账的收款人姓名或明确亲属称呼。",
-        "examples": [
-          "张三",
-          "弟弟",
-          "妈妈"
-        ],
-        "field_code": "recipient_name",
-        "label": "收款人姓名",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "用户明确说“给弟弟转500”时，应识别“弟弟”为收款人。",
+        "slot_key": "amount",
+        "field_code": "amount",
+        "role": "transaction_amount",
+        "label": "金额",
+        "description": "本次转账金额。",
+        "semantic_definition": "转账动作需要执行的金额。",
+        "value_type": "currency",
         "required": true,
-        "role": "payee_identity",
-        "semantic_definition": "当前转账任务的收款对象。",
-        "slot_key": "recipient_name",
-        "value_type": "person_name"
-      },
-      {
-        "aliases": [
-          "收款卡号",
-          "银行卡号",
-          "收款账户"
-        ],
-        "allow_from_context": false,
         "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "1234",
-          "500"
-        ],
-        "description": "收款人银行卡号。",
-        "examples": [
-          "6222020100043219999"
-        ],
-        "field_code": "recipient_card_number",
-        "label": "收款卡号",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "不能从历史记录里推断新的收款卡号。",
-        "required": true,
-        "role": "payee_account",
-        "semantic_definition": "执行转账所需的收款银行卡号。",
-        "slot_key": "recipient_card_number",
-        "value_type": "account_number"
-      },
-      {
-        "aliases": [
-          "收款人手机号后4位",
-          "对方手机尾号",
-          "后四位"
-        ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "500",
-          "6222020100043219999"
-        ],
-        "description": "收款人手机号后4位。",
-        "examples": [
-          "1234"
-        ],
-        "field_code": "recipient_phone_last_four",
-        "label": "收款人手机号后4位",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "如果当前只出现独立 4 位数字且金额与手机号后4位都缺失，应保持歧义并追问。",
-        "required": true,
-        "role": "payee_verification",
-        "semantic_definition": "执行转账前用于核验收款人的手机号后4位。",
-        "slot_key": "recipient_phone_last_four",
-        "value_type": "phone_last4"
-      },
-      {
         "aliases": [
           "金额",
           "转账金额",
           "汇款金额"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "1234",
-          "6222020100043219999"
-        ],
-        "description": "本次转账金额。",
         "examples": [
           "500",
           "2000.50"
         ],
-        "field_code": "transfer_amount",
-        "label": "转账金额",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "若当前只缺金额，独立数字可识别为金额；否则不能把 4 位数字直接判定为金额。",
+        "counter_examples": [
+          "1234",
+          "6222020100043219999"
+        ],
+        "prompt_hint": "若当前消息明确包含转账金额，应优先提取到 amount。"
+      },
+      {
+        "slot_key": "ccy",
+        "field_code": "ccy",
+        "role": "transaction_currency",
+        "label": "币种",
+        "description": "本次转账对应的币种。",
+        "semantic_definition": "转账金额的币种信息。",
+        "value_type": "string",
+        "required": false,
+        "allow_from_history": false,
+        "aliases": [
+          "币种",
+          "货币",
+          "转账币种"
+        ],
+        "examples": [
+          "人民币",
+          "CNY",
+          "美元",
+          "USD"
+        ],
+        "counter_examples": [
+          "500",
+          "小红"
+        ],
+        "prompt_hint": "如果用户没有明确指定币种，不要强行补齐。"
+      },
+      {
+        "slot_key": "payer_card_no",
+        "field_code": "payer_card_no",
+        "role": "payer_account",
+        "label": "付款卡卡号/尾号",
+        "description": "付款卡卡号或尾号。",
+        "semantic_definition": "当前转账使用的付款卡标识。",
+        "value_type": "string",
+        "required": false,
+        "allow_from_history": false,
+        "aliases": [
+          "付款卡",
+          "付款卡号",
+          "付款卡尾号"
+        ],
+        "examples": [
+          "6222020100043219999",
+          "8888"
+        ],
+        "counter_examples": [
+          "小红",
+          "500"
+        ],
+        "prompt_hint": "只有用户明确指向付款卡时才提取，不要把收款卡信息误填到付款卡。"
+      },
+      {
+        "slot_key": "payer_card_remark",
+        "field_code": "payer_card_remark",
+        "role": "payer_account_remark",
+        "label": "付款卡备注",
+        "description": "付款卡备注。",
+        "semantic_definition": "当前转账付款卡的备注名称。",
+        "value_type": "string",
+        "required": false,
+        "allow_from_history": false,
+        "aliases": [
+          "付款卡备注",
+          "付款账户备注"
+        ],
+        "examples": [
+          "工资卡",
+          "日常卡"
+        ],
+        "counter_examples": [
+          "6222020100043219999",
+          "小红"
+        ],
+        "prompt_hint": "只有用户明确说出付款卡备注时才填充该槽位。"
+      },
+      {
+        "slot_key": "payee_name",
+        "field_code": "payee_name",
+        "role": "payee_name",
+        "label": "收款人姓名",
+        "description": "收款人姓名。",
+        "semantic_definition": "当前转账的收款人姓名。",
+        "value_type": "string",
         "required": true,
-        "role": "transaction_amount",
-        "semantic_definition": "转账动作需要执行的金额。",
-        "slot_key": "amount",
-        "value_type": "currency"
+        "allow_from_history": false,
+        "aliases": [
+          "收款人姓名",
+          "收款人",
+          "对方姓名"
+        ],
+        "examples": [
+          "小红",
+          "张三",
+          "李四"
+        ],
+        "counter_examples": [
+          "1234",
+          "人民币"
+        ],
+        "prompt_hint": "只有用户明确给出收款人姓名时才提取，不要把卡号填到 payee_name。"
+      },
+      {
+        "slot_key": "payee_card_no",
+        "field_code": "payee_card_no",
+        "role": "payee_account",
+        "label": "收款卡卡号/尾号",
+        "description": "收款卡卡号或尾号。",
+        "semantic_definition": "当前转账的收款卡标识。",
+        "value_type": "string",
+        "required": true,
+        "allow_from_history": false,
+        "aliases": [
+          "收款卡号",
+          "收款卡尾号",
+          "收款卡卡号/尾号",
+          "对方卡号",
+          "对方卡尾号"
+        ],
+        "examples": [
+          "6222020100043219999",
+          "1234"
+        ],
+        "counter_examples": [
+          "张三",
+          "人民币"
+        ],
+        "prompt_hint": "只有用户明确给出收款卡号或尾号时才提取，不要把收款人姓名填到 payee_card_no。"
+      },
+      {
+        "slot_key": "payee_card_remark",
+        "field_code": "payee_card_remark",
+        "role": "payee_account_remark",
+        "label": "收款卡备注",
+        "description": "收款卡备注。",
+        "semantic_definition": "当前收款卡的备注名称。",
+        "value_type": "string",
+        "required": false,
+        "allow_from_history": false,
+        "aliases": [
+          "收款卡备注",
+          "收款账户备注"
+        ],
+        "examples": [
+          "房租卡",
+          "家用卡"
+        ],
+        "counter_examples": [
+          "小红",
+          "500"
+        ],
+        "prompt_hint": "只有用户明确提供收款卡备注时才填充。"
+      },
+      {
+        "slot_key": "payee_card_bank",
+        "field_code": "payee_card_bank",
+        "role": "payee_bank",
+        "label": "收款卡银行",
+        "description": "收款卡所属银行。",
+        "semantic_definition": "当前收款卡对应的银行名称。",
+        "value_type": "string",
+        "required": false,
+        "allow_from_history": false,
+        "aliases": [
+          "收款银行",
+          "收款卡银行"
+        ],
+        "examples": [
+          "招商银行",
+          "中国银行"
+        ],
+        "counter_examples": [
+          "500",
+          "小红"
+        ],
+        "prompt_hint": "只有用户明确指出收款银行时才填充。"
+      },
+      {
+        "slot_key": "payee_phone",
+        "field_code": "payee_phone",
+        "role": "payee_phone",
+        "label": "收款手机号/尾号",
+        "description": "收款手机号或手机号尾号。",
+        "semantic_definition": "当前收款对象对应的手机号或尾号。",
+        "value_type": "string",
+        "required": false,
+        "allow_from_history": false,
+        "aliases": [
+          "收款手机号",
+          "收款手机号尾号",
+          "收款手机号/尾号"
+        ],
+        "examples": [
+          "13800138000",
+          "1234"
+        ],
+        "counter_examples": [
+          "500",
+          "招商银行"
+        ],
+        "prompt_hint": "只有用户明确给出收款手机号或尾号时才填充。"
       }
     ],
     "query_credit_card_repayment": [
       {
+        "slot_key": "card_number",
+        "field_code": "credit_card_number",
+        "role": "card_identity",
+        "label": "信用卡卡号",
+        "description": "需要查询账单的信用卡卡号。",
+        "semantic_definition": "当前信用卡还款信息查询任务的目标卡号。",
+        "value_type": "account_number",
+        "required": true,
+        "allow_from_history": true,
         "aliases": [
           "信用卡卡号",
           "卡号",
           "信用卡号码"
         ],
-        "allow_from_context": false,
-        "allow_from_history": true,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
+        "examples": [
+          "6225888800001234567"
+        ],
         "counter_examples": [
           "6666",
           "3200"
         ],
-        "description": "需要查询账单的信用卡卡号。",
-        "examples": [
-          "6225888800001234567"
-        ],
-        "field_code": "credit_card_number",
-        "label": "信用卡卡号",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "允许从同一用户已确认的信用卡任务历史中复用卡号。",
-        "required": true,
-        "role": "card_identity",
-        "semantic_definition": "当前信用卡还款信息查询任务的目标卡号。",
-        "slot_key": "card_number",
-        "value_type": "account_number"
+        "prompt_hint": "允许从同一用户已确认的信用卡任务历史中复用卡号。"
       },
       {
+        "slot_key": "phone_last_four",
+        "field_code": "credit_card_phone_last_four",
+        "role": "customer_verification",
+        "label": "手机号后4位",
+        "description": "信用卡绑定手机号后4位。",
+        "semantic_definition": "用于信用卡还款信息查询核验的手机号后4位。",
+        "value_type": "phone_last4",
+        "required": true,
+        "allow_from_history": true,
         "aliases": [
           "手机号后4位",
           "手机尾号",
           "后四位"
         ],
-        "allow_from_context": false,
-        "allow_from_history": true,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
+        "examples": [
+          "6666"
+        ],
         "counter_examples": [
           "6225888800001234567",
           "3200"
         ],
-        "description": "信用卡绑定手机号后4位。",
-        "examples": [
-          "6666"
-        ],
-        "field_code": "credit_card_phone_last_four",
-        "label": "手机号后4位",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "如果用户给出完整手机号，只保留最后 4 位。",
-        "required": true,
-        "role": "customer_verification",
-        "semantic_definition": "用于信用卡还款信息查询核验的手机号后4位。",
-        "slot_key": "phone_last_four",
-        "value_type": "phone_last4"
+        "prompt_hint": "如果用户给出完整手机号，只保留最后 4 位。"
       }
     ],
     "pay_gas_bill": [
       {
+        "slot_key": "gas_account_number",
+        "field_code": "gas_account_number",
+        "role": "billing_account",
+        "label": "燃气户号",
+        "description": "天然气缴费户号。",
+        "semantic_definition": "执行天然气缴费所需的目标户号。",
+        "value_type": "account_number",
+        "required": true,
+        "allow_from_history": false,
         "aliases": [
           "燃气户号",
           "天然气户号",
           "煤气户号"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
+        "examples": [
+          "88001234"
+        ],
         "counter_examples": [
           "88",
           "100元"
         ],
-        "description": "天然气缴费户号。",
-        "examples": [
-          "88001234"
-        ],
-        "field_code": "gas_account_number",
-        "label": "燃气户号",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "不能把金额数字误识别为燃气户号。",
-        "required": true,
-        "role": "billing_account",
-        "semantic_definition": "执行天然气缴费所需的目标户号。",
-        "slot_key": "gas_account_number",
-        "value_type": "account_number"
+        "prompt_hint": "不能把金额数字误识别为燃气户号。"
       },
       {
+        "slot_key": "amount",
+        "field_code": "gas_payment_amount",
+        "role": "billing_amount",
+        "label": "缴费金额",
+        "description": "本次天然气缴费金额。",
+        "semantic_definition": "执行天然气缴费动作的金额。",
+        "value_type": "currency",
+        "required": true,
+        "allow_from_history": false,
         "aliases": [
           "金额",
           "缴费金额",
           "充值金额"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "88001234",
-          "卡号"
-        ],
-        "description": "本次天然气缴费金额。",
         "examples": [
           "88",
           "100"
         ],
-        "field_code": "gas_payment_amount",
-        "label": "缴费金额",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "优先识别带元、块、充值、缴费等语义的金额表达。",
-        "required": true,
-        "role": "billing_amount",
-        "semantic_definition": "执行天然气缴费动作的金额。",
-        "slot_key": "amount",
-        "value_type": "currency"
+        "counter_examples": [
+          "88001234",
+          "卡号"
+        ],
+        "prompt_hint": "优先识别带元、块、充值、缴费等语义的金额表达。"
       }
     ],
     "exchange_forex": [
       {
+        "slot_key": "source_currency",
+        "field_code": "forex_source_currency",
+        "role": "sell_currency",
+        "label": "卖出币种",
+        "description": "换汇前卖出的币种。",
+        "semantic_definition": "当前换汇任务中被卖出的币种。",
+        "value_type": "string",
+        "required": true,
+        "allow_from_history": false,
         "aliases": [
           "卖出币种",
           "源币种",
           "付款币种"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "汇率",
-          "金额"
-        ],
-        "description": "换汇前卖出的币种。",
         "examples": [
           "人民币",
           "美元",
           "CNY",
           "USD"
         ],
-        "field_code": "forex_source_currency",
-        "label": "卖出币种",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "统一归一化为 ISO 代码，例如 人民币=>CNY，美元=>USD。",
-        "required": true,
-        "role": "sell_currency",
-        "semantic_definition": "当前换汇任务中被卖出的币种。",
-        "slot_key": "source_currency",
-        "value_type": "string"
+        "counter_examples": [
+          "汇率",
+          "金额"
+        ],
+        "prompt_hint": "统一归一化为 ISO 代码，例如 人民币=>CNY，美元=>USD。"
       },
       {
+        "slot_key": "target_currency",
+        "field_code": "forex_target_currency",
+        "role": "buy_currency",
+        "label": "买入币种",
+        "description": "换汇后买入的币种。",
+        "semantic_definition": "当前换汇任务中被买入的目标币种。",
+        "value_type": "string",
+        "required": true,
+        "allow_from_history": false,
         "aliases": [
           "买入币种",
           "目标币种",
           "兑换后币种"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "汇率",
-          "金额"
-        ],
-        "description": "换汇后买入的币种。",
         "examples": [
           "美元",
           "人民币",
           "USD",
           "CNY"
         ],
-        "field_code": "forex_target_currency",
-        "label": "买入币种",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "统一归一化为 ISO 代码，例如 人民币=>CNY，美元=>USD。",
-        "required": true,
-        "role": "buy_currency",
-        "semantic_definition": "当前换汇任务中被买入的目标币种。",
-        "slot_key": "target_currency",
-        "value_type": "string"
+        "counter_examples": [
+          "汇率",
+          "金额"
+        ],
+        "prompt_hint": "统一归一化为 ISO 代码，例如 人民币=>CNY，美元=>USD。"
       },
       {
+        "slot_key": "amount",
+        "field_code": "forex_amount",
+        "role": "exchange_amount",
+        "label": "换汇金额",
+        "description": "本次换汇金额。",
+        "semantic_definition": "当前换汇任务需要执行的金额。",
+        "value_type": "currency",
+        "required": true,
+        "allow_from_history": false,
         "aliases": [
           "金额",
           "换汇金额",
           "购汇金额"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
-        "counter_examples": [
-          "6222020100043219999",
-          "1234"
-        ],
-        "description": "本次换汇金额。",
         "examples": [
           "1000",
           "500"
         ],
-        "field_code": "forex_amount",
-        "label": "换汇金额",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "如果一句话里同时有币种与数字，应优先把数字识别为换汇金额。",
-        "required": true,
-        "role": "exchange_amount",
-        "semantic_definition": "当前换汇任务需要执行的金额。",
-        "slot_key": "amount",
-        "value_type": "currency"
+        "counter_examples": [
+          "6222020100043219999",
+          "1234"
+        ],
+        "prompt_hint": "如果一句话里同时有币种与数字，应优先把数字识别为换汇金额。"
       },
       {
+        "slot_key": "card_number",
+        "field_code": "forex_card_number",
+        "role": "debit_account",
+        "label": "扣款卡号",
+        "description": "本次换汇使用的扣款卡号，可选。",
+        "semantic_definition": "换汇时可能需要的扣款银行卡号。",
+        "value_type": "account_number",
+        "required": false,
+        "allow_from_history": false,
         "aliases": [
           "卡号",
           "扣款卡号",
           "银行卡号"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
+        "examples": [
+          "6222020100043219999"
+        ],
         "counter_examples": [
           "1234",
           "1000"
         ],
-        "description": "本次换汇使用的扣款卡号，可选。",
-        "examples": [
-          "6222020100043219999"
-        ],
-        "field_code": "forex_card_number",
-        "label": "扣款卡号",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "当前版本不因缺少该槽位阻塞执行，但若用户明确提供则应保留。",
-        "required": false,
-        "role": "debit_account",
-        "semantic_definition": "换汇时可能需要的扣款银行卡号。",
-        "slot_key": "card_number",
-        "value_type": "account_number"
+        "prompt_hint": "当前版本不因缺少该槽位阻塞执行，但若用户明确提供则应保留。"
       },
       {
+        "slot_key": "phone_last_four",
+        "field_code": "forex_phone_last_four",
+        "role": "customer_verification",
+        "label": "手机号后4位",
+        "description": "换汇校验所需手机号后4位，可选。",
+        "semantic_definition": "换汇场景下可选的手机号后4位校验信息。",
+        "value_type": "phone_last4",
+        "required": false,
+        "allow_from_history": false,
         "aliases": [
           "手机号后4位",
           "手机尾号",
           "后四位"
         ],
-        "allow_from_context": false,
-        "allow_from_history": false,
-        "allow_from_recommendation": true,
-        "bind_scope": "node_input",
-        "confirmation_policy": "when_ambiguous",
+        "examples": [
+          "1234"
+        ],
         "counter_examples": [
           "1000",
           "6222020100043219999"
         ],
-        "description": "换汇校验所需手机号后4位，可选。",
-        "examples": [
-          "1234"
-        ],
-        "field_code": "forex_phone_last_four",
-        "label": "手机号后4位",
-        "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "当前版本不因缺少该槽位阻塞执行，但若用户明确提供则应保留。",
-        "required": false,
-        "role": "customer_verification",
-        "semantic_definition": "换汇场景下可选的手机号后4位校验信息。",
-        "slot_key": "phone_last_four",
-        "value_type": "phone_last4"
+        "prompt_hint": "当前版本不因缺少该槽位阻塞执行，但若用户明确提供则应保留。"
       }
     ]
   }

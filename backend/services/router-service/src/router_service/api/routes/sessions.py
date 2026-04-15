@@ -5,13 +5,15 @@ from enum import StrEnum
 import json
 from contextlib import suppress
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field, model_validator
 from starlette.responses import StreamingResponse
 
+from router_service.api.errors import RouterApiException, RouterErrorCode
 from router_service.api.dependencies import get_event_broker, get_orchestrator
 from router_service.api.sse.broker import EventBroker
 from router_service.core.shared.domain import IntentMatch, TaskEvent, TaskStatus
+from router_service.core.shared.diagnostics import RouterDiagnostic
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphEdge,
@@ -93,6 +95,7 @@ class MessageAnalysisPayload(BaseModel):
     graph: ExecutionGraphState | None = None
     slot_nodes: list[GraphNodeState] = Field(default_factory=list)
     conditional_edges: list[GraphEdge] = Field(default_factory=list)
+    diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
 
 
 class ActionRequest(BaseModel):
@@ -169,6 +172,7 @@ def _build_message_analysis_payload(result: MessageAnalysisResult) -> MessageAna
         graph=graph,
         slot_nodes=list(graph.nodes) if graph is not None else [],
         conditional_edges=[edge for edge in graph.edges if edge.condition is not None] if graph is not None else [],
+        diagnostics=list(result.diagnostics or []),
     )
 
 
@@ -192,7 +196,12 @@ async def get_session_snapshot(
     try:
         return orchestrator.snapshot(session_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="session not found") from exc
+        raise RouterApiException(
+            status_code=404,
+            code=RouterErrorCode.ROUTER_SESSION_NOT_FOUND,
+            message="session not found",
+            details={"session_id": session_id},
+        ) from exc
 
 
 @router.post("/sessions/{session_id}/messages")
@@ -227,7 +236,11 @@ async def post_message(
             proactive_recommendation=request.proactive_recommendation,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise RouterApiException(
+            status_code=400,
+            code=RouterErrorCode.ROUTER_BAD_REQUEST,
+            message=str(exc),
+        ) from exc
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
 
 
@@ -250,7 +263,11 @@ async def analyze_message(
             proactive_recommendation=request.proactive_recommendation,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise RouterApiException(
+            status_code=400,
+            code=RouterErrorCode.ROUTER_BAD_REQUEST,
+            message=str(exc),
+        ) from exc
     return {"ok": True, "analysis": _build_message_analysis_payload(analysis).model_dump(mode="json")}
 
 
@@ -276,7 +293,11 @@ async def post_action(
             payload=request.payload,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise RouterApiException(
+            status_code=400,
+            code=RouterErrorCode.ROUTER_BAD_REQUEST,
+            message=str(exc),
+        ) from exc
     return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
 
 
@@ -347,7 +368,11 @@ async def post_message_stream(
 ) -> StreamingResponse:
     """Execute one message turn while streaming router events over SSE."""
     if request.execution_mode == MessageExecutionMode.ANALYZE_ONLY:
-        raise HTTPException(status_code=400, detail="analyze_only is not supported on the stream endpoint")
+        raise RouterApiException(
+            status_code=400,
+            code=RouterErrorCode.ROUTER_STREAM_MODE_UNSUPPORTED,
+            message="analyze_only is not supported on the stream endpoint",
+        )
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
 
     async def event_generator():

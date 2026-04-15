@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field
 
 from router_service.models.intent import GraphConfirmPolicy
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.shared.diagnostics import (
+    RouterDiagnostic,
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
 from router_service.core.support.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
@@ -102,6 +108,7 @@ class GraphBuildResult:
 
     recognition: RecognitionResult
     graph: ExecutionGraphState
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class IntentGraphBuilder(Protocol):
@@ -143,7 +150,11 @@ class GraphDraftNormalizer:
             recent_messages=recent_messages or [],
             long_term_memory=long_term_memory or [],
         )
-        return GraphBuildResult(recognition=recognition, graph=graph)
+        return GraphBuildResult(
+            recognition=recognition,
+            graph=graph,
+            diagnostics=merge_diagnostics(recognition.diagnostics, graph.diagnostics),
+        )
 
     def _normalize_recognition(
         self,
@@ -192,7 +203,7 @@ class GraphDraftNormalizer:
 
         primary.sort(key=_sort_key, reverse=True)
         candidates.sort(key=_sort_key, reverse=True)
-        return RecognitionResult(primary=primary, candidates=candidates)
+        return RecognitionResult(primary=primary, candidates=candidates, diagnostics=[])
 
     def _normalize_graph(
         self,
@@ -431,8 +442,9 @@ class LLMIntentGraphBuilder:
         active_intents = [intent for intent in intents if intent.status == "active"]
         if not active_intents:
             return GraphBuildResult(
-                recognition=RecognitionResult(primary=[], candidates=[]),
+                recognition=RecognitionResult(primary=[], candidates=[], diagnostics=[]),
                 graph=ExecutionGraphState(source_message=message),
+                diagnostics=[],
             )
 
         intents_by_code = {intent.intent_code: intent for intent in active_intents}
@@ -466,7 +478,7 @@ class LLMIntentGraphBuilder:
             if llm_exception_is_retryable(exc):
                 raise
             logger.warning("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
-            return await self._build_via_legacy_chain(
+            result = await self._build_via_legacy_chain(
                 message=message,
                 intents=active_intents,
                 recent_messages=recent_messages,
@@ -474,12 +486,26 @@ class LLMIntentGraphBuilder:
                 recognition=recognition,
                 on_delta=on_delta,
             )
+            diagnostics = merge_diagnostics(
+                result.diagnostics,
+                [
+                    diagnostic(
+                        RouterDiagnosticCode.GRAPH_BUILDER_LLM_FAILED_LEGACY_CHAIN,
+                        source="graph_builder",
+                        message="统一编图 LLM 失败，已降级到识别+规划链路",
+                        details={"error_type": type(exc).__name__},
+                    )
+                ],
+            )
+            result.graph.diagnostics = merge_diagnostics(result.graph.diagnostics, diagnostics)
+            result.diagnostics = diagnostics
+            return result
 
         try:
             payload = UnifiedGraphDraftPayload.model_validate(raw_payload)
-        except Exception:
+        except Exception as exc:
             logger.warning("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
-            return await self._build_via_legacy_chain(
+            result = await self._build_via_legacy_chain(
                 message=message,
                 intents=active_intents,
                 recent_messages=recent_messages,
@@ -487,6 +513,20 @@ class LLMIntentGraphBuilder:
                 recognition=recognition,
                 on_delta=on_delta,
             )
+            diagnostics = merge_diagnostics(
+                result.diagnostics,
+                [
+                    diagnostic(
+                        RouterDiagnosticCode.GRAPH_BUILDER_INVALID_PAYLOAD_LEGACY_CHAIN,
+                        source="graph_builder",
+                        message="统一编图返回结构非法，已降级到识别+规划链路",
+                        details={"error_type": type(exc).__name__},
+                    )
+                ],
+            )
+            result.graph.diagnostics = merge_diagnostics(result.graph.diagnostics, diagnostics)
+            result.diagnostics = diagnostics
+            return result
 
         result = self.normalizer.normalize(
             payload=payload,
@@ -503,7 +543,23 @@ class LLMIntentGraphBuilder:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
-            return GraphBuildResult(recognition=result.recognition, graph=fallback_graph)
+            diagnostics = merge_diagnostics(
+                result.diagnostics,
+                [
+                    diagnostic(
+                        RouterDiagnosticCode.GRAPH_BUILDER_EMPTY_GRAPH_FALLBACK_PLANNER,
+                        source="graph_builder",
+                        message="统一编图未产出可执行节点，已降级到兜底规划器",
+                        details={"fallback": type(self.fallback_planner).__name__},
+                    )
+                ],
+            )
+            fallback_graph.diagnostics = merge_diagnostics(fallback_graph.diagnostics, diagnostics)
+            return GraphBuildResult(
+                recognition=result.recognition,
+                graph=fallback_graph,
+                diagnostics=diagnostics,
+            )
         return result
 
     async def _build_via_legacy_chain(
@@ -533,4 +589,6 @@ class LLMIntentGraphBuilder:
             recent_messages=recent_messages,
             long_term_memory=long_term_memory,
         )
-        return GraphBuildResult(recognition=resolved_recognition, graph=graph)
+        diagnostics = merge_diagnostics(resolved_recognition.diagnostics, graph.diagnostics)
+        graph.diagnostics = merge_diagnostics(graph.diagnostics, diagnostics)
+        return GraphBuildResult(recognition=resolved_recognition, graph=graph, diagnostics=diagnostics)

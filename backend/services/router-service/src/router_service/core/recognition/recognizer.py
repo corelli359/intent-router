@@ -7,6 +7,12 @@ import json
 from typing import Awaitable, Callable, Protocol
 
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.shared.diagnostics import (
+    RouterDiagnostic,
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
 from router_service.core.support.llm_client import IntentRecognitionPayload, JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
@@ -24,6 +30,7 @@ class RecognitionResult:
 
     primary: list[IntentMatch]
     candidates: list[IntentMatch]
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
@@ -83,7 +90,7 @@ class NullIntentRecognizer:
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RecognitionResult:
         """Return an empty recognition result without attempting semantic routing."""
-        return RecognitionResult(primary=[], candidates=[])
+        return RecognitionResult(primary=[], candidates=[], diagnostics=[])
 
 
 class LLMIntentRecognizer:
@@ -118,7 +125,7 @@ class LLMIntentRecognizer:
         """Run LLM-based recognition and bucket matches by configured thresholds."""
         active_intents = [intent for intent in intents if intent.status == "active"]
         if not active_intents:
-            return RecognitionResult(primary=[], candidates=[])
+            return RecognitionResult(primary=[], candidates=[], diagnostics=[])
 
         try:
             raw_response = await self.llm_client.run_json(
@@ -145,7 +152,25 @@ class LLMIntentRecognizer:
                 type(self.fallback).__name__,
                 exc_info=True,
             )
-            return await self.fallback.recognize(message, active_intents, recent_messages, long_term_memory)
+            fallback_result = await self.fallback.recognize(message, active_intents, recent_messages, long_term_memory)
+            return RecognitionResult(
+                primary=list(fallback_result.primary),
+                candidates=list(fallback_result.candidates),
+                diagnostics=merge_diagnostics(
+                    fallback_result.diagnostics or [],
+                    [
+                        diagnostic(
+                            RouterDiagnosticCode.RECOGNIZER_LLM_FAILED_FALLBACK,
+                            source="recognizer",
+                            message="意图识别 LLM 失败，已降级到兜底识别器",
+                            details={
+                                "fallback": type(self.fallback).__name__,
+                                "error_type": type(exc).__name__,
+                            },
+                        )
+                    ],
+                ),
+            )
 
         raw_matches = response.matches
 
@@ -180,4 +205,4 @@ class LLMIntentRecognizer:
 
         primary.sort(key=_sort_key, reverse=True)
         candidates.sort(key=_sort_key, reverse=True)
-        return RecognitionResult(primary=primary, candidates=candidates)
+        return RecognitionResult(primary=primary, candidates=candidates, diagnostics=[])

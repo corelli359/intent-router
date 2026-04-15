@@ -27,7 +27,7 @@ class LeafIntentRouter:
         """Recognize leaf intents, optionally short-circuiting single-leaf domains."""
         leaf_intents = list(intents)
         if not leaf_intents:
-            return RecognitionResult(primary=[], candidates=[])
+            return RecognitionResult(primary=[], candidates=[], diagnostics=[])
         if allow_direct_single_leaf and len(leaf_intents) == 1:
             intent = leaf_intents[0]
             match = IntentMatch(
@@ -35,7 +35,7 @@ class LeafIntentRouter:
                 confidence=0.99,
                 reason="domain has a single leaf intent",
             )
-            return RecognitionResult(primary=[match], candidates=[])
+            return RecognitionResult(primary=[match], candidates=[], diagnostics=[])
         return await self.recognizer.recognize(
             message=message,
             intents=leaf_intents,

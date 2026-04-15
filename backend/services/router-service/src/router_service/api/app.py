@@ -4,9 +4,18 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 
+from router_service.api.errors import (
+    RouterApiError,
+    RouterApiErrorResponse,
+    RouterApiException,
+    RouterErrorCode,
+)
 from router_service.api.dependencies import (
     build_router_runtime,
     close_router_runtime,
@@ -93,6 +102,51 @@ def create_router_app() -> FastAPI:
     async def prefixed_health_v2() -> dict[str, str]:
         """Return a V2-prefixed health endpoint sharing the same runtime."""
         return await health()
+
+    @app.exception_handler(RouterApiException)
+    async def handle_router_api_exception(_, exc: RouterApiException) -> JSONResponse:
+        """Render application-level router exceptions into a stable JSON envelope."""
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.to_response().model_dump(mode="json"),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation_error(_, exc: RequestValidationError) -> JSONResponse:
+        """Return structured payload validation errors for malformed requests."""
+        payload = RouterApiErrorResponse(
+            error=RouterApiError(
+                code=RouterErrorCode.ROUTER_REQUEST_VALIDATION_FAILED,
+                message="request validation failed",
+                details={"errors": jsonable_encoder(exc.errors())},
+            )
+        )
+        return JSONResponse(status_code=422, content=payload.model_dump(mode="json"))
+
+    @app.exception_handler(HTTPException)
+    async def handle_http_exception(_, exc: HTTPException) -> JSONResponse:
+        """Normalize raw FastAPI HTTP errors into the shared router envelope."""
+        details = exc.detail if isinstance(exc.detail, dict) else {"detail": exc.detail}
+        payload = RouterApiErrorResponse(
+            error=RouterApiError(
+                code=RouterErrorCode.ROUTER_HTTP_ERROR,
+                message=str(exc.detail),
+                details=details,
+            )
+        )
+        return JSONResponse(status_code=exc.status_code, content=payload.model_dump(mode="json"))
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected_exception(_, _exc: Exception) -> JSONResponse:
+        """Catch unexpected exceptions so callers always receive a coded JSON error."""
+        app_logger.exception("Unhandled router exception")
+        payload = RouterApiErrorResponse(
+            error=RouterApiError(
+                code=RouterErrorCode.ROUTER_INTERNAL_ERROR,
+                message="internal server error",
+            )
+        )
+        return JSONResponse(status_code=500, content=payload.model_dump(mode="json"))
 
     app.include_router(graph_session_router, prefix="/api/router")
     app.include_router(graph_session_router, prefix="/api/router/v2")

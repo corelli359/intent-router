@@ -77,6 +77,7 @@ ensure_ingress() {
 ensure_ingress
 node_kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=5m || true
 
+python "${ROOT_DIR}/scripts/sync_financial_intents_to_db.py"
 python "${ROOT_DIR}/scripts/export_router_intent_catalog_from_db.py" --output-dir "${INTENT_CATALOG_SOURCE_DIR}"
 
 start_mount_container

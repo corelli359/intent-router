@@ -166,43 +166,36 @@ def scenario_transfer_flow(client: RouterClient) -> dict[str, Any]:
 
     first = client.post_message(
         session_id,
-        content="给弟弟转500",
+        content="帮我转账",
         intent_code="transfer_money",
     )
     first_text = _last_assistant_message(first)
-    _assert_contains(first_text, ["收款卡号", "收款人手机号后4位"], context="transfer step1 prompt")
-    _assert_not_contains(first_text, ["收款人姓名", "转账金额"], context="transfer step1 prompt")
+    _assert_contains(first_text, ["金额", "收款人姓名", "收款卡卡号/尾号"], context="transfer step1 prompt")
     first_node = _single_node(first)
     _assert_equal(first_node["status"], "waiting_user_input", context="transfer step1 status")
-    _assert_equal(first_node["slot_memory"].get("recipient_name"), "弟弟", context="transfer recipient")
-    _assert_equal(first_node["slot_memory"].get("amount"), "500", context="transfer amount")
-    _assert_absent(
-        first_node["slot_memory"],
-        ["recipient_card_number", "recipient_phone_last_four"],
-        context="transfer step1 slot_memory",
-    )
+    _assert_equal(first_node["slot_memory"], {}, context="transfer step1 slot_memory")
 
-    second = client.post_message(session_id, content="卡号 6222020100043219999")
+    second = client.post_message(session_id, content="给王芳尾号8899那张卡")
     second_text = _last_assistant_message(second)
-    _assert_contains(second_text, ["收款人手机号后4位"], context="transfer step2 prompt")
-    _assert_not_contains(second_text, ["收款卡号", "转账金额"], context="transfer step2 prompt")
+    _assert_contains(second_text, ["金额"], context="transfer step2 prompt")
     second_node = _single_node(second)
     _assert_equal(
-        second_node["slot_memory"].get("recipient_card_number"),
-        "6222020100043219999",
-        context="transfer card",
+        second_node["slot_memory"].get("payee_name"),
+        "王芳",
+        context="transfer payee_name",
+    )
+    _assert_equal(
+        second_node["slot_memory"].get("payee_card_no"),
+        "8899",
+        context="transfer payee_card_no",
     )
 
-    third = client.post_message(session_id, content="手机号后四位 1234")
+    third = client.post_message(session_id, content="500")
     third_text = _last_assistant_message(third)
     _assert_contains(third_text, ["转账成功"], context="transfer step3 result")
     third_node = _single_node(third)
     _assert_equal(third_node["status"], "completed", context="transfer step3 status")
-    _assert_equal(
-        third_node["slot_memory"].get("recipient_phone_last_four"),
-        "1234",
-        context="transfer phone",
-    )
+    _assert_equal(third_node["slot_memory"].get("amount"), "500", context="transfer amount")
 
     return {
         "session_id": session_id,
@@ -224,19 +217,13 @@ def scenario_transfer_history_guard(client: RouterClient) -> dict[str, Any]:
 
     transfer = client.post_message(
         session_id,
-        content="给弟弟转500",
+        content="帮我转账",
         intent_code="transfer_money",
     )
     transfer_text = _last_assistant_message(transfer)
-    _assert_contains(transfer_text, ["收款卡号", "收款人手机号后4位"], context="history guard prompt")
+    _assert_contains(transfer_text, ["金额", "收款人姓名"], context="history guard prompt")
     transfer_node = _single_node(transfer)
-    _assert_equal(transfer_node["slot_memory"].get("recipient_name"), "弟弟", context="history guard recipient")
-    _assert_equal(transfer_node["slot_memory"].get("amount"), "500", context="history guard amount")
-    _assert_absent(
-        transfer_node["slot_memory"],
-        ["recipient_card_number", "recipient_phone_last_four"],
-        context="history guard slot_memory",
-    )
+    _assert_equal(transfer_node["slot_memory"], {}, context="history guard slot_memory")
 
     return {
         "session_id": session_id,

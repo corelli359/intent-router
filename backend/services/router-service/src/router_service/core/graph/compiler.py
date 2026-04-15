@@ -5,6 +5,12 @@ import re
 from typing import Any, Callable, Literal
 
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.shared.diagnostics import (
+    RouterDiagnostic,
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
 from router_service.core.recognition.understanding_service import IntentUnderstandingService
 from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.slots.grounding import normalize_structured_slot_memory
@@ -48,6 +54,7 @@ class GraphCompilationResult:
     recognition: RecognitionResult
     graph: ExecutionGraphState | None
     no_match: bool = False
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class GraphCompiler:
@@ -131,17 +138,34 @@ class GraphCompiler:
                 emit_events=emit_events,
             )
 
-        recognition = recognition or RecognitionResult(primary=[], candidates=[])
+        recognition = recognition or RecognitionResult(primary=[], candidates=[], diagnostics=[])
         active_intent_index = self.intent_catalog.active_intents_by_code()
         matches = [match for match in recognition.primary if match.intent_code in active_intent_index]
         intents_by_code = dict(active_intent_index)
+        diagnostics: list[RouterDiagnostic] = list(recognition.diagnostics or [])
 
         if not matches:
             # Fallback is a router-level escape hatch so unmatched requests can
             # still be dispatched to a dedicated generic agent when configured.
             fallback_intent = self.fallback_intent()
             if fallback_intent is None:
-                return GraphCompilationResult(recognition=recognition, graph=None, no_match=True)
+                diagnostics = merge_diagnostics(
+                    diagnostics,
+                    [
+                        diagnostic(
+                            RouterDiagnosticCode.ROUTER_NO_MATCH,
+                            source="compiler",
+                            message="当前消息未识别到可执行意图",
+                            details={"content": content},
+                        )
+                    ],
+                )
+                return GraphCompilationResult(
+                    recognition=recognition,
+                    graph=None,
+                    no_match=True,
+                    diagnostics=diagnostics,
+                )
             matches = [IntentMatch(intent_code=fallback_intent.intent_code, confidence=0.0, reason="fallback")]
             intents_by_code[fallback_intent.intent_code] = fallback_intent
 
@@ -153,6 +177,10 @@ class GraphCompiler:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
             )
+        diagnostics = merge_diagnostics(
+            diagnostics,
+            graph.diagnostics,
+        )
         repair_unexecutable_condition_edges(graph=graph, intents_by_code=intents_by_code)
         self.slot_resolution_service.apply_proactive_slot_defaults(
             graph,
@@ -170,7 +198,12 @@ class GraphCompiler:
                 long_term_memory=long_term_memory,
             )
 
-        return GraphCompilationResult(recognition=recognition, graph=graph, no_match=False)
+        return GraphCompilationResult(
+            recognition=recognition,
+            graph=graph,
+            no_match=False,
+            diagnostics=diagnostics,
+        )
 
     async def recognize_only(
         self,
@@ -496,7 +529,7 @@ class GraphCompiler:
                     reason="selected_from_proactive_recommendation",
                 )
             )
-        return RecognitionResult(primary=matches, candidates=[])
+        return RecognitionResult(primary=matches, candidates=[], diagnostics=[])
 
     def fallback_intent(self) -> IntentDefinition | None:
         """Return the configured fallback intent from the intent catalog, if any."""

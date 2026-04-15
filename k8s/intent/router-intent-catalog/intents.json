@@ -25,38 +25,38 @@
       "is_fallback": false,
       "dispatch_priority": 100,
       "request_schema": {
+        "type": "object",
         "required": [
           "sessionId",
           "taskId",
           "input"
-        ],
-        "type": "object"
+        ]
       },
       "field_mapping": {
-        "account.cardNumber": "$slot_memory.card_number",
-        "account.phoneLast4": "$slot_memory.phone_last_four",
-        "conversation.longTermMemory": "$context.long_term_memory",
-        "conversation.recentMessages": "$context.recent_messages",
-        "input": "$message.current",
         "sessionId": "$session.id",
-        "taskId": "$task.id"
+        "taskId": "$task.id",
+        "input": "$message.current",
+        "conversation.recentMessages": "$context.recent_messages",
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "account.cardNumber": "$slot_memory.card_number",
+        "account.phoneLast4": "$slot_memory.phone_last_four"
       },
       "resume_policy": "resume_same_task",
       "created_at": "2026-04-05 14:15:20.567257",
-      "updated_at": "2026-04-12 05:45:46.931043"
+      "updated_at": "2026-04-15 16:24:23.420972+00:00"
     },
     {
       "intent_code": "transfer_money",
       "name": "转账",
-      "description": "向指定收款人发起转账。必须收集收款人姓名、收款卡号、收款人手机号后4位和转账金额。",
+      "description": "向指定收款人发起转账。按业务确认槽位执行：amount、payee_name、payee_card_no 为必填；ccy、payer_card_no、payer_card_remark、payee_card_remark、payee_card_bank、payee_phone 为可选。",
       "domain_code": "transfer",
       "domain_name": "转账",
       "domain_description": "行内外转账、付款、汇款相关意图。",
       "examples": [
-        "给我弟弟转500",
-        "帮我给张三转账",
-        "向李四汇款 2000 元",
-        "转账给王芳"
+        "给张三尾号8899那张卡转500",
+        "帮我给王芳转账，收款卡号 6217000012345678901",
+        "向李四汇款 2000 元到尾号 5566 的卡",
+        "给 Emma 的收款卡转账"
       ],
       "agent_url": "http://intent-appointment-agent.intent.svc.cluster.local:8000/api/agent/run",
       "is_leaf_intent": true,
@@ -64,33 +64,38 @@
       "status": "active",
       "routing_examples": [
         "给张三转账",
-        "转 500 给我弟弟",
+        "转 500 给王芳的卡",
         "我要汇款"
       ],
       "is_fallback": false,
       "dispatch_priority": 95,
       "request_schema": {
+        "type": "object",
         "required": [
           "sessionId",
           "taskId",
           "input"
-        ],
-        "type": "object"
+        ]
       },
       "field_mapping": {
-        "conversation.longTermMemory": "$context.long_term_memory",
-        "conversation.recentMessages": "$context.recent_messages",
-        "input": "$message.current",
-        "recipient.cardNumber": "$slot_memory.recipient_card_number",
-        "recipient.name": "$slot_memory.recipient_name",
-        "recipient.phoneLast4": "$slot_memory.recipient_phone_last_four",
         "sessionId": "$session.id",
         "taskId": "$task.id",
-        "transfer.amount": "$slot_memory.amount"
+        "input": "$message.current",
+        "conversation.recentMessages": "$context.recent_messages",
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "transfer.amount": "$slot_memory.amount",
+        "transfer.ccy": "$slot_memory.ccy",
+        "payer.cardNo": "$slot_memory.payer_card_no",
+        "payer.cardRemark": "$slot_memory.payer_card_remark",
+        "payee.name": "$slot_memory.payee_name",
+        "payee.cardNo": "$slot_memory.payee_card_no",
+        "payee.cardRemark": "$slot_memory.payee_card_remark",
+        "payee.cardBank": "$slot_memory.payee_card_bank",
+        "payee.phone": "$slot_memory.payee_phone"
       },
       "resume_policy": "resume_same_task",
       "created_at": "2026-04-05 14:15:20.572525",
-      "updated_at": "2026-04-12 05:45:47.068962"
+      "updated_at": "2026-04-15 16:24:23.421301+00:00"
     },
     {
       "intent_code": "query_credit_card_repayment",
@@ -117,25 +122,25 @@
       "is_fallback": false,
       "dispatch_priority": 92,
       "request_schema": {
+        "type": "object",
         "required": [
           "sessionId",
           "taskId",
           "input"
-        ],
-        "type": "object"
+        ]
       },
       "field_mapping": {
-        "conversation.longTermMemory": "$context.long_term_memory",
-        "conversation.recentMessages": "$context.recent_messages",
-        "creditCard.cardNumber": "$slot_memory.card_number",
-        "creditCard.phoneLast4": "$slot_memory.phone_last_four",
-        "input": "$message.current",
         "sessionId": "$session.id",
-        "taskId": "$task.id"
+        "taskId": "$task.id",
+        "input": "$message.current",
+        "conversation.recentMessages": "$context.recent_messages",
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "creditCard.cardNumber": "$slot_memory.card_number",
+        "creditCard.phoneLast4": "$slot_memory.phone_last_four"
       },
       "resume_policy": "resume_same_task",
       "created_at": "2026-04-08 14:40:54.220332",
-      "updated_at": "2026-04-12 05:45:47.103448"
+      "updated_at": "2026-04-15 16:24:23.421476+00:00"
     },
     {
       "intent_code": "pay_gas_bill",
@@ -162,25 +167,25 @@
       "is_fallback": false,
       "dispatch_priority": 90,
       "request_schema": {
+        "type": "object",
         "required": [
           "sessionId",
           "taskId",
           "input"
-        ],
-        "type": "object"
+        ]
       },
       "field_mapping": {
-        "conversation.longTermMemory": "$context.long_term_memory",
-        "conversation.recentMessages": "$context.recent_messages",
-        "gas.accountNumber": "$slot_memory.gas_account_number",
-        "input": "$message.current",
-        "payment.amount": "$slot_memory.amount",
         "sessionId": "$session.id",
-        "taskId": "$task.id"
+        "taskId": "$task.id",
+        "input": "$message.current",
+        "conversation.recentMessages": "$context.recent_messages",
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "gas.accountNumber": "$slot_memory.gas_account_number",
+        "payment.amount": "$slot_memory.amount"
       },
       "resume_policy": "resume_same_task",
       "created_at": "2026-04-08 14:40:54.284670",
-      "updated_at": "2026-04-12 05:45:47.135559"
+      "updated_at": "2026-04-15 16:24:23.421551+00:00"
     },
     {
       "intent_code": "exchange_forex",
@@ -207,28 +212,28 @@
       "is_fallback": false,
       "dispatch_priority": 88,
       "request_schema": {
+        "type": "object",
         "required": [
           "sessionId",
           "taskId",
           "input"
-        ],
-        "type": "object"
+        ]
       },
       "field_mapping": {
+        "sessionId": "$session.id",
+        "taskId": "$task.id",
+        "input": "$message.current",
+        "conversation.recentMessages": "$context.recent_messages",
+        "conversation.longTermMemory": "$context.long_term_memory",
         "account.cardNumber": "$slot_memory.card_number",
         "account.phoneLast4": "$slot_memory.phone_last_four",
-        "conversation.longTermMemory": "$context.long_term_memory",
-        "conversation.recentMessages": "$context.recent_messages",
-        "exchange.amount": "$slot_memory.amount",
         "exchange.sourceCurrency": "$slot_memory.source_currency",
         "exchange.targetCurrency": "$slot_memory.target_currency",
-        "input": "$message.current",
-        "sessionId": "$session.id",
-        "taskId": "$task.id"
+        "exchange.amount": "$slot_memory.amount"
       },
       "resume_policy": "resume_same_task",
       "created_at": "2026-04-08 14:40:54.327404",
-      "updated_at": "2026-04-12 05:45:47.171919"
+      "updated_at": "2026-04-15 16:24:23.421618+00:00"
     }
   ],
   "source_database_url": "sqlite:///./.local-data/intent-router.db",

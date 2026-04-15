@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from router_service.core.shared.domain import IntentDefinition
+from router_service.core.shared.diagnostics import RouterDiagnostic, merge_diagnostics
 from router_service.core.slots.extractor import SlotExtractor
 from router_service.core.slots.validator import SlotValidationResult, SlotValidator
 from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingState
@@ -22,6 +23,7 @@ class UnderstandingValidationResult:
     needs_confirmation: bool
     can_dispatch: bool
     prompt_message: str | None
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class UnderstandingValidator:
@@ -64,9 +66,14 @@ class UnderstandingValidator:
             current_message=current_message,
             long_term_memory=long_term_memory,
         )
-        return self._compose(validation)
+        return self._compose(validation, extraction_diagnostics=extraction.diagnostics or [])
 
-    def _compose(self, validation: SlotValidationResult) -> UnderstandingValidationResult:
+    def _compose(
+        self,
+        validation: SlotValidationResult,
+        *,
+        extraction_diagnostics: list[RouterDiagnostic],
+    ) -> UnderstandingValidationResult:
         """Convert the low-level slot validation result into the router-facing result model."""
         return UnderstandingValidationResult(
             slot_memory=validation.slot_memory,
@@ -78,4 +85,8 @@ class UnderstandingValidator:
             needs_confirmation=validation.needs_confirmation,
             can_dispatch=validation.can_dispatch,
             prompt_message=validation.prompt_message,
+            diagnostics=merge_diagnostics(
+                extraction_diagnostics,
+                validation.diagnostics,
+            ),
         )

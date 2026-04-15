@@ -4,6 +4,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from router_service.core.shared.diagnostics import (
+    RouterDiagnostic,
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
 from router_service.core.support.llm_client import llm_exception_is_retryable
 from router_service.core.recognition.recognizer import IntentRecognizer, RecognitionResult
 from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
@@ -20,6 +26,7 @@ class TurnInterpretationResult:
 
     decision: TurnDecisionPayload
     recognition: RecognitionResult
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class IntentUnderstandingService:
@@ -130,13 +137,28 @@ class IntentUnderstandingService:
             if not llm_exception_is_retryable(exc):
                 raise
             logger.warning("Pending graph recognition unavailable, falling back to conservative wait", exc_info=True)
-            recognition = RecognitionResult(primary=[], candidates=[])
+            recognition = RecognitionResult(
+                primary=[],
+                candidates=[],
+                diagnostics=[
+                    diagnostic(
+                        RouterDiagnosticCode.TURN_RECOGNITION_RETRYABLE_UNAVAILABLE,
+                        source="turn_interpreter",
+                        message="待确认图阶段识别服务暂时不可用，已保守保持等待",
+                        details={"error_type": type(exc).__name__, "mode": "pending_graph"},
+                    )
+                ],
+            )
         decision = await self.turn_interpreter.interpret_pending_graph(
             message=content,
             pending_graph=pending_graph,
             recognition=recognition,
         )
-        return TurnInterpretationResult(decision=decision, recognition=recognition)
+        return TurnInterpretationResult(
+            decision=decision,
+            recognition=recognition,
+            diagnostics=merge_diagnostics(recognition.diagnostics),
+        )
 
     async def interpret_waiting_node_turn(
         self,
@@ -159,11 +181,26 @@ class IntentUnderstandingService:
             if not llm_exception_is_retryable(exc):
                 raise
             logger.warning("Waiting node recognition unavailable, continuing current node conservatively", exc_info=True)
-            recognition = RecognitionResult(primary=[], candidates=[])
+            recognition = RecognitionResult(
+                primary=[],
+                candidates=[],
+                diagnostics=[
+                    diagnostic(
+                        RouterDiagnosticCode.TURN_RECOGNITION_RETRYABLE_UNAVAILABLE,
+                        source="turn_interpreter",
+                        message="补槽阶段识别服务暂时不可用，已保守继续当前节点",
+                        details={"error_type": type(exc).__name__, "mode": "waiting_node"},
+                    )
+                ],
+            )
         decision = await self.turn_interpreter.interpret_waiting_node(
             message=content,
             waiting_node=waiting_node,
             current_graph=current_graph,
             recognition=recognition,
         )
-        return TurnInterpretationResult(decision=decision, recognition=recognition)
+        return TurnInterpretationResult(
+            decision=decision,
+            recognition=recognition,
+            diagnostics=merge_diagnostics(recognition.diagnostics),
+        )

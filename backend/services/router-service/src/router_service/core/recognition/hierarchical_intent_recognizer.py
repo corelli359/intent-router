@@ -8,6 +8,7 @@ from router_service.core.recognition.domain_router import DomainMatch, DomainRou
 from router_service.core.support.intent_catalog import build_intent_domains
 from router_service.core.recognition.leaf_intent_router import LeafIntentRouter
 from router_service.core.recognition.recognizer import IntentRecognizer, RecognitionResult
+from router_service.core.shared.diagnostics import merge_diagnostics
 
 
 class HierarchicalIntentRecognizer:
@@ -104,6 +105,7 @@ class HierarchicalIntentRecognizer:
             for intent in domain.leaf_intents
         }
         best_by_code: dict[str, tuple[bool, float, str]] = {}
+        diagnostics = []
 
         async def _merge_domain_matches(matches: list[DomainMatch], *, domain_is_primary: bool) -> None:
             """Merge leaf matches produced under one bucket of domain matches."""
@@ -118,6 +120,7 @@ class HierarchicalIntentRecognizer:
                     long_term_memory=long_term_memory,
                     allow_direct_single_leaf=True,
                 )
+                diagnostics.extend(leaf_result.diagnostics or [])
                 self._merge_leaf_bucket(
                     best_by_code=best_by_code,
                     leaf_matches=leaf_result.primary,
@@ -153,7 +156,11 @@ class HierarchicalIntentRecognizer:
 
         primary.sort(key=_sort_key, reverse=True)
         candidates.sort(key=_sort_key, reverse=True)
-        return RecognitionResult(primary=primary, candidates=candidates)
+        return RecognitionResult(
+            primary=primary,
+            candidates=candidates,
+            diagnostics=merge_diagnostics(diagnostics),
+        )
 
     def _merge_leaf_bucket(
         self,

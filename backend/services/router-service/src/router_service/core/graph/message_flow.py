@@ -101,6 +101,7 @@ class GraphMessageFlow:
     ) -> GraphRouterSnapshot:
         """Entry point for all message-driven routing."""
         session = self.session_store.get_or_create(session_id, cust_id)
+        session.last_diagnostics = []
         message_content = content.strip()
         display_content = message_content or self.graph_compiler.guided_selection_display_content(guided_selection)
         if display_content:
@@ -266,6 +267,7 @@ class GraphMessageFlow:
             skip_history_prefill=skip_history_prefill,
         )
         session.candidate_intents = compile_result.recognition.candidates
+        session.last_diagnostics = list(compile_result.diagnostics or [])
         graph = compile_result.graph
         if compile_result.no_match or graph is None:
             await self.state_sync.publish_no_match_hint(session)
@@ -299,6 +301,7 @@ class GraphMessageFlow:
             guided_selection=guided_selection,
         )
         session.candidate_intents = []
+        session.last_diagnostics = []
         session.pending_graph = None
         session.current_graph = graph
         self.activate_graph(graph)
@@ -323,6 +326,7 @@ class GraphMessageFlow:
             sanitize_recent_messages_for_planning=self.sanitize_recent_messages_for_planning,
         )
         session.candidate_intents = compile_result.recognition.candidates
+        session.last_diagnostics = list(compile_result.diagnostics or [])
         graph = compile_result.graph
         if compile_result.no_match or graph is None:
             await self.state_sync.publish_no_match_hint(session)
@@ -351,6 +355,7 @@ class GraphMessageFlow:
             content=content,
             pending_graph=pending_graph,
         )
+        session.last_diagnostics = list(turn_result.diagnostics or [])
         decision = turn_result.decision
         if decision.action == "confirm_pending_graph":
             await self.confirm_pending_graph(session, graph_id=None, confirm_token=None)
@@ -388,6 +393,7 @@ class GraphMessageFlow:
             waiting_node=waiting_node,
             current_graph=graph,
         )
+        session.last_diagnostics = list(turn_result.diagnostics or [])
         decision = turn_result.decision
         if decision.action == "resume_current":
             await self.resume_waiting_node(session, waiting_node, content)

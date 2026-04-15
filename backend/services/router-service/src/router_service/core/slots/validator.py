@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from router_service.core.shared.domain import IntentDefinition
+from router_service.core.shared.diagnostics import (
+    RouterDiagnostic,
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
 from router_service.core.slots.grounding import (
     combine_distinct_text,
     slot_value_grounded_with_currency_fallback,
@@ -24,6 +30,7 @@ class SlotValidationResult:
     needs_confirmation: bool
     can_dispatch: bool
     prompt_message: str | None
+    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class SlotValidator:
@@ -103,6 +110,47 @@ class SlotValidator:
             invalid_slot_keys=invalid_slot_keys,
         )
         can_dispatch = not missing_required_slots and not unresolved_ambiguous and not invalid_slot_keys
+        diagnostics = merge_diagnostics(
+            [
+                diagnostic(
+                    RouterDiagnosticCode.SLOT_REQUIRED_MISSING,
+                    source="slot_validator",
+                    message="当前节点仍缺少必填槽位",
+                    details={
+                        "intent_code": intent.intent_code,
+                        "missing_required_slots": missing_required_slots,
+                    },
+                )
+            ]
+            if missing_required_slots
+            else [],
+            [
+                diagnostic(
+                    RouterDiagnosticCode.SLOT_AMBIGUOUS,
+                    source="slot_validator",
+                    message="当前节点存在需要澄清的歧义槽位",
+                    details={
+                        "intent_code": intent.intent_code,
+                        "ambiguous_slot_keys": unresolved_ambiguous,
+                    },
+                )
+            ]
+            if unresolved_ambiguous
+            else [],
+            [
+                diagnostic(
+                    RouterDiagnosticCode.SLOT_INVALID,
+                    source="slot_validator",
+                    message="当前节点存在未通过校验的槽位",
+                    details={
+                        "intent_code": intent.intent_code,
+                        "invalid_slot_keys": invalid_slot_keys,
+                    },
+                )
+            ]
+            if invalid_slot_keys
+            else [],
+        )
         return SlotValidationResult(
             slot_memory=validated_memory,
             slot_bindings=validated_bindings,
@@ -113,6 +161,7 @@ class SlotValidator:
             needs_confirmation=False,
             can_dispatch=can_dispatch,
             prompt_message=prompt_message,
+            diagnostics=diagnostics,
         )
 
     def _binding_is_valid(
