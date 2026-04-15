@@ -858,13 +858,19 @@ Python → Java 的 SSE 流中，事件类型与当前基本一致，**额外加
 | `node.completed` | 节点执行完成 | 可推前端标记完成 |
 | `agent.delta` | Agent 流式内容块 | **推前端做打字机效果** |
 | `agent.done` | Agent 执行完成 | 可推前端 |
-| `session.waiting_user_input` | 进入等待补槽 / 等待继续输入 | 可推前端展示交互态 |
+| `session.waiting_user_input` | 进入等待补充信息 / 等待继续输入 | 可推前端展示交互态 |
 | `session.waiting_confirmation` | 进入待确认态 | 可推前端展示确认态 |
 | `session.idle` | 当前轮处理完成 | 可推前端，也可作为普通完成事件 |
 | **`session_state`** | **最终的 updated session JSON** | **SDK 内部消费，不推前端** |
 
 Java SDK 内部自动识别 `session_state` 事件，提取 `updatedSessionState`，不传给 `RouterEventListener`。
 
+> [!IMPORTANT]
+> `waiting_user_input` 是一个统一的“等待更多输入”状态。
+> 它既可能来自 Router 侧的基础提槽/槽位校验未完成，也可能来自 Agent 侧的业务校验、映射查询或执行前置检查。
+>
+> Java/前端层不要把这个事件硬编码理解为“只会是提槽”。
+>
 > [!IMPORTANT]
 > 当前 router 已经会发布 `session.*` 事件，但这些 payload 只包含 `graph / pending_graph / active_node_id / candidate_intents / expires_at`，
 > **不是完整 `GraphSessionState`**，缺少 `messages / tasks / created_at / updated_at`。

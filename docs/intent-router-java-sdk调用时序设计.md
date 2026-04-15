@@ -16,7 +16,7 @@
 | Java 业务宿主 | 持久化 `session_state`、装载 long-term memory、调用 SDK、转发事件给前端 | 不直接调用业务 Agent |
 | Java SDK | 管理 Python router 进程、把 Java 请求转成 HTTP/SSE、聚合 `RouterResult` | 不做意图识别和业务编排 |
 | Router | 识别、建图、槽位治理、graph 调度、状态机、统一 SSE 事件、调用意图级 Agent | 不实现具体业务逻辑 |
-| 业务 Agent | 本意图执行、多轮补槽、业务确认、结果返回 | 不感知全局 graph runtime |
+| 业务 Agent | 本意图业务校验、映射查询、业务确认、执行逻辑、执行期补充信息返回 | 不感知全局 graph runtime |
 | Agent 内部子能力 | 当前业务 Agent 的实现细节，例如 tool、workflow、域内子 Agent | 不直接参与 Router session/graph |
 
 ## 3. 子智能体由谁调用
@@ -49,8 +49,8 @@
 
 例子：
 
-- 转账 Agent 内部调用收款人解析工具
-- 转账 Agent 内部调用风控检查 workflow
+- 转账 Agent 内部调用收款账户映射查询
+- 转账 Agent 内部调用账户合法性校验 / 风控检查 workflow
 - 理财 Agent 内部调用推荐排序模型
 
 ### 3.3 总控智能体怎么放
@@ -75,7 +75,7 @@
 
 ### 4.1 首轮消息：Java -> Router -> 叶子业务 Agent
 
-适用场景：用户首次输入，Router 识别出一个可执行 intent，并直接下发业务 Agent。
+适用场景：用户首次输入。Router 先完成意图识别、结构化提槽、可下发性判断；只有满足基础执行条件后，才下发业务 Agent 做执行期业务校验。
 
 ```mermaid
 sequenceDiagram
@@ -91,28 +91,32 @@ sequenceDiagram
     J->>S: processMessage(session_state, content, memory)
     S->>R: POST /api/router/v2/sdk/process
     R->>R: 反序列化 session_state
-    R->>R: 意图识别 / 建图 / 槽位校验
-    alt 可直接执行
+    R->>R: 意图识别 / 建图 / 结构化提槽 / 槽位校验
+    alt Router 侧基础槽位不足
+        R-->>S: node.waiting_user_input / session.waiting_user_input
+        R-->>S: session_state(最终完整 session)
+        S-->>J: RouterResult(updatedSessionState, events)
+        J->>J: 写回 Redis
+        J-->>U: 展示补充基础输入 UI
+    else Router 侧可下发
         R->>A: stream(task, input)
-        A-->>R: agent.delta / agent.done
+        A->>A: 业务校验 / 映射查询 / 风控检查
+        alt 业务校验通过
+            A-->>R: agent.delta / agent.done
+        else 仍需业务补充或业务确认
+            A-->>R: waiting_user_input / waiting_confirmation
+        end
         R-->>S: node.* / graph.* / session.*
         R-->>S: session_state(最终完整 session)
         S-->>J: RouterResult(updatedSessionState, events)
         J->>J: 写回 Redis
         J-->>U: 前端增量事件 / 最终结果
-    else 缺槽位或待确认
-        R-->>S: node.waiting_user_input / session.waiting_user_input
-        R-->>S: 或 graph.proposed / session.waiting_confirmation
-        R-->>S: session_state(最终完整 session)
-        S-->>J: RouterResult(updatedSessionState, events)
-        J->>J: 写回 Redis
-        J-->>U: 展示补槽或确认 UI
     end
 ```
 
-### 4.2 续轮补槽：Java 继续只调 Router，不直连 Agent
+### 4.2 续轮补充：Java 继续只调 Router，不直连 Agent
 
-适用场景：上一轮已经进入 `waiting_user_input`，用户继续补充信息。
+适用场景：上一轮已经进入 `waiting_user_input`，但这次等待可能来自 Router 侧基础槽位不足，也可能来自 Agent 侧业务补充。
 
 ```mermaid
 sequenceDiagram
@@ -130,7 +134,7 @@ sequenceDiagram
     R->>R: 恢复 waiting node / pending graph
     R->>R: 续轮决策：继续当前任务
     R->>R: Router 侧先补齐可解释槽位
-    opt 仍需业务侧补槽或执行业务确认
+    opt 基础槽位已齐备，需进入业务校验或业务确认
         R->>A: stream(task, resumed_input)
         A-->>R: waiting_user_input / waiting_confirmation / completed
     end
@@ -144,7 +148,9 @@ sequenceDiagram
 
 - Java 依旧只调 Router
 - Router 决定是否恢复当前任务
-- 只有在当前 intent 仍需业务侧继续执行时，Router 才再次调对应 Agent
+- Router 先做结构化理解和基础提槽
+- 只有在当前 intent 已满足下发条件时，Router 才再次调对应 Agent
+- Agent 返回的 `waiting_user_input` 应理解为“业务侧还需补充/确认”，不是重复做第一层提槽
 
 ## 5. 多意图规划时序
 
@@ -179,7 +185,7 @@ sequenceDiagram
     A1-->>R: completed
     R-->>S: node.completed / graph.progress
     R->>A2: stream(task2)
-    A2-->>R: completed 或 waiting_user_input
+    A2-->>R: completed 或业务侧 waiting_user_input
     R-->>S: node.* / graph.* / session_state
     S-->>J: RouterResult
     J->>J: 写回 Redis
@@ -222,6 +228,10 @@ sequenceDiagram
 - 当前 intent 内部要做多步推理
 - 要调多个工具或域内子 Agent
 - 但不希望 Router 感知内部拆解细节
+
+> [!IMPORTANT]
+> 这里的“Agent 内部子能力”不是在重复做 Router 的意图识别或第一层提槽，
+> 而是做该 intent 自己的业务校验、映射查询、风控判断、执行前置检查等实现细节。
 
 ## 7. 什么时候要把“内部子能力”提升成 Router 可见节点
 
