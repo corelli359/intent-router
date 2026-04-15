@@ -30,6 +30,12 @@ def main() -> int:
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Router base URL.")
     parser.add_argument("--host-header", default=None, help="Optional Host header for ingress routing.")
     parser.add_argument(
+        "--analysis-mode",
+        choices=("full", "intent_only"),
+        default="full",
+        help="Whether to verify full understanding or intent recognition only.",
+    )
+    parser.add_argument(
         "--message",
         default="帮我查一下余额，如果大于1000，就给小红转200，如果还大于1000，就再给小明转200",
         help="Message to analyze.",
@@ -50,7 +56,10 @@ def main() -> int:
     status, body = _request(
         method="POST",
         url=f"{base_url}/api/router/v2/sessions/{session_id}/messages/analyze",
-        payload={"content": args.message},
+        payload={
+            "content": args.message,
+            "analysisMode": args.analysis_mode,
+        },
         host_header=args.host_header,
     )
     if status != 200:

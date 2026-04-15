@@ -2243,6 +2243,68 @@ def test_v2_router_message_execution_mode_analyze_only_returns_analysis_payload(
     asyncio.run(run())
 
 
+def test_v2_router_message_analyze_endpoint_supports_intent_only_mode() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(recognizer=_DirectTransferRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages/analyze",
+                json={
+                    "content": "给小红转200",
+                    "analysisMode": "intent_only",
+                },
+            )
+            assert response.status_code == 200
+            payload = response.json()["analysis"]
+            assert [item["intent_code"] for item in payload["recognition"]["primary"]] == ["transfer_money"]
+            assert payload["graph"] is None
+            assert payload["slot_nodes"] == []
+            assert payload["conditional_edges"] == []
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.messages == []
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is None
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_execution_mode_analyze_only_supports_intent_only_mode() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(recognizer=_DirectTransferRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "给小红转200",
+                    "executionMode": "analyze_only",
+                    "analysisMode": "intent_only",
+                },
+            )
+            assert response.status_code == 200
+            payload = response.json()["analysis"]
+            assert [item["intent_code"] for item in payload["recognition"]["primary"]] == ["transfer_money"]
+            assert payload["graph"] is None
+            assert payload["slot_nodes"] == []
+            assert payload["conditional_edges"] == []
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is None
+
+    asyncio.run(run())
+
+
 def test_v2_router_message_analyze_endpoint_extracts_slots_for_single_intent_without_execution() -> None:
     async def run() -> None:
         app, orchestrator = _test_v2_app(recognizer=_DirectTransferRecognizer())

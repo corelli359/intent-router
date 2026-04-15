@@ -1,0 +1,237 @@
+{
+  "intents": [
+    {
+      "intent_code": "query_account_balance",
+      "name": "查询账户余额",
+      "description": "查询指定银行卡当前余额。需要用户明确提供银行卡号和绑定手机号后4位，用于身份核验。",
+      "domain_code": "account_service",
+      "domain_name": "账户服务",
+      "domain_description": "账户余额、账户状态、账户基础查询相关意图。",
+      "examples": [
+        "查一下我的账户余额",
+        "帮我查银行卡还有多少钱",
+        "看下这张卡余额",
+        "查询余额"
+      ],
+      "agent_url": "http://intent-order-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "is_leaf_intent": true,
+      "parent_intent_code": "",
+      "status": "active",
+      "routing_examples": [
+        "查一下余额",
+        "看看我银行卡还有多少钱",
+        "查询账户余额"
+      ],
+      "is_fallback": false,
+      "dispatch_priority": 100,
+      "request_schema": {
+        "required": [
+          "sessionId",
+          "taskId",
+          "input"
+        ],
+        "type": "object"
+      },
+      "field_mapping": {
+        "account.cardNumber": "$slot_memory.card_number",
+        "account.phoneLast4": "$slot_memory.phone_last_four",
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "conversation.recentMessages": "$context.recent_messages",
+        "input": "$message.current",
+        "sessionId": "$session.id",
+        "taskId": "$task.id"
+      },
+      "resume_policy": "resume_same_task",
+      "created_at": "2026-04-05 14:15:20.567257",
+      "updated_at": "2026-04-12 05:45:46.931043"
+    },
+    {
+      "intent_code": "transfer_money",
+      "name": "转账",
+      "description": "向指定收款人发起转账。必须收集收款人姓名、收款卡号、收款人手机号后4位和转账金额。",
+      "domain_code": "transfer",
+      "domain_name": "转账",
+      "domain_description": "行内外转账、付款、汇款相关意图。",
+      "examples": [
+        "给我弟弟转500",
+        "帮我给张三转账",
+        "向李四汇款 2000 元",
+        "转账给王芳"
+      ],
+      "agent_url": "http://intent-appointment-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "is_leaf_intent": true,
+      "parent_intent_code": "",
+      "status": "active",
+      "routing_examples": [
+        "给张三转账",
+        "转 500 给我弟弟",
+        "我要汇款"
+      ],
+      "is_fallback": false,
+      "dispatch_priority": 95,
+      "request_schema": {
+        "required": [
+          "sessionId",
+          "taskId",
+          "input"
+        ],
+        "type": "object"
+      },
+      "field_mapping": {
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "conversation.recentMessages": "$context.recent_messages",
+        "input": "$message.current",
+        "recipient.cardNumber": "$slot_memory.recipient_card_number",
+        "recipient.name": "$slot_memory.recipient_name",
+        "recipient.phoneLast4": "$slot_memory.recipient_phone_last_four",
+        "sessionId": "$session.id",
+        "taskId": "$task.id",
+        "transfer.amount": "$slot_memory.amount"
+      },
+      "resume_policy": "resume_same_task",
+      "created_at": "2026-04-05 14:15:20.572525",
+      "updated_at": "2026-04-12 05:45:47.068962"
+    },
+    {
+      "intent_code": "query_credit_card_repayment",
+      "name": "查询信用卡还款信息",
+      "description": "查询信用卡当期应还金额、最低还款额和到期日。需要用户提供信用卡卡号和绑定手机号后4位。",
+      "domain_code": "credit_card",
+      "domain_name": "信用卡",
+      "domain_description": "信用卡账单、还款、额度相关意图。",
+      "examples": [
+        "查一下我的信用卡还款信息",
+        "这期信用卡要还多少钱",
+        "帮我看一下信用卡账单",
+        "查询最低还款"
+      ],
+      "agent_url": "http://intent-credit-card-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "is_leaf_intent": true,
+      "parent_intent_code": "",
+      "status": "active",
+      "routing_examples": [
+        "查信用卡还款",
+        "信用卡账单还有多少",
+        "最低还款是多少"
+      ],
+      "is_fallback": false,
+      "dispatch_priority": 92,
+      "request_schema": {
+        "required": [
+          "sessionId",
+          "taskId",
+          "input"
+        ],
+        "type": "object"
+      },
+      "field_mapping": {
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "conversation.recentMessages": "$context.recent_messages",
+        "creditCard.cardNumber": "$slot_memory.card_number",
+        "creditCard.phoneLast4": "$slot_memory.phone_last_four",
+        "input": "$message.current",
+        "sessionId": "$session.id",
+        "taskId": "$task.id"
+      },
+      "resume_policy": "resume_same_task",
+      "created_at": "2026-04-08 14:40:54.220332",
+      "updated_at": "2026-04-12 05:45:47.103448"
+    },
+    {
+      "intent_code": "pay_gas_bill",
+      "name": "缴纳天然气费",
+      "description": "为指定燃气户号缴纳天然气费。必须提供燃气户号和本次缴费金额。",
+      "domain_code": "payment",
+      "domain_name": "缴费",
+      "domain_description": "水电燃气、话费、生活缴费相关意图。",
+      "examples": [
+        "帮我交一下天然气费",
+        "给燃气户号 88001234 交 88 元",
+        "煤气费充值 100 元",
+        "缴一下燃气费"
+      ],
+      "agent_url": "http://intent-gas-bill-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "is_leaf_intent": true,
+      "parent_intent_code": "",
+      "status": "active",
+      "routing_examples": [
+        "交燃气费",
+        "燃气缴费",
+        "给煤气费充值"
+      ],
+      "is_fallback": false,
+      "dispatch_priority": 90,
+      "request_schema": {
+        "required": [
+          "sessionId",
+          "taskId",
+          "input"
+        ],
+        "type": "object"
+      },
+      "field_mapping": {
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "conversation.recentMessages": "$context.recent_messages",
+        "gas.accountNumber": "$slot_memory.gas_account_number",
+        "input": "$message.current",
+        "payment.amount": "$slot_memory.amount",
+        "sessionId": "$session.id",
+        "taskId": "$task.id"
+      },
+      "resume_policy": "resume_same_task",
+      "created_at": "2026-04-08 14:40:54.284670",
+      "updated_at": "2026-04-12 05:45:47.135559"
+    },
+    {
+      "intent_code": "exchange_forex",
+      "name": "换外汇",
+      "description": "执行一次外汇兑换。当前执行至少需要卖出币种、买入币种和换汇金额；可选收集扣款卡号与手机号后4位。",
+      "domain_code": "wealth_management",
+      "domain_name": "理财",
+      "domain_description": "换汇、外汇、购汇、结汇等理财与资产配置相关意图。",
+      "examples": [
+        "把 1000 人民币换成美元",
+        "我想把 500 美元换成人民币",
+        "帮我换 200 欧元",
+        "我要购汇"
+      ],
+      "agent_url": "http://intent-forex-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "is_leaf_intent": true,
+      "parent_intent_code": "",
+      "status": "active",
+      "routing_examples": [
+        "换外汇",
+        "人民币换美元",
+        "我要购汇"
+      ],
+      "is_fallback": false,
+      "dispatch_priority": 88,
+      "request_schema": {
+        "required": [
+          "sessionId",
+          "taskId",
+          "input"
+        ],
+        "type": "object"
+      },
+      "field_mapping": {
+        "account.cardNumber": "$slot_memory.card_number",
+        "account.phoneLast4": "$slot_memory.phone_last_four",
+        "conversation.longTermMemory": "$context.long_term_memory",
+        "conversation.recentMessages": "$context.recent_messages",
+        "exchange.amount": "$slot_memory.amount",
+        "exchange.sourceCurrency": "$slot_memory.source_currency",
+        "exchange.targetCurrency": "$slot_memory.target_currency",
+        "input": "$message.current",
+        "sessionId": "$session.id",
+        "taskId": "$task.id"
+      },
+      "resume_policy": "resume_same_task",
+      "created_at": "2026-04-08 14:40:54.327404",
+      "updated_at": "2026-04-12 05:45:47.171919"
+    }
+  ],
+  "source_database_url": "sqlite:///./.local-data/intent-router.db",
+  "exported_count": 5,
+  "status_filter": "all"
+}

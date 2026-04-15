@@ -172,6 +172,31 @@ class GraphCompiler:
 
         return GraphCompilationResult(recognition=recognition, graph=graph, no_match=False)
 
+    async def recognize_only(
+        self,
+        session: GraphSessionState,
+        content: str,
+        *,
+        build_session_context: SessionContextBuilder,
+        sanitize_recent_messages_for_planning: RecentMessageSanitizer,
+        recommendation_context: RecommendationContextPayload | None = None,
+        emit_events: bool = False,
+    ) -> RecognitionResult:
+        """Run intent recognition only, without planning, graph building, or slot hydration."""
+        context = build_session_context(session)
+        recent_messages = sanitize_recent_messages_for_planning(context["recent_messages"])
+        recent_messages = self.augment_recent_messages_with_recommendations(
+            recent_messages,
+            recommendation_context=recommendation_context,
+        )
+        return await self.understanding_service.recognize_message(
+            session,
+            content,
+            recent_messages=recent_messages,
+            long_term_memory=context["long_term_memory"],
+            emit_events=emit_events,
+        )
+
     async def _plan_graph(
         self,
         *,

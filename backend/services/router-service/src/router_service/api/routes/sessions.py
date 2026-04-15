@@ -33,6 +33,13 @@ class MessageExecutionMode(StrEnum):
     ANALYZE_ONLY = "analyze_only"
 
 
+class MessageAnalysisMode(StrEnum):
+    """Depth of analysis requested for analyze-only message calls."""
+
+    FULL = "full"
+    INTENT_ONLY = "intent_only"
+
+
 class CreateSessionResponse(BaseModel):
     """Response returned after creating a router session."""
 
@@ -53,6 +60,7 @@ class MessageRequest(BaseModel):
     content: str | None = None
     message: str | None = None
     execution_mode: MessageExecutionMode = Field(default=MessageExecutionMode.EXECUTE, alias="executionMode")
+    analysis_mode: MessageAnalysisMode = Field(default=MessageAnalysisMode.FULL, alias="analysisMode")
     guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
     recommendation_context: RecommendationContextPayload | None = Field(default=None, alias="recommendationContext")
     proactive_recommendation: ProactiveRecommendationPayload | None = Field(default=None, alias="proactiveRecommendation")
@@ -204,6 +212,7 @@ async def post_message(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
+                analysis_mode=request.analysis_mode,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
                 proactive_recommendation=request.proactive_recommendation,
@@ -235,6 +244,7 @@ async def analyze_message(
             session_id=session_id,
             cust_id=resolved_cust_id,
             content=request.content or "",
+            analysis_mode=request.analysis_mode,
             guided_selection=request.guided_selection,
             recommendation_context=request.recommendation_context,
             proactive_recommendation=request.proactive_recommendation,

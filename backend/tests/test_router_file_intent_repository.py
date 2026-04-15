@@ -93,6 +93,53 @@ def _catalog_payload() -> dict[str, object]:
     }
 
 
+def _base_intents_payload() -> dict[str, object]:
+    payload = _catalog_payload()
+    base_items: list[dict[str, object]] = []
+    for item in payload["intents"]:
+        if not isinstance(item, dict):
+            continue
+        base_item = dict(item)
+        base_item.pop("field_catalog", None)
+        base_item.pop("slot_schema", None)
+        base_item.pop("graph_build_hints", None)
+        base_items.append(base_item)
+    return {"intents": base_items}
+
+
+def _field_catalogs_payload() -> dict[str, object]:
+    payload = _catalog_payload()
+    return {
+        "field_catalogs": {
+            item["intent_code"]: item.get("field_catalog", [])
+            for item in payload["intents"]
+            if isinstance(item, dict)
+        }
+    }
+
+
+def _slot_schemas_payload() -> dict[str, object]:
+    payload = _catalog_payload()
+    return {
+        "slot_schemas": {
+            item["intent_code"]: item.get("slot_schema", [])
+            for item in payload["intents"]
+            if isinstance(item, dict)
+        }
+    }
+
+
+def _graph_build_hints_payload() -> dict[str, object]:
+    payload = _catalog_payload()
+    return {
+        "graph_build_hints": {
+            item["intent_code"]: item.get("graph_build_hints", {})
+            for item in payload["intents"]
+            if isinstance(item, dict)
+        }
+    }
+
+
 def test_file_intent_repository_loads_domains_and_slots(tmp_path: Path) -> None:
     catalog_path = tmp_path / "intent-catalog.json"
     catalog_path.write_text(
@@ -110,6 +157,63 @@ def test_file_intent_repository_loads_domains_and_slots(tmp_path: Path) -> None:
     assert record.field_catalog[0].field_code == "amount"
     assert record.slot_schema[0].slot_key == "amount"
     assert record.graph_build_hints.confirm_policy.value == "multi_node_only"
+
+
+def test_file_intent_repository_loads_split_catalog_files(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "intents.json"
+    field_catalog_path = tmp_path / "field-catalogs.json"
+    slot_schema_path = tmp_path / "slot-schemas.json"
+    graph_build_hints_path = tmp_path / "graph-build-hints.json"
+    catalog_path.write_text(
+        json.dumps(_base_intents_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    field_catalog_path.write_text(
+        json.dumps(_field_catalogs_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    slot_schema_path.write_text(
+        json.dumps(_slot_schemas_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    graph_build_hints_path.write_text(
+        json.dumps(_graph_build_hints_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    repository = FileIntentRepository(
+        catalog_path,
+        field_catalog_path=field_catalog_path,
+        slot_schema_path=slot_schema_path,
+        graph_build_hints_path=graph_build_hints_path,
+    )
+
+    records = repository.list_intents(IntentStatus.ACTIVE)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.intent_code == "transfer_money"
+    assert record.field_catalog[0].field_code == "amount"
+    assert record.slot_schema[0].slot_key == "amount"
+    assert record.graph_build_hints.confirm_policy.value == "multi_node_only"
+
+
+def test_file_intent_repository_supports_intent_only_base_catalog(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "intents.json"
+    catalog_path.write_text(
+        json.dumps(_base_intents_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    repository = FileIntentRepository(catalog_path)
+
+    records = repository.list_intents(IntentStatus.ACTIVE)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.intent_code == "transfer_money"
+    assert record.field_catalog == []
+    assert record.slot_schema == []
+    assert record.graph_build_hints.max_nodes_per_message == 4
 
 
 def test_file_intent_repository_reloads_file_changes(tmp_path: Path) -> None:
@@ -144,6 +248,23 @@ def test_file_intent_repository_requires_valid_json_shape(tmp_path: Path) -> Non
     catalog_path = tmp_path / "intent-catalog.json"
     catalog_path.write_text(json.dumps({"unexpected": []}), encoding="utf-8")
     repository = FileIntentRepository(catalog_path)
+
+    with pytest.raises(IntentRepositoryError):
+        repository.list_intents()
+
+
+def test_file_intent_repository_requires_valid_overlay_shape(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "intents.json"
+    slot_schema_path = tmp_path / "slot-schemas.json"
+    catalog_path.write_text(
+        json.dumps(_base_intents_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    slot_schema_path.write_text(json.dumps({"slot_schemas": []}), encoding="utf-8")
+    repository = FileIntentRepository(
+        catalog_path,
+        slot_schema_path=slot_schema_path,
+    )
 
     with pytest.raises(IntentRepositoryError):
         repository.list_intents()

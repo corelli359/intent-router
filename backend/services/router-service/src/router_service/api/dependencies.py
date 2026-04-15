@@ -67,7 +67,12 @@ def get_intent_repository() -> IntentRepository:
     if settings.repository_backend == "file":
         if not settings.router_intent_catalog_file:
             raise RuntimeError("ROUTER_INTENT_CATALOG_FILE is required when backend=file")
-        return FileIntentRepository(settings.router_intent_catalog_file)
+        return FileIntentRepository(
+            settings.router_intent_catalog_file,
+            field_catalog_path=settings.router_intent_field_catalog_file,
+            slot_schema_path=settings.router_intent_slot_schema_file,
+            graph_build_hints_path=settings.router_intent_graph_build_hints_file,
+        )
     if settings.repository_backend in {"database", "postgres"}:
         if not settings.database_url:
             raise RuntimeError(

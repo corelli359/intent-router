@@ -95,6 +95,9 @@ class Settings(BaseModel):
     repository_backend: Literal["memory", "database", "postgres", "file"] = Field(default="memory")
     database_url: str | None = Field(default=None)
     router_intent_catalog_file: str | None = Field(default=None)
+    router_intent_field_catalog_file: str | None = Field(default=None)
+    router_intent_slot_schema_file: str | None = Field(default=None)
+    router_intent_graph_build_hints_file: str | None = Field(default=None)
     recognizer_backend: Literal["rules", "llm"] = Field(default="llm")
     router_v2_graph_build_mode: Literal["legacy", "unified"] = Field(default="legacy")
     router_v2_understanding_mode: Literal["flat", "hierarchical"] = Field(default="flat")
@@ -148,6 +151,9 @@ class Settings(BaseModel):
             or os.getenv("ADMIN_DATABASE_URL")
             or os.getenv("ADMIN_POSTGRES_DSN"),
             router_intent_catalog_file=os.getenv("ROUTER_INTENT_CATALOG_FILE"),
+            router_intent_field_catalog_file=os.getenv("ROUTER_INTENT_FIELD_CATALOG_FILE"),
+            router_intent_slot_schema_file=os.getenv("ROUTER_INTENT_SLOT_SCHEMA_FILE"),
+            router_intent_graph_build_hints_file=os.getenv("ROUTER_INTENT_GRAPH_BUILD_HINTS_FILE"),
             recognizer_backend=os.getenv("ROUTER_RECOGNIZER_BACKEND", "llm"),
             router_v2_graph_build_mode=os.getenv("ROUTER_V2_GRAPH_BUILD_MODE", "legacy"),
             router_v2_understanding_mode=os.getenv("ROUTER_V2_UNDERSTANDING_MODE", "flat"),

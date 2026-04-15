@@ -82,6 +82,20 @@ This calls the router without dispatching intent agents, so you can inspect:
 python scripts/verify_router_understanding.py --base-url "$INTENT_ROUTER_BASE_URL"
 ```
 
+Intent-only verification:
+
+```bash
+python scripts/verify_router_understanding.py --base-url "$INTENT_ROUTER_BASE_URL" --analysis-mode intent_only
+```
+
+Direct no-arg intent-only smoke script:
+
+```bash
+python scripts/analyze_intent_only.py
+```
+
+Router file-mode export now writes the split directory `k8s/intent/router-intent-catalog/`, and the Minikube deploy script refreshes that directory from the current sqlite snapshot before rollout.
+
 ### 6) Build target-cluster frontend artifacts
 
 This generates:

@@ -8,6 +8,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from router_catalog_files import write_split_catalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,9 +48,9 @@ def parse_args() -> argparse.Namespace:
         help="Explicit database URL. Defaults to ROUTER_INTENT_CATALOG_DATABASE_URL or ADMIN_DATABASE_URL.",
     )
     parser.add_argument(
-        "--output",
-        default=str(ROOT / "k8s" / "intent" / "router-intent-catalog.json"),
-        help="Output JSON path.",
+        "--output-dir",
+        default=str(ROOT / "k8s" / "intent" / "router-intent-catalog"),
+        help="Output directory for split JSON catalog files.",
     )
     parser.add_argument(
         "--status",
@@ -164,19 +165,17 @@ def main() -> int:
     database_path = sqlite_path_from_url(database_url)
     intents = export_sqlite_catalog(database_path, args.status)
 
-    output_path = Path(args.output).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "source_database_url": database_url,
-        "exported_count": len(intents),
-        "status_filter": args.status,
-        "intents": intents,
-    }
-    output_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    write_split_catalog(
+        output_dir,
+        intents=intents,
+        metadata={
+            "source_database_url": database_url,
+            "exported_count": len(intents),
+            "status_filter": args.status,
+        },
     )
-    print(f"[OK] exported {len(intents)} intents from sqlite to {output_path}")
+    print(f"[OK] exported {len(intents)} intents from sqlite to {output_dir}")
     return 0
 
 

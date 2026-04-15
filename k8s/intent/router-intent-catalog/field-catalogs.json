@@ -1,0 +1,340 @@
+{
+  "field_catalogs": {
+    "query_account_balance": [
+      {
+        "aliases": [
+          "卡号",
+          "银行卡号",
+          "账户卡号"
+        ],
+        "counter_examples": [
+          "手机号后4位",
+          "交易金额"
+        ],
+        "examples": [
+          "6222020100043219999"
+        ],
+        "field_code": "account_card_number",
+        "format_hint": "仅保留卡号数字，不保留空格与分隔符。",
+        "label": "银行卡号",
+        "normalization_hint": "去掉空格、横线等非数字字符。",
+        "semantic_definition": "当前要查询余额的银行卡卡号。",
+        "validation_hint": "通常为 12 到 19 位数字。",
+        "value_type": "account_number"
+      },
+      {
+        "aliases": [
+          "手机号后4位",
+          "手机尾号",
+          "后四位"
+        ],
+        "counter_examples": [
+          "完整手机号",
+          "银行卡号"
+        ],
+        "examples": [
+          "6666"
+        ],
+        "field_code": "bound_phone_last_four",
+        "format_hint": "只保留最后 4 位数字。",
+        "label": "手机号后4位",
+        "normalization_hint": "若用户给出完整手机号，仅保留最后 4 位。",
+        "semantic_definition": "该银行卡绑定手机号的后4位，用于身份核验。",
+        "validation_hint": "必须是 4 位数字。",
+        "value_type": "phone_last4"
+      }
+    ],
+    "transfer_money": [
+      {
+        "aliases": [
+          "收款人",
+          "对方姓名",
+          "收款人姓名"
+        ],
+        "counter_examples": [
+          "6222020100043219999",
+          "500"
+        ],
+        "examples": [
+          "张三",
+          "弟弟",
+          "妈妈"
+        ],
+        "field_code": "recipient_name",
+        "format_hint": "",
+        "label": "收款人姓名",
+        "normalization_hint": "",
+        "semantic_definition": "本次转账的收款对象姓名或可直接识别的亲属称呼。",
+        "validation_hint": "应为自然人姓名或明确亲属称呼。",
+        "value_type": "person_name"
+      },
+      {
+        "aliases": [
+          "收款卡号",
+          "银行卡号",
+          "收款账户"
+        ],
+        "counter_examples": [
+          "手机号后4位",
+          "转账金额"
+        ],
+        "examples": [
+          "6222020100043219999"
+        ],
+        "field_code": "recipient_card_number",
+        "format_hint": "仅保留卡号数字。",
+        "label": "收款卡号",
+        "normalization_hint": "去掉非数字字符。",
+        "semantic_definition": "本次转账收款银行卡号。",
+        "validation_hint": "通常为 12 到 19 位数字。",
+        "value_type": "account_number"
+      },
+      {
+        "aliases": [
+          "收款人手机号后4位",
+          "对方手机尾号",
+          "后四位"
+        ],
+        "counter_examples": [
+          "完整手机号",
+          "转账金额"
+        ],
+        "examples": [
+          "1234"
+        ],
+        "field_code": "recipient_phone_last_four",
+        "format_hint": "仅保留 4 位数字。",
+        "label": "收款人手机号后4位",
+        "normalization_hint": "若给出完整手机号，只保留最后 4 位。",
+        "semantic_definition": "收款人预留手机号后4位，用于转账校验。",
+        "validation_hint": "必须是 4 位数字。",
+        "value_type": "phone_last4"
+      },
+      {
+        "aliases": [
+          "金额",
+          "转账金额",
+          "汇款金额"
+        ],
+        "counter_examples": [
+          "银行卡号",
+          "手机号后4位"
+        ],
+        "examples": [
+          "500",
+          "2000.50"
+        ],
+        "field_code": "transfer_amount",
+        "format_hint": "输出数字字符串，不保留货币单位。",
+        "label": "转账金额",
+        "normalization_hint": "去掉元、块、人民币等单位。",
+        "semantic_definition": "本次转账实际金额。",
+        "validation_hint": "必须是正数金额。",
+        "value_type": "currency"
+      }
+    ],
+    "query_credit_card_repayment": [
+      {
+        "aliases": [
+          "信用卡卡号",
+          "卡号",
+          "信用卡号码"
+        ],
+        "counter_examples": [
+          "手机号后4位",
+          "最低还款额"
+        ],
+        "examples": [
+          "6225888800001234567"
+        ],
+        "field_code": "credit_card_number",
+        "format_hint": "仅保留卡号数字。",
+        "label": "信用卡卡号",
+        "normalization_hint": "去掉空格与分隔符。",
+        "semantic_definition": "当前要查询账单的信用卡卡号。",
+        "validation_hint": "通常为 12 到 19 位数字。",
+        "value_type": "account_number"
+      },
+      {
+        "aliases": [
+          "手机号后4位",
+          "手机尾号",
+          "后四位"
+        ],
+        "counter_examples": [
+          "完整手机号",
+          "卡号"
+        ],
+        "examples": [
+          "6666"
+        ],
+        "field_code": "credit_card_phone_last_four",
+        "format_hint": "只保留后 4 位数字。",
+        "label": "手机号后4位",
+        "normalization_hint": "若用户提供完整手机号，仅保留最后 4 位。",
+        "semantic_definition": "该信用卡绑定手机号的后4位。",
+        "validation_hint": "必须是 4 位数字。",
+        "value_type": "phone_last4"
+      }
+    ],
+    "pay_gas_bill": [
+      {
+        "aliases": [
+          "燃气户号",
+          "天然气户号",
+          "煤气户号"
+        ],
+        "counter_examples": [
+          "缴费金额",
+          "订单号"
+        ],
+        "examples": [
+          "88001234"
+        ],
+        "field_code": "gas_account_number",
+        "format_hint": "仅保留数字。",
+        "label": "燃气户号",
+        "normalization_hint": "去掉空格与非数字字符。",
+        "semantic_definition": "天然气缴费账号或户号。",
+        "validation_hint": "通常为 6 到 20 位数字。",
+        "value_type": "account_number"
+      },
+      {
+        "aliases": [
+          "金额",
+          "缴费金额",
+          "充值金额"
+        ],
+        "counter_examples": [
+          "燃气户号",
+          "手机号后4位"
+        ],
+        "examples": [
+          "88",
+          "100"
+        ],
+        "field_code": "gas_payment_amount",
+        "format_hint": "输出数字字符串，不保留元、块。",
+        "label": "缴费金额",
+        "normalization_hint": "去掉货币单位。",
+        "semantic_definition": "本次天然气缴费金额。",
+        "validation_hint": "必须是正数金额。",
+        "value_type": "currency"
+      }
+    ],
+    "exchange_forex": [
+      {
+        "aliases": [
+          "卖出币种",
+          "源币种",
+          "付款币种"
+        ],
+        "counter_examples": [
+          "汇率",
+          "金额"
+        ],
+        "examples": [
+          "人民币",
+          "美元",
+          "CNY",
+          "USD"
+        ],
+        "field_code": "forex_source_currency",
+        "format_hint": "",
+        "label": "卖出币种",
+        "normalization_hint": "统一映射为 ISO 货币代码，例如 CNY、USD、EUR。",
+        "semantic_definition": "用户打算卖出或扣减的币种。",
+        "validation_hint": "",
+        "value_type": "string"
+      },
+      {
+        "aliases": [
+          "买入币种",
+          "目标币种",
+          "兑换后币种"
+        ],
+        "counter_examples": [
+          "汇率",
+          "金额"
+        ],
+        "examples": [
+          "美元",
+          "人民币",
+          "USD",
+          "CNY"
+        ],
+        "field_code": "forex_target_currency",
+        "format_hint": "",
+        "label": "买入币种",
+        "normalization_hint": "统一映射为 ISO 货币代码，例如 CNY、USD、EUR。",
+        "semantic_definition": "用户打算换入的目标币种。",
+        "validation_hint": "",
+        "value_type": "string"
+      },
+      {
+        "aliases": [
+          "金额",
+          "换汇金额",
+          "购汇金额"
+        ],
+        "counter_examples": [
+          "银行卡号",
+          "手机号后4位"
+        ],
+        "examples": [
+          "1000",
+          "500"
+        ],
+        "field_code": "forex_amount",
+        "format_hint": "输出数字字符串，不保留货币单位。",
+        "label": "换汇金额",
+        "normalization_hint": "去掉元、美元等单位，仅保留数值。",
+        "semantic_definition": "本次换汇金额。",
+        "validation_hint": "必须是正数金额。",
+        "value_type": "currency"
+      },
+      {
+        "aliases": [
+          "卡号",
+          "扣款卡号",
+          "银行卡号"
+        ],
+        "counter_examples": [
+          "手机号后4位",
+          "金额"
+        ],
+        "examples": [
+          "6222020100043219999"
+        ],
+        "field_code": "forex_card_number",
+        "format_hint": "",
+        "label": "扣款卡号",
+        "normalization_hint": "",
+        "semantic_definition": "本次换汇扣款银行卡号，可选。",
+        "validation_hint": "",
+        "value_type": "account_number"
+      },
+      {
+        "aliases": [
+          "手机号后4位",
+          "手机尾号",
+          "后四位"
+        ],
+        "counter_examples": [
+          "银行卡号",
+          "金额"
+        ],
+        "examples": [
+          "1234"
+        ],
+        "field_code": "forex_phone_last_four",
+        "format_hint": "",
+        "label": "手机号后4位",
+        "normalization_hint": "",
+        "semantic_definition": "换汇校验所需手机号后4位，可选。",
+        "validation_hint": "",
+        "value_type": "phone_last4"
+      }
+    ]
+  }
+}

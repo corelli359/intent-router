@@ -24,6 +24,16 @@ spec:
               value: "1"
             - name: ROUTER_ENV_FILE
               value: /etc/intent-router/.env.local
+            - name: ROUTER_INTENT_CATALOG_BACKEND
+              value: "file"
+            - name: ROUTER_INTENT_CATALOG_FILE
+              value: /etc/intent-router/catalog/intents.json
+            - name: ROUTER_INTENT_FIELD_CATALOG_FILE
+              value: /etc/intent-router/catalog/field-catalogs.json
+            - name: ROUTER_INTENT_SLOT_SCHEMA_FILE
+              value: /etc/intent-router/catalog/slot-schemas.json
+            - name: ROUTER_INTENT_GRAPH_BUILD_HINTS_FILE
+              value: /etc/intent-router/catalog/graph-build-hints.json
           command:
             - /bin/sh
             - -lc
@@ -66,8 +76,7 @@ spec:
               subPath: .env.local
               readOnly: true
             - name: router-intent-catalog
-              mountPath: /etc/intent-router/intent-catalog.json
-              subPath: intent-catalog.json
+              mountPath: /etc/intent-router/catalog
               readOnly: true
       volumes:
         - name: repo
@@ -83,9 +92,6 @@ spec:
         - name: router-intent-catalog
           configMap:
             name: intent-router-intent-catalog
-            items:
-              - key: intent-catalog.json
-                path: intent-catalog.json
 ---
 apiVersion: v1
 kind: Service

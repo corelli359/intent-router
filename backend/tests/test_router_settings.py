@@ -46,11 +46,17 @@ def test_router_settings_missing_explicit_env_file_is_safe(monkeypatch, tmp_path
 def test_router_settings_support_file_catalog_backend(monkeypatch) -> None:
     monkeypatch.setenv("ROUTER_INTENT_CATALOG_BACKEND", "file")
     monkeypatch.setenv("ROUTER_INTENT_CATALOG_FILE", "/etc/intent-router/catalog.json")
+    monkeypatch.setenv("ROUTER_INTENT_FIELD_CATALOG_FILE", "/etc/intent-router/field-catalogs.json")
+    monkeypatch.setenv("ROUTER_INTENT_SLOT_SCHEMA_FILE", "/etc/intent-router/slot-schemas.json")
+    monkeypatch.setenv("ROUTER_INTENT_GRAPH_BUILD_HINTS_FILE", "/etc/intent-router/graph-build-hints.json")
 
     settings = Settings.from_env()
 
     assert settings.repository_backend == "file"
     assert settings.router_intent_catalog_file == "/etc/intent-router/catalog.json"
+    assert settings.router_intent_field_catalog_file == "/etc/intent-router/field-catalogs.json"
+    assert settings.router_intent_slot_schema_file == "/etc/intent-router/slot-schemas.json"
+    assert settings.router_intent_graph_build_hints_file == "/etc/intent-router/graph-build-hints.json"
 
 
 def test_router_settings_supports_llm_auth_http_client_switch(monkeypatch) -> None:

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from router_service.core.support.agent_client import AgentClient, StreamingAgentClient
 from router_service.core.support.context_builder import ContextBuilder
@@ -252,6 +252,7 @@ class GraphRouterOrchestrator:
         cust_id: str,
         content: str,
         *,
+        analysis_mode: Literal["full", "intent_only"] = "full",
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
@@ -263,6 +264,24 @@ class GraphRouterOrchestrator:
         session = self.session_store.get_or_create(session_id, cust_id)
         message_content = content.strip()
         display_content = message_content or self._guided_selection_display_content(guided_selection)
+
+        if analysis_mode == "intent_only":
+            recognition = await self.graph_compiler.recognize_only(
+                session,
+                message_content,
+                build_session_context=self._build_session_context,
+                sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
+                recommendation_context=recommendation_context,
+                emit_events=False,
+            )
+            return MessageAnalysisResult(
+                session_id=session.session_id,
+                cust_id=session.cust_id,
+                content=display_content,
+                recognition=recognition,
+                graph=None,
+                no_match=not recognition.primary,
+            )
 
         if guided_selection is not None:
             graph = self.graph_compiler.build_guided_selection_graph(

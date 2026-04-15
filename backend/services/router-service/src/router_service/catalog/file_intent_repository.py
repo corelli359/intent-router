@@ -19,9 +19,25 @@ from router_service.models.intent import IntentPayload, IntentRecord, IntentStat
 class FileIntentRepository(IntentRepository):
     """Read-only intent repository backed by a JSON file on disk."""
 
-    def __init__(self, catalog_path: str | Path) -> None:
-        """Store the configured catalog path for later refresh reads."""
+    def __init__(
+        self,
+        catalog_path: str | Path,
+        *,
+        field_catalog_path: str | Path | None = None,
+        slot_schema_path: str | Path | None = None,
+        graph_build_hints_path: str | Path | None = None,
+    ) -> None:
+        """Store the configured catalog and optional overlay paths for later refresh reads."""
         self.catalog_path = Path(catalog_path).expanduser()
+        self.field_catalog_path = (
+            Path(field_catalog_path).expanduser() if field_catalog_path is not None else None
+        )
+        self.slot_schema_path = (
+            Path(slot_schema_path).expanduser() if slot_schema_path is not None else None
+        )
+        self.graph_build_hints_path = (
+            Path(graph_build_hints_path).expanduser() if graph_build_hints_path is not None else None
+        )
         self._lock = RLock()
 
     def list_intents(self, status: IntentStatus | None = None) -> list[IntentRecord]:
@@ -60,8 +76,20 @@ class FileIntentRepository(IntentRepository):
 
     def _load_records(self) -> list[IntentRecord]:
         """Read and validate the full file-backed intent catalog."""
-        payload = self._load_payload()
+        payload = self._load_payload(self.catalog_path)
         intents = self._extract_intents(payload)
+        field_catalogs = self._load_overlay_map(
+            self.field_catalog_path,
+            wrapper_key="field_catalogs",
+        )
+        slot_schemas = self._load_overlay_map(
+            self.slot_schema_path,
+            wrapper_key="slot_schemas",
+        )
+        graph_build_hints = self._load_overlay_map(
+            self.graph_build_hints_path,
+            wrapper_key="graph_build_hints",
+        )
         records: list[IntentRecord] = []
         seen_codes: set[str] = set()
         for index, item in enumerate(intents):
@@ -69,8 +97,17 @@ class FileIntentRepository(IntentRepository):
                 raise IntentRepositoryError(
                     f"Intent catalog item at index {index} must be a JSON object"
                 )
+            merged_item = dict(item)
+            intent_code = str(merged_item.get("intent_code", "")).strip()
+            if intent_code:
+                if intent_code in field_catalogs:
+                    merged_item["field_catalog"] = field_catalogs[intent_code]
+                if intent_code in slot_schemas:
+                    merged_item["slot_schema"] = slot_schemas[intent_code]
+                if intent_code in graph_build_hints:
+                    merged_item["graph_build_hints"] = graph_build_hints[intent_code]
             try:
-                record = IntentRecord.model_validate(item)
+                record = IntentRecord.model_validate(merged_item)
             except ValidationError as exc:
                 raise IntentRepositoryError(
                     f"Invalid intent catalog item at index {index}: {exc}"
@@ -83,23 +120,23 @@ class FileIntentRepository(IntentRepository):
             records.append(record)
         return records
 
-    def _load_payload(self) -> Any:
-        """Read the raw JSON document from disk."""
-        if not self.catalog_path.is_file():
+    def _load_payload(self, path: Path) -> Any:
+        """Read one raw JSON document from disk."""
+        if not path.is_file():
             raise IntentRepositoryError(
-                f"Intent catalog file does not exist: {self.catalog_path}"
+                f"Intent catalog file does not exist: {path}"
             )
         try:
-            raw_text = self.catalog_path.read_text(encoding="utf-8-sig")
+            raw_text = path.read_text(encoding="utf-8-sig")
         except OSError as exc:
             raise IntentRepositoryError(
-                f"Failed to read intent catalog file: {self.catalog_path}"
+                f"Failed to read intent catalog file: {path}"
             ) from exc
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError as exc:
             raise IntentRepositoryError(
-                f"Intent catalog file must contain valid JSON: {self.catalog_path}"
+                f"Intent catalog file must contain valid JSON: {path}"
             ) from exc
 
     def _extract_intents(self, payload: Any) -> list[Any]:
@@ -113,3 +150,28 @@ class FileIntentRepository(IntentRepository):
         raise IntentRepositoryError(
             "Intent catalog file must be a JSON array or an object containing an 'intents' array"
         )
+
+    def _load_overlay_map(
+        self,
+        path: Path | None,
+        *,
+        wrapper_key: str,
+    ) -> dict[str, Any]:
+        """Load one optional per-intent overlay map from disk."""
+        if path is None:
+            return {}
+        payload = self._load_payload(path)
+        mapping: Any = payload
+        if isinstance(payload, dict) and wrapper_key in payload:
+            mapping = payload[wrapper_key]
+        if not isinstance(mapping, dict):
+            raise IntentRepositoryError(
+                f"Overlay file {path} must be a JSON object or contain '{wrapper_key}'"
+            )
+        normalized: dict[str, Any] = {}
+        for raw_key, value in mapping.items():
+            key = str(raw_key).strip()
+            if not key:
+                raise IntentRepositoryError(f"Overlay file {path} contains an empty intent_code key")
+            normalized[key] = value
+        return normalized
