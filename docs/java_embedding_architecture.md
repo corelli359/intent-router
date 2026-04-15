@@ -1,5 +1,8 @@
 # Intent Router Java SDK 集成方案
 
+> 注意：这份文档当前作为历史副本保留。  
+> Java SDK 集成的最新主文档请以 [`intent-router-java-sdk集成方案.md`](./intent-router-java-sdk集成方案.md) 为准，调用时序请参考 [`intent-router-java-sdk调用时序设计.md`](./intent-router-java-sdk调用时序设计.md)。
+
 > **交付形态**: Java SDK (JAR)，内嵌 Python router 引擎  
 > **部署方式**: 同容器  
 > **Session**: Java 外部管理，每次请求传入/传出  

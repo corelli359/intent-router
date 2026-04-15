@@ -2,6 +2,8 @@
 
 当前优先阅读：
 
+- `intent-router-java-sdk集成方案.md`
+- `intent-router-java-sdk调用时序设计.md`
 - `router-service开发架构与代码导读.md`
 - `router-service代码评审改造方案设计.md`
 - `intent-router-prd.md`
