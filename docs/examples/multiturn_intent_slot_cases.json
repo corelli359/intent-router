@@ -1,0 +1,140 @@
+{
+  "cases": [
+    {
+      "case_id": "transfer_required_slots_multiturn",
+      "description": "先识别转账意图，再通过多轮对话补齐收款人、收款卡和金额。",
+      "turns": [
+        {
+          "content": "帮我转账",
+          "expect_analyze_primary_contains": [
+            "transfer_money"
+          ],
+          "expect_execute_graph_status": "waiting_user_input",
+          "expect_execute_node_intent": "transfer_money",
+          "expect_execute_node_status": "waiting_user_input",
+          "expect_execute_prompt_contains": [
+            "金额",
+            "收款人姓名",
+            "收款卡卡号/尾号"
+          ],
+          "expect_execute_slot_memory": {}
+        },
+        {
+          "content": "收款人王芳，收款卡号6222020100043219999",
+          "expect_analyze_primary_contains": [
+            "transfer_money"
+          ],
+          "expect_analyze_slot_intent": "transfer_money",
+          "expect_analyze_slot_memory": {
+            "payee_name": "王芳",
+            "payee_card_no": "6222020100043219999"
+          },
+          "expect_execute_graph_status": "waiting_user_input",
+          "expect_execute_node_intent": "transfer_money",
+          "expect_execute_node_status": "waiting_user_input",
+          "expect_execute_prompt_contains": [
+            "金额"
+          ],
+          "expect_execute_prompt_excludes": [
+            "收款人姓名",
+            "收款卡卡号/尾号"
+          ],
+          "expect_execute_slot_memory": {
+            "payee_name": "王芳",
+            "payee_card_no": "6222020100043219999"
+          }
+        },
+        {
+          "content": "转500元",
+          "expect_analyze_primary_contains": [
+            "transfer_money"
+          ],
+          "expect_execute_graph_status": "completed",
+          "expect_execute_node_intent": "transfer_money",
+          "expect_execute_node_status": "completed",
+          "expect_execute_prompt_contains": [
+            "转账成功"
+          ],
+          "expect_execute_slot_memory": {
+            "amount": "500",
+            "payee_name": "王芳",
+            "payee_card_no": "6222020100043219999"
+          }
+        }
+      ],
+      "expect_final_graph_status": "completed",
+      "expect_final_intent": "transfer_money",
+      "expect_final_status": "completed",
+      "expect_final_slot_memory": {
+        "amount": "500",
+        "payee_name": "王芳",
+        "payee_card_no": "6222020100043219999"
+      }
+    },
+    {
+      "case_id": "balance_required_slots_multiturn",
+      "description": "先识别余额查询意图，再通过多轮对话补齐卡号和手机号后四位。",
+      "turns": [
+        {
+          "content": "帮我查一下余额",
+          "expect_analyze_primary_contains": [
+            "query_account_balance"
+          ],
+          "expect_execute_graph_status": "waiting_user_input",
+          "expect_execute_node_intent": "query_account_balance",
+          "expect_execute_node_status": "waiting_user_input",
+          "expect_execute_prompt_contains": [
+            "银行卡号",
+            "手机号后4位"
+          ],
+          "expect_execute_slot_memory": {}
+        },
+        {
+          "content": "银行卡号6222020100043219999",
+          "expect_analyze_primary_contains": [
+            "query_account_balance"
+          ],
+          "expect_analyze_slot_intent": "query_account_balance",
+          "expect_analyze_slot_memory": {
+            "card_number": "6222020100043219999"
+          },
+          "expect_execute_graph_status": "waiting_user_input",
+          "expect_execute_node_intent": "query_account_balance",
+          "expect_execute_node_status": "waiting_user_input",
+          "expect_execute_prompt_contains": [
+            "手机号后4位"
+          ],
+          "expect_execute_prompt_excludes": [
+            "银行卡号"
+          ],
+          "expect_execute_slot_memory": {
+            "card_number": "6222020100043219999"
+          }
+        },
+        {
+          "content": "6666",
+          "expect_analyze_primary_contains": [
+            "query_account_balance"
+          ],
+          "expect_execute_graph_status": "completed",
+          "expect_execute_node_intent": "query_account_balance",
+          "expect_execute_node_status": "completed",
+          "expect_execute_prompt_contains": [
+            "账户余额为 8000 元"
+          ],
+          "expect_execute_slot_memory": {
+            "card_number": "6222020100043219999",
+            "phone_last_four": "6666"
+          }
+        }
+      ],
+      "expect_final_graph_status": "completed",
+      "expect_final_intent": "query_account_balance",
+      "expect_final_status": "completed",
+      "expect_final_slot_memory": {
+        "card_number": "6222020100043219999",
+        "phone_last_four": "6666"
+      }
+    }
+  ]
+}

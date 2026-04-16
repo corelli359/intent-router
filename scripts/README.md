@@ -115,6 +115,35 @@ Default dataset:
 - `docs/examples/transfer_money_multiturn_cases.csv`
 - answer fields come first, then `user_turn_*`, then the merged `dialogue_text`
 
+Standard multi-turn intent + slot verification suite:
+
+```bash
+python scripts/verify_multiturn_intent_slot_suite.py
+```
+
+Default case file:
+
+- `docs/examples/multiturn_intent_slot_cases.json`
+
+Useful environment variables:
+
+- `INTENT_ROUTER_BASE_URL`
+- `INTENT_ROUTER_HOST_HEADER`
+- `INTENT_ROUTER_CUST_ID`
+- `INTENT_ROUTER_TIMEOUT_SECONDS`
+- `INTENT_ROUTER_STANDARD_CASES`
+- `INTENT_ROUTER_ANALYZE_BEFORE_EXECUTE`
+- `INTENT_ROUTER_ANALYSIS_MODE`
+- `INTENT_ROUTER_CASE_IDS`
+- `INTENT_ROUTER_CASE_LIMIT`
+
+Recommended usage:
+
+- keep standard regression cases in the JSON file
+- each turn can separately assert analyze-stage recognition and execute-stage prompt/slot state
+- use this script when you want to validate multi-turn required-slot补齐能力，不只是单轮提槽
+- the script is sequential and defaults to `INTENT_ROUTER_CASE_LIMIT=1`, so one run only executes one case unless you explicitly raise the limit
+
 ### 6) Build target-cluster frontend artifacts
 
 This generates:
