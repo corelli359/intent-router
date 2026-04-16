@@ -268,6 +268,7 @@ class GraphMessageFlow:
             proactive_defaults=proactive_defaults,
             proactive_recommendation=proactive_recommendation,
             skip_history_prefill=skip_history_prefill,
+            exclude_current_turn_from_context=True,
         )
         session.candidate_intents = compile_result.recognition.candidates
         session.last_diagnostics = list(compile_result.diagnostics or [])

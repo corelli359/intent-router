@@ -92,6 +92,7 @@ class GraphCompiler:
         proactive_defaults: list[ProactiveRecommendationItem] | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         skip_history_prefill: bool = False,
+        exclude_current_turn_from_context: bool = False,
         emit_events: bool = True,
     ) -> GraphCompilationResult:
         """Compile a free-form user message into graph state.
@@ -112,6 +113,11 @@ class GraphCompiler:
         else:
             recent_messages = recent_messages or []
             long_term_memory = long_term_memory or []
+        if exclude_current_turn_from_context:
+            recent_messages = self._exclude_inflight_user_message(
+                message=content,
+                recent_messages=recent_messages,
+            )
         recent_messages = sanitize_recent_messages_for_planning(recent_messages)
         recent_messages = self.augment_recent_messages_with_recommendations(
             recent_messages,
@@ -204,6 +210,27 @@ class GraphCompiler:
             no_match=False,
             diagnostics=diagnostics,
         )
+
+    def _exclude_inflight_user_message(
+        self,
+        *,
+        message: str,
+        recent_messages: list[str],
+    ) -> list[str]:
+        """Drop the current turn when it was already appended to the session transcript.
+
+        `/messages` stores the incoming user turn on the session before graph compilation
+        so the final transcript keeps the right user/assistant ordering. Recognition and
+        planning should still see only prior turns in `recent_messages`; otherwise the
+        current message is duplicated once in `message` and once in `recent_messages`.
+        """
+        normalized_message = message.strip()
+        if not normalized_message or not recent_messages:
+            return recent_messages
+        current_turn_entry = f"user: {normalized_message}"
+        if recent_messages[-1].strip() == current_turn_entry:
+            return recent_messages[:-1]
+        return recent_messages
 
     async def recognize_only(
         self,
@@ -393,6 +420,7 @@ class GraphCompiler:
             proactive_defaults=selected_items,
             proactive_recommendation=proactive_recommendation,
             skip_history_prefill=True,
+            exclude_current_turn_from_context=True,
         )
 
     def guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:

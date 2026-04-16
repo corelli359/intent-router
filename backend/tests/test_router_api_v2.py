@@ -1054,11 +1054,8 @@ def test_v2_new_graph_planning_ignores_assistant_execution_messages_in_recent_co
             assert second_turn.status_code == 200
 
             assert len(builder.calls) == 2
-            assert builder.calls[0] == ["user: 帮我处理一下这个事项"]
-            assert builder.calls[1] == [
-                "user: 帮我处理一下这个事项",
-                "user: 帮我处理一下这个事项",
-            ]
+            assert builder.calls[0] == []
+            assert builder.calls[1] == ["user: 帮我处理一下这个事项"]
             assert all(not entry.startswith("assistant:") for entry in builder.calls[1])
 
     asyncio.run(run())
@@ -2373,6 +2370,25 @@ def test_v2_router_message_execution_mode_router_only_stops_before_agent_dispatc
             session = orchestrator.session_store.get(session_id)
             assert session.router_only_mode is True
             assert session.tasks == []
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_first_turn_excludes_current_input_from_recent_messages() -> None:
+    async def run() -> None:
+        graph_builder = _RecentMessagesRecordingGraphBuilder()
+        app, _ = _test_v2_app(graph_builder=graph_builder)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "给燃气户号88001234交88元"},
+            )
+            assert response.status_code == 200
+            assert graph_builder.calls == [[]]
 
     asyncio.run(run())
 
