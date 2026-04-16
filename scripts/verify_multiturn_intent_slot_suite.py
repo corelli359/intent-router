@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Run multi-turn intent + slot verification through the real user-facing dialog APIs.
+"""Run multi-turn dialog verification through the real user-facing router APIs.
 
 This script intentionally behaves like an external user/client:
 
 1. create one session
 2. send one user turn at a time through `/sessions/{session_id}/messages`
-3. validate the returned assistant prompt / graph status / intent / slot memory
+3. validate the returned assistant reply / current intent / current slots / dialog stage
 
 It does not call the analyze-only endpoint and does not inspect internal helper APIs.
 The purpose is end-to-end validation of the overall multi-turn capability from the
@@ -124,32 +124,62 @@ def _last_assistant_message(snapshot: dict[str, Any]) -> str:
     return ""
 
 
-def _graph_nodes(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return graph nodes from the snapshot payload."""
-    graph = snapshot.get("current_graph") or {}
-    nodes = graph.get("nodes") or []
+def _dialog_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return the active router payload for the current dialog turn."""
+    pending = snapshot.get("pending_graph")
+    if isinstance(pending, dict):
+        return pending
+    current = snapshot.get("current_graph")
+    if isinstance(current, dict):
+        return current
+    return {}
+
+
+def _dialog_items(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the current dialog items from the active router payload."""
+    payload = _dialog_payload(snapshot)
+    nodes = payload.get("nodes") or []
     return [node for node in nodes if isinstance(node, dict)]
 
 
-def _graph_status(snapshot: dict[str, Any]) -> str | None:
-    """Return current graph status when present."""
-    graph = snapshot.get("current_graph") or {}
-    status = graph.get("status")
-    return str(status) if status is not None else None
+def _dialog_stage(snapshot: dict[str, Any]) -> str:
+    """Normalize the raw router status into a user-facing dialog stage."""
+    payload = _dialog_payload(snapshot)
+    raw_status = str(payload.get("status") or "").strip()
+    if raw_status in {"waiting_user_input", "waiting_confirmation_node"}:
+        return "asking"
+    if raw_status == "waiting_confirmation":
+        return "confirming"
+    if raw_status == "ready_for_dispatch":
+        return "ready"
+    if raw_status in {"completed", "partially_completed"}:
+        return "done"
+    return "idle"
 
 
-def _graph_node(
+def _current_result(
     snapshot: dict[str, Any],
     *,
     intent_code: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return the first matching graph node."""
-    nodes = _graph_nodes(snapshot)
+    """Return the current intent result item for this dialog."""
+    items = _dialog_items(snapshot)
     if intent_code:
-        for node in nodes:
-            if str(node.get("intent_code", "")) == intent_code:
-                return node
-    return nodes[0] if nodes else None
+        for item in items:
+            if str(item.get("intent_code", "")) == intent_code:
+                return item
+    return items[0] if items else None
+
+
+def _dialog_state(snapshot: dict[str, Any], *, intent_code: str | None = None) -> dict[str, Any]:
+    """Project one raw router snapshot into a simple dialog-oriented state."""
+    result = _current_result(snapshot, intent_code=intent_code)
+    return {
+        "stage": _dialog_stage(snapshot),
+        "assistant_reply": _last_assistant_message(snapshot),
+        "intent_code": str(result.get("intent_code", "")) if isinstance(result, dict) else "",
+        "slots": dict(result.get("slot_memory") or {}) if isinstance(result, dict) else {},
+    }
 
 
 def _assert_equal(*, actual: Any, expected: Any, context: str) -> None:
@@ -204,7 +234,7 @@ def _format_failure(
             "turn_index": turn_index,
             "session_id": session_id,
             "reason": reason,
-            "snapshot": snapshot,
+            "dialog_state": _dialog_state(snapshot or {}),
         },
         ensure_ascii=False,
         indent=2,
@@ -221,68 +251,58 @@ def _verify_turn(
 ) -> dict[str, Any]:
     """Validate one user-side turn response."""
     context_prefix = f"{case.get('case_id')} turn {turn_index}"
-    assistant_message = _last_assistant_message(snapshot)
-    expected_node_intent = turn.get("expect_intent")
-    node = _graph_node(snapshot, intent_code=str(expected_node_intent) if expected_node_intent else None)
+    expected_intent = turn.get("expect_intent")
+    state = _dialog_state(snapshot, intent_code=str(expected_intent) if expected_intent else None)
 
     try:
-        expected_graph_status = turn.get("expect_graph_status")
-        if expected_graph_status is not None:
+        expected_stage = turn.get("expect_stage")
+        if expected_stage is not None:
             _assert_equal(
-                actual=_graph_status(snapshot),
-                expected=str(expected_graph_status),
-                context=f"{context_prefix} graph_status",
+                actual=state["stage"],
+                expected=str(expected_stage),
+                context=f"{context_prefix} stage",
             )
 
-        if node is None:
-            raise AssertionError(f"{context_prefix} node: no matching graph node")
+        if not state["intent_code"]:
+            raise AssertionError(f"{context_prefix} result: no current intent result")
 
-        if expected_node_intent is not None:
+        if expected_intent is not None:
             _assert_equal(
-                actual=str(node.get("intent_code", "")),
-                expected=str(expected_node_intent),
+                actual=state["intent_code"],
+                expected=str(expected_intent),
                 context=f"{context_prefix} intent",
             )
 
-        expected_node_status = turn.get("expect_node_status")
-        if expected_node_status is not None:
-            _assert_equal(
-                actual=str(node.get("status", "")),
-                expected=str(expected_node_status),
-                context=f"{context_prefix} node_status",
-            )
-
-        expected_assistant_contains = turn.get("expect_assistant_contains") or []
-        if expected_assistant_contains:
+        expected_reply_contains = turn.get("expect_reply_contains") or []
+        if expected_reply_contains:
             _assert_text_contains(
-                text=assistant_message,
-                expected=[str(item) for item in expected_assistant_contains],
-                context=f"{context_prefix} assistant_contains",
+                text=state["assistant_reply"],
+                expected=[str(item) for item in expected_reply_contains],
+                context=f"{context_prefix} reply_contains",
             )
 
-        expected_assistant_excludes = turn.get("expect_assistant_excludes") or []
-        if expected_assistant_excludes:
+        expected_reply_excludes = turn.get("expect_reply_excludes") or []
+        if expected_reply_excludes:
             _assert_text_excludes(
-                text=assistant_message,
-                forbidden=[str(item) for item in expected_assistant_excludes],
-                context=f"{context_prefix} assistant_excludes",
+                text=state["assistant_reply"],
+                forbidden=[str(item) for item in expected_reply_excludes],
+                context=f"{context_prefix} reply_excludes",
             )
 
-        slot_memory = node.get("slot_memory") or {}
-        expected_slot_memory = turn.get("expect_slot_memory") or {}
-        if expected_slot_memory:
+        expected_slots = turn.get("expect_slots") or {}
+        if expected_slots:
             _assert_mapping_contains(
-                actual=slot_memory,
-                expected={str(key): value for key, value in expected_slot_memory.items()},
-                context=f"{context_prefix} slot_memory",
+                actual=state["slots"],
+                expected={str(key): value for key, value in expected_slots.items()},
+                context=f"{context_prefix} slots",
             )
 
-        expected_slot_absent = turn.get("expect_slot_absent") or []
-        if expected_slot_absent:
+        expected_absent_slots = turn.get("expect_absent_slots") or []
+        if expected_absent_slots:
             _assert_keys_absent(
-                actual=slot_memory,
-                keys=[str(item) for item in expected_slot_absent],
-                context=f"{context_prefix} slot_absent",
+                actual=state["slots"],
+                keys=[str(item) for item in expected_absent_slots],
+                context=f"{context_prefix} absent_slots",
             )
     except AssertionError as exc:
         raise AssertionError(
@@ -298,11 +318,10 @@ def _verify_turn(
     return {
         "turn_index": turn_index,
         "content": str(turn.get("content") or ""),
-        "graph_status": _graph_status(snapshot),
-        "intent_code": node.get("intent_code"),
-        "node_status": node.get("status"),
-        "assistant_message": assistant_message,
-        "slot_memory": node.get("slot_memory") or {},
+        "stage": state["stage"],
+        "intent_code": state["intent_code"],
+        "assistant_reply": state["assistant_reply"],
+        "slots": state["slots"],
     }
 
 
@@ -314,45 +333,34 @@ def _verify_final_expectations(
 ) -> None:
     """Validate case-level final expectations after all turns finish."""
     expected_final_intent = case.get("expect_final_intent")
-    node = _graph_node(
-        final_snapshot,
-        intent_code=str(expected_final_intent) if expected_final_intent else None,
-    )
+    state = _dialog_state(final_snapshot, intent_code=str(expected_final_intent) if expected_final_intent else None)
     context_prefix = f"{case.get('case_id')} final"
 
     try:
-        expected_final_graph_status = case.get("expect_final_graph_status")
-        if expected_final_graph_status is not None:
+        expected_final_stage = case.get("expect_final_stage")
+        if expected_final_stage is not None:
             _assert_equal(
-                actual=_graph_status(final_snapshot),
-                expected=str(expected_final_graph_status),
-                context=f"{context_prefix} graph_status",
+                actual=state["stage"],
+                expected=str(expected_final_stage),
+                context=f"{context_prefix} stage",
             )
 
-        if node is None:
-            raise AssertionError(f"{context_prefix} node: no matching graph node")
+        if not state["intent_code"]:
+            raise AssertionError(f"{context_prefix} result: no current intent result")
 
         if expected_final_intent is not None:
             _assert_equal(
-                actual=str(node.get("intent_code", "")),
+                actual=state["intent_code"],
                 expected=str(expected_final_intent),
                 context=f"{context_prefix} intent",
             )
 
-        expected_final_status = case.get("expect_final_status")
-        if expected_final_status is not None:
-            _assert_equal(
-                actual=str(node.get("status", "")),
-                expected=str(expected_final_status),
-                context=f"{context_prefix} node_status",
-            )
-
-        expected_final_slot_memory = case.get("expect_final_slot_memory") or {}
-        if expected_final_slot_memory:
+        expected_final_slots = case.get("expect_final_slots") or {}
+        if expected_final_slots:
             _assert_mapping_contains(
-                actual=node.get("slot_memory") or {},
-                expected={str(key): value for key, value in expected_final_slot_memory.items()},
-                context=f"{context_prefix} slot_memory",
+                actual=state["slots"],
+                expected={str(key): value for key, value in expected_final_slots.items()},
+                context=f"{context_prefix} slots",
             )
     except AssertionError as exc:
         raise AssertionError(
@@ -401,8 +409,8 @@ def _run_case(client: RouterClient, case: dict[str, Any]) -> dict[str, Any]:
         "description": case.get("description", ""),
         "session_id": session_id,
         "turn_results": turn_results,
-        "final_graph_status": _graph_status(final_snapshot),
-        "final_assistant_message": _last_assistant_message(final_snapshot),
+        "final_stage": _dialog_stage(final_snapshot),
+        "final_assistant_reply": _last_assistant_message(final_snapshot),
     }
 
 

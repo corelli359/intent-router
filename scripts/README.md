@@ -125,7 +125,7 @@ This script is user-side end-to-end verification only:
 
 - it creates a session
 - sends real multi-turn dialog messages
-- validates the returned prompt, graph status, intent code, and slot memory
+- validates the returned reply, current intent, current slots, and dialog stage
 - it does not call the analyze-only endpoint
 - it sends `executionMode=router_only`, so the router stops before downstream agent execution
 
@@ -148,6 +148,7 @@ Recommended usage:
 - keep standard regression cases in the JSON file
 - each turn asserts the actual response seen by a user-side caller
 - use this script when you want to validate the real multi-turn intent recognition + slot filling chain
+- the case file uses dialog-oriented fields like `expect_stage`, `expect_reply_contains`, `expect_intent`, and `expect_slots`
 - the script is sequential and defaults to `INTENT_ROUTER_CASE_LIMIT=1`, so one run only executes one case unless you explicitly raise the limit
 
 ### 6) Build target-cluster frontend artifacts

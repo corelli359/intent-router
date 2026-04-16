@@ -6,53 +6,49 @@
       "turns": [
         {
           "content": "帮我转账",
-          "expect_graph_status": "waiting_user_input",
+          "expect_stage": "asking",
           "expect_intent": "transfer_money",
-          "expect_node_status": "waiting_user_input",
-          "expect_assistant_contains": [
+          "expect_reply_contains": [
             "金额",
             "收款人姓名",
             "收款卡卡号/尾号"
           ],
-          "expect_slot_memory": {}
+          "expect_slots": {}
         },
         {
           "content": "收款人王芳，收款卡号6222020100043219999",
-          "expect_graph_status": "waiting_user_input",
+          "expect_stage": "asking",
           "expect_intent": "transfer_money",
-          "expect_node_status": "waiting_user_input",
-          "expect_assistant_contains": [
+          "expect_reply_contains": [
             "金额"
           ],
-          "expect_assistant_excludes": [
+          "expect_reply_excludes": [
             "收款人姓名",
             "收款卡卡号/尾号"
           ],
-          "expect_slot_memory": {
+          "expect_slots": {
             "payee_name": "王芳",
             "payee_card_no": "6222020100043219999"
           }
         },
         {
           "content": "转500元",
-          "expect_graph_status": "ready_for_dispatch",
+          "expect_stage": "ready",
           "expect_intent": "transfer_money",
-          "expect_node_status": "ready_for_dispatch",
-          "expect_assistant_contains": [
+          "expect_reply_contains": [
             "路由识别完成",
             "未调用执行 agent"
           ],
-          "expect_slot_memory": {
+          "expect_slots": {
             "amount": "500",
             "payee_name": "王芳",
             "payee_card_no": "6222020100043219999"
           }
         }
       ],
-      "expect_final_graph_status": "ready_for_dispatch",
+      "expect_final_stage": "ready",
       "expect_final_intent": "transfer_money",
-      "expect_final_status": "ready_for_dispatch",
-      "expect_final_slot_memory": {
+      "expect_final_slots": {
         "amount": "500",
         "payee_name": "王芳",
         "payee_card_no": "6222020100043219999"
@@ -64,49 +60,45 @@
       "turns": [
         {
           "content": "帮我查一下余额",
-          "expect_graph_status": "waiting_user_input",
+          "expect_stage": "asking",
           "expect_intent": "query_account_balance",
-          "expect_node_status": "waiting_user_input",
-          "expect_assistant_contains": [
+          "expect_reply_contains": [
             "银行卡号",
             "手机号后4位"
           ],
-          "expect_slot_memory": {}
+          "expect_slots": {}
         },
         {
           "content": "银行卡号6222020100043219999",
-          "expect_graph_status": "waiting_user_input",
+          "expect_stage": "asking",
           "expect_intent": "query_account_balance",
-          "expect_node_status": "waiting_user_input",
-          "expect_assistant_contains": [
+          "expect_reply_contains": [
             "手机号后4位"
           ],
-          "expect_assistant_excludes": [
+          "expect_reply_excludes": [
             "银行卡号"
           ],
-          "expect_slot_memory": {
+          "expect_slots": {
             "card_number": "6222020100043219999"
           }
         },
         {
           "content": "6666",
-          "expect_graph_status": "ready_for_dispatch",
+          "expect_stage": "ready",
           "expect_intent": "query_account_balance",
-          "expect_node_status": "ready_for_dispatch",
-          "expect_assistant_contains": [
+          "expect_reply_contains": [
             "路由识别完成",
             "未调用执行 agent"
           ],
-          "expect_slot_memory": {
+          "expect_slots": {
             "card_number": "6222020100043219999",
             "phone_last_four": "6666"
           }
         }
       ],
-      "expect_final_graph_status": "ready_for_dispatch",
+      "expect_final_stage": "ready",
       "expect_final_intent": "query_account_balance",
-      "expect_final_status": "ready_for_dispatch",
-      "expect_final_slot_memory": {
+      "expect_final_slots": {
         "card_number": "6222020100043219999",
         "phone_last_four": "6666"
       }
