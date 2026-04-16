@@ -121,7 +121,7 @@ Standard multi-turn intent + slot verification suite:
 python scripts/verify_multiturn_intent_slot_suite.py
 ```
 
-This script is user-side end-to-end verification only:
+This script is user-side end-to-end dialog verification only:
 
 - it creates a session
 - sends real multi-turn dialog messages
@@ -129,27 +129,18 @@ This script is user-side end-to-end verification only:
 - it does not call the analyze-only endpoint
 - it sends `executionMode=router_only`, so the router stops before downstream agent execution
 
-Default case file:
-
-- `docs/examples/multiturn_intent_slot_cases.json`
-
 Useful environment variables:
 
 - `INTENT_ROUTER_BASE_URL`
 - `INTENT_ROUTER_HOST_HEADER`
 - `INTENT_ROUTER_CUST_ID`
 - `INTENT_ROUTER_TIMEOUT_SECONDS`
-- `INTENT_ROUTER_STANDARD_CASES`
-- `INTENT_ROUTER_CASE_IDS`
-- `INTENT_ROUTER_CASE_LIMIT`
 
 Recommended usage:
 
-- keep standard regression cases in the JSON file
-- each turn asserts the actual response seen by a user-side caller
-- use this script when you want to validate the real multi-turn intent recognition + slot filling chain
-- the case file uses dialog-oriented fields like `expect_stage`, `expect_reply_contains`, `expect_intent`, and `expect_slots`
-- the script is sequential and defaults to `INTENT_ROUTER_CASE_LIMIT=1`, so one run only executes one case unless you explicitly raise the limit
+- edit `TURNS` at the top of the script directly
+- each turn prints only user input, assistant reply, current intent, current slots, and current stage
+- use this script when you want to validate the real multi-turn intent recognition + slot filling chain without running downstream agents
 
 ### 6) Build target-cluster frontend artifacts
 
