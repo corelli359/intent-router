@@ -44,30 +44,6 @@ data:
             "validation_hint": "必须是正数金额。"
           },
           {
-            "field_code": "ccy",
-            "label": "币种",
-            "semantic_definition": "本次转账金额对应的币种。",
-            "value_type": "string",
-            "aliases": [
-              "币种",
-              "货币",
-              "转账币种"
-            ],
-            "examples": [
-              "人民币",
-              "CNY",
-              "美元",
-              "USD"
-            ],
-            "counter_examples": [
-              "500",
-              "6222020100043219999"
-            ],
-            "format_hint": "",
-            "normalization_hint": "如果识别到标准币种代码，优先使用标准代码。",
-            "validation_hint": ""
-          },
-          {
             "field_code": "payer_card_no",
             "label": "付款卡卡号/尾号",
             "semantic_definition": "本次转账使用的付款卡卡号或卡尾号。",
@@ -1061,7 +1037,6 @@ data:
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory",
             "transfer.amount": "$slot_memory.amount",
-            "transfer.ccy": "$slot_memory.ccy",
             "payer.cardNo": "$slot_memory.payer_card_no",
             "payer.cardRemark": "$slot_memory.payer_card_remark",
             "payee.name": "$slot_memory.payee_name",
@@ -1987,38 +1962,6 @@ data:
             "prompt_hint": "若当前消息明确包含转账金额，应优先提取到 amount。"
           },
           {
-            "slot_key": "ccy",
-            "field_code": "ccy",
-            "role": "transaction_currency",
-            "label": "币种",
-            "description": "本次转账对应的币种。",
-            "semantic_definition": "转账金额的币种信息。",
-            "value_type": "string",
-            "required": false,
-            "allow_from_history": false,
-            "allow_from_recommendation": true,
-            "allow_from_context": false,
-            "aliases": [
-              "币种",
-              "货币",
-              "转账币种"
-            ],
-            "examples": [
-              "人民币",
-              "CNY",
-              "美元",
-              "USD"
-            ],
-            "counter_examples": [
-              "500",
-              "小红"
-            ],
-            "bind_scope": "node_input",
-            "confirmation_policy": "when_ambiguous",
-            "overwrite_policy": "overwrite_if_new_nonempty",
-            "prompt_hint": "如果用户没有明确指定币种，不要强行补齐。"
-          },
-          {
             "slot_key": "payer_card_no",
             "field_code": "payer_card_no",
             "role": "payer_account",
@@ -2116,7 +2059,7 @@ data:
             "description": "收款卡卡号或尾号。",
             "semantic_definition": "当前转账的收款卡标识。",
             "value_type": "string",
-            "required": true,
+            "required": false,
             "allow_from_history": false,
             "allow_from_recommendation": true,
             "allow_from_context": false,

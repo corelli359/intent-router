@@ -76,7 +76,7 @@ class TransferMoneyResolution(BaseModel):
     payee_card_bank: str | None = None
     payee_phone: str | None = None
     has_enough_information: bool = False
-    ask_message: str = "请提供金额、收款人姓名、收款卡卡号/尾号"
+    ask_message: str = "请提供金额、收款人姓名"
 
 
 _AMOUNT_SLOT = SlotDefinition(slot_key="amount", value_type=SlotValueType.CURRENCY)
@@ -127,26 +127,25 @@ TRANSFER_MONEY_PROMPT = ChatPromptTemplate.from_messages(
                 "上游已经把请求路由到了 transfer_money。"
                 "你不做意图识别，不执行转账，只做槽位提取和下一步追问。"
                 "你必须只输出 JSON，不能输出解释。"
-                "当前任务只关心这些业务槽位：amount、ccy、payer_card_no、payer_card_remark、"
+                "当前任务只关心这些业务槽位：amount、payer_card_no、payer_card_remark、"
                 "payee_name、payee_card_no、payee_card_remark、payee_card_bank、payee_phone。"
-                "其中 amount、payee_name、payee_card_no 是必填。"
+                "其中 amount、payee_name 是必填。"
                 "规则："
                 "1. 优先保留 current_slots 里已经确认的值；当前输入只补充缺失槽位时，不能重置已有槽位。"
                 "2. 只有用户明确修正某个槽位时，才覆盖那个槽位。"
                 "3. payee_name 只承载收款人姓名；例如“给小红转200”时，应返回 payee_name='小红'。"
                 "4. payee_card_no 只承载收款卡卡号或尾号；例如“收款卡尾号1234”时，应返回 payee_card_no='1234'。"
                 "5. amount 只保留数值字符串；如“转500”“500块”“500元”都应提取为 amount='500'。"
-                "6. ccy 只有用户明确说出币种时才提取，例如“人民币”“CNY”“美元”“USD”。"
-                "7. payer_card_no、payer_card_remark、payee_card_remark、payee_card_bank、payee_phone 都是可选槽位，"
+                "6. payer_card_no、payer_card_remark、payee_card_no、payee_card_remark、payee_card_bank、payee_phone 都是可选槽位，"
                 "只有用户明确提供时才提取。"
-                "8. recent_messages 和 long_term_memory 只能帮助你理解用户是不是在补充当前转账任务，"
+                "7. recent_messages 和 long_term_memory 只能帮助你理解用户是不是在补充当前转账任务，"
                 "不能把历史里出现过但当前轮没有再次明确提供的新槽位直接当成当前确认输入。"
-                "9. 如果信息不足，has_enough_information 必须为 false，并给出简洁明确的 ask_message。"
-                "10. ask_message 只追问当前缺失的必填槽位，不要追问可选槽位。"
+                "8. 如果信息不足，has_enough_information 必须为 false，并给出简洁明确的 ask_message。"
+                "9. ask_message 只追问当前缺失的必填槽位，不要追问可选槽位。"
                 "示例："
-                "A. 首轮输入“给小红转500”时，应返回 payee_name='小红'、amount='500'，同时因为 payee_card_no 缺失而继续追问。"
+                "A. 首轮输入“给小红转500”时，应返回 payee_name='小红'、amount='500'，且 has_enough_information=true。"
                 "B. 首轮输入“给尾号1234那张卡转200”时，应返回 payee_card_no='1234'、amount='200'，同时因为 payee_name 缺失而继续追问。"
-                "C. current_slots 已有 payee_name='小红'、payee_card_no='1234'，current_input='币种人民币' 时，应补 ccy='CNY'。"
+                "C. current_slots 已有 payee_name='小红'、amount='500'，current_input='收款卡尾号1234' 时，应补 payee_card_no='1234'。"
                 "D. current_slots 已有 amount='500'，current_input='付款卡备注工资卡' 时，应补 payer_card_remark='工资卡'。"
             ),
         ),
@@ -161,7 +160,6 @@ TRANSFER_MONEY_PROMPT = ChatPromptTemplate.from_messages(
                 "请返回 JSON:\n"
                 "{{\n"
                 '  "amount": "string | null",\n'
-                '  "ccy": "string | null",\n'
                 '  "payer_card_no": "string | null",\n'
                 '  "payer_card_remark": "string | null",\n'
                 '  "payee_name": "string | null",\n'
@@ -263,7 +261,6 @@ class TransferMoneyAgentService:
                     "current_slots_json": dump_json(
                         {
                             "amount": request.transfer.amount,
-                            "ccy": request.transfer.ccy,
                             "payer_card_no": request.payer.card_no,
                             "payer_card_remark": request.payer.card_remark,
                             "payee_name": request.payee.name,
@@ -468,8 +465,6 @@ class TransferMoneyAgentService:
             missing.append("amount")
         if not resolution.payee_name:
             missing.append("payee_name")
-        if not resolution.payee_card_no:
-            missing.append("payee_card_no")
         return missing
 
     def _ask_message(self, missing_fields: list[str]) -> str:
@@ -477,7 +472,6 @@ class TransferMoneyAgentService:
         labels = {
             "amount": "金额",
             "payee_name": "收款人姓名",
-            "payee_card_no": "收款卡卡号/尾号",
         }
         if not missing_fields:
             return ""
@@ -488,8 +482,6 @@ class TransferMoneyAgentService:
         slot_memory: dict[str, Any] = {}
         if resolution.amount:
             slot_memory["amount"] = resolution.amount
-        if resolution.ccy:
-            slot_memory["ccy"] = resolution.ccy
         if resolution.payer_card_no:
             slot_memory["payer_card_no"] = resolution.payer_card_no
         if resolution.payer_card_remark:

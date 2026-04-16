@@ -253,8 +253,8 @@ def build_payloads() -> list[dict[str, Any]]:
             name="转账",
             description=(
                 "向指定收款人发起转账。"
-                "按业务确认槽位执行：amount、payee_name、payee_card_no 为必填；"
-                "ccy、payer_card_no、payer_card_remark、payee_card_remark、payee_card_bank、payee_phone 为可选。"
+                "按业务确认槽位执行：amount、payee_name 为必填；"
+                "payer_card_no、payer_card_remark、payee_card_no、payee_card_remark、payee_card_bank、payee_phone 为可选。"
             ),
             domain_code="transfer",
             domain_name="转账",
@@ -275,7 +275,6 @@ def build_payloads() -> list[dict[str, Any]]:
             field_mapping={
                 **COMMON_CONTEXT_MAPPING,
                 "transfer.amount": "$slot_memory.amount",
-                "transfer.ccy": "$slot_memory.ccy",
                 "payer.cardNo": "$slot_memory.payer_card_no",
                 "payer.cardRemark": "$slot_memory.payer_card_remark",
                 "payee.name": "$slot_memory.payee_name",
@@ -296,16 +295,6 @@ def build_payloads() -> list[dict[str, Any]]:
                     format_hint="输出数字字符串，不保留货币单位。",
                     normalization_hint="去掉元、块、人民币等单位。",
                     validation_hint="必须是正数金额。",
-                ),
-                _field(
-                    field_code="ccy",
-                    label="币种",
-                    semantic_definition="本次转账金额对应的币种。",
-                    value_type="string",
-                    aliases=["币种", "货币", "转账币种"],
-                    examples=["人民币", "CNY", "美元", "USD"],
-                    counter_examples=["500", "6222020100043219999"],
-                    normalization_hint="如果识别到标准币种代码，优先使用标准代码。",
                 ),
                 _field(
                     field_code="payer_card_no",
@@ -384,21 +373,6 @@ def build_payloads() -> list[dict[str, Any]]:
                     prompt_hint="若当前消息明确包含转账金额，应优先提取到 amount。",
                 ),
                 _slot(
-                    slot_key="ccy",
-                    field_code="ccy",
-                    role="transaction_currency",
-                    label="币种",
-                    description="本次转账对应的币种。",
-                    semantic_definition="转账金额的币种信息。",
-                    value_type="string",
-                    required=False,
-                    allow_from_history=False,
-                    aliases=["币种", "货币", "转账币种"],
-                    examples=["人民币", "CNY", "美元", "USD"],
-                    counter_examples=["500", "小红"],
-                    prompt_hint="如果用户没有明确指定币种，不要强行补齐。",
-                ),
-                _slot(
                     slot_key="payer_card_no",
                     field_code="payer_card_no",
                     role="payer_account",
@@ -451,7 +425,7 @@ def build_payloads() -> list[dict[str, Any]]:
                     description="收款卡卡号或尾号。",
                     semantic_definition="当前转账的收款卡标识。",
                     value_type="string",
-                    required=True,
+                    required=False,
                     allow_from_history=False,
                     aliases=["收款卡号", "收款卡尾号", "收款卡卡号/尾号", "对方卡号", "对方卡尾号"],
                     examples=["6222020100043219999", "1234"],

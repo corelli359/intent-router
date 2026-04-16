@@ -638,7 +638,6 @@
         "conversation.recentMessages": "$context.recent_messages",
         "conversation.longTermMemory": "$context.long_term_memory",
         "transfer.amount": "$slot_memory.amount",
-        "transfer.ccy": "$slot_memory.ccy",
         "payer.cardNo": "$slot_memory.payer_card_no",
         "payer.cardRemark": "$slot_memory.payer_card_remark",
         "payee.name": "$slot_memory.payee_name",

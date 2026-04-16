@@ -38,30 +38,6 @@
         "validation_hint": "必须是正数金额。"
       },
       {
-        "field_code": "ccy",
-        "label": "币种",
-        "semantic_definition": "本次转账金额对应的币种。",
-        "value_type": "string",
-        "aliases": [
-          "币种",
-          "货币",
-          "转账币种"
-        ],
-        "examples": [
-          "人民币",
-          "CNY",
-          "美元",
-          "USD"
-        ],
-        "counter_examples": [
-          "500",
-          "6222020100043219999"
-        ],
-        "format_hint": "",
-        "normalization_hint": "如果识别到标准币种代码，优先使用标准代码。",
-        "validation_hint": ""
-      },
-      {
         "field_code": "payer_card_no",
         "label": "付款卡卡号/尾号",
         "semantic_definition": "本次转账使用的付款卡卡号或卡尾号。",

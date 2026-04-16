@@ -170,7 +170,7 @@ def scenario_transfer_flow(client: RouterClient) -> dict[str, Any]:
         intent_code="transfer_money",
     )
     first_text = _last_assistant_message(first)
-    _assert_contains(first_text, ["金额", "收款人姓名", "收款卡卡号/尾号"], context="transfer step1 prompt")
+    _assert_contains(first_text, ["金额", "收款人姓名"], context="transfer step1 prompt")
     first_node = _single_node(first)
     _assert_equal(first_node["status"], "waiting_user_input", context="transfer step1 status")
     _assert_equal(first_node["slot_memory"], {}, context="transfer step1 slot_memory")

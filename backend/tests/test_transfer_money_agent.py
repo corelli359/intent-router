@@ -41,7 +41,7 @@ def test_transfer_money_service_waits_when_payee_identifier_is_missing() -> None
         )
 
         assert response.status == "waiting_user_input"
-        assert response.content == "请提供收款人姓名、收款卡卡号/尾号"
+        assert response.content == "请提供收款人姓名"
         assert response.slot_memory == {"amount": "500"}
 
     asyncio.run(run())
@@ -54,8 +54,6 @@ def test_transfer_money_service_completes_with_business_required_slots_only() ->
                 {
                     "amount": "5000",
                     "payee_name": "李四",
-                    "payee_card_no": "8899",
-                    "ccy": "人民币",
                     "has_enough_information": True,
                     "ask_message": "",
                 }
@@ -73,9 +71,7 @@ def test_transfer_money_service_completes_with_business_required_slots_only() ->
         assert response.status == "completed"
         assert response.slot_memory == {
             "amount": "5000",
-            "ccy": "CNY",
             "payee_name": "李四",
-            "payee_card_no": "8899",
         }
         assert response.content == "已向李四转账 5000 CNY，转账成功"
 
@@ -152,7 +148,7 @@ def test_transfer_money_service_does_not_silently_reuse_history_sensitive_slots(
         )
 
         assert response.status == "waiting_user_input"
-        assert response.content == "请提供金额、收款人姓名、收款卡卡号/尾号"
+        assert response.content == "请提供金额、收款人姓名"
         assert response.slot_memory == {}
 
     asyncio.run(run())
@@ -215,7 +211,8 @@ def test_transfer_money_service_executes_directly_with_prefilled_slots_and_empty
         assert response.payload["business_status"] == "success"
         assert response.payload["payee_name"] == "李四"
         assert response.payload["payee_card_no"] == "8899"
-        assert response.slot_memory["ccy"] == "USD"
+        assert "ccy" not in response.slot_memory
+        assert response.payload["ccy"] == "USD"
 
     asyncio.run(run())
 
