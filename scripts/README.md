@@ -94,15 +94,21 @@ Direct no-arg intent-only smoke script:
 python scripts/analyze_intent_only.py
 ```
 
-Router file-mode export now writes the split directory `k8s/intent/router-intent-catalog/`, and the Minikube deploy script refreshes that directory from the current sqlite snapshot before rollout.
+Router file-mode now uses the business CSV `intent_table_from_updated_screenshot.csv` as the source-of-truth.
+The deploy script refreshes both sqlite and the split directory `k8s/intent/router-intent-catalog/` from that CSV before rollout.
 
-Before that export, the deploy script now runs:
+Manual sync command:
 
 ```bash
-python scripts/sync_financial_intents_to_db.py
+python scripts/sync_router_intents_from_csv.py
 ```
 
-This keeps the sqlite snapshot aligned with the latest builtin finance intent definitions before the file-mode catalog ConfigMap is regenerated.
+This sync step will:
+
+- uniqueify duplicate `intent_code` values
+- replace the old transfer intent with `AG_TRANS` while preserving the transfer slot contract
+- archive the previous split catalog under `docs/archive/router-intent-catalog-pre-csv-switch`
+- rewrite the file-mode catalog used by the router ConfigMap
 
 Creative transfer multiturn intent+slot replay:
 

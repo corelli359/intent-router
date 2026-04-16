@@ -77,8 +77,9 @@ ensure_ingress() {
 ensure_ingress
 node_kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=5m || true
 
-python "${ROOT_DIR}/scripts/sync_financial_intents_to_db.py"
-python "${ROOT_DIR}/scripts/export_router_intent_catalog_from_db.py" --output-dir "${INTENT_CATALOG_SOURCE_DIR}"
+python "${ROOT_DIR}/scripts/sync_router_intents_from_csv.py" \
+  --catalog-dir "${INTENT_CATALOG_SOURCE_DIR}" \
+  --output-dir "${INTENT_CATALOG_SOURCE_DIR}"
 
 start_mount_container
 wait_for_mount
@@ -119,6 +120,7 @@ manifests=(
   credit-card-repayment-agent.yaml
   gas-bill-agent.yaml
   forex-agent.yaml
+  fallback-agent.yaml
   chat-web.yaml
   admin-web.yaml
   ingress.yaml
@@ -136,6 +138,7 @@ for deployment in \
   intent-credit-card-agent \
   intent-gas-bill-agent \
   intent-forex-agent \
+  intent-fallback-agent \
   intent-chat-web \
   intent-admin-web
 do

@@ -1,0 +1,11 @@
+{
+  "graph_build_hints": {
+    "query_account_balance": {},
+    "transfer_money": {},
+    "query_credit_card_repayment": {},
+    "pay_gas_bill": {},
+    "exchange_forex": {},
+    "助手": {},
+    "helper": {}
+  }
+}

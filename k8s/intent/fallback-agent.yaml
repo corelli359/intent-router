@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intent-fallback-agent
+  namespace: intent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intent-fallback-agent
+  template:
+    metadata:
+      labels:
+        app: intent-fallback-agent
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: fallback-agent
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              set -e
+              python -m pip install --no-cache-dir /workspace/backend/services/agents/fallback-agent
+              python -m uvicorn fallback_agent.app:app --host 0.0.0.0 --port 8000
+          ports:
+            - containerPort: 8000
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: repo
+              mountPath: /workspace
+      volumes:
+        - name: repo
+          hostPath:
+            path: /mnt/intent-router
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intent-fallback-agent
+  namespace: intent
+spec:
+  selector:
+    app: intent-fallback-agent
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+  type: ClusterIP

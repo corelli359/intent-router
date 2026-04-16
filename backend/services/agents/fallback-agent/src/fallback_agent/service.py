@@ -18,7 +18,7 @@ class FallbackAgentRequest(BaseModel):
 class FallbackAgentService:
     async def handle(self, request: FallbackAgentRequest) -> AgentExecutionResponse:
         return AgentExecutionResponse.waiting(
-            "我还没识别到明确意图，请补充你要办理的业务，比如查订单或取消预约。",
+            "当前业务已进入通用处理链路，但还没有配置专属执行能力。请补充更具体的办理诉求，或切换到人工客服。",
             payload={
                 "agent": "fallback_general",
                 "route_type": "fallback",

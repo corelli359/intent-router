@@ -1,9 +1,186 @@
 {
   "graph_build_hints": {
-    "query_account_balance": {},
-    "transfer_money": {},
-    "query_credit_card_repayment": {},
-    "pay_gas_bill": {},
-    "exchange_forex": {}
+    "AG_MENU_6": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_PAYMENT": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_8": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_9": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_10": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_11": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_12": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_13": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_14": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_15": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_16": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_17": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_18": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_19": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_TRANS": {
+      "intent_scope_rule": "",
+      "planner_notes": "",
+      "single_node_examples": [],
+      "multi_node_examples": [],
+      "provides_context_keys": [
+        "amount",
+        "business_status"
+      ],
+      "confirm_policy": "auto",
+      "max_nodes_per_message": 4
+    },
+    "AG_MENU_21": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_22": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_23": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_24": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_25": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_26": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_27": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_ZIXUN": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_29": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MENU_30": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_MARKET": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_PRODUCT_32": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_PRODUCT_33": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_FUND": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_DIALOG_35": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_DIALOG_36": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_CLIENTSERVICE_37": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_CLIENTSERVICE_38": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_CLIENTSERVICE_39": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    },
+    "AG_ASK": {
+      "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+      "confirm_policy": "always",
+      "max_nodes_per_message": 1
+    }
   }
 }

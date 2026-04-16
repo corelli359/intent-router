@@ -7,7 +7,12 @@ from router_service.catalog.intent_repository import (
     IntentRepositoryError,
     IntentRepositoryReadOnlyError,
 )
-from router_service.catalog.postgres_intent_repository import DatabaseIntentRepository
+try:
+    from router_service.catalog.postgres_intent_repository import DatabaseIntentRepository
+except ModuleNotFoundError as exc:
+    if exc.name != "sqlalchemy":
+        raise
+    DatabaseIntentRepository = None
 
 __all__ = [
     "DatabaseIntentRepository",
