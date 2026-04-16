@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send one multi-turn dialog to router-service and print the dialog result only."""
+"""Run a simple multi-turn router-only dialog check from the terminal."""
 
 from __future__ import annotations
 
@@ -14,8 +14,13 @@ BASE_URL = os.getenv("INTENT_ROUTER_BASE_URL", "http://intent-router.kkrrc-359.t
 HOST_HEADER = os.getenv("INTENT_ROUTER_HOST_HEADER")
 CUST_ID = os.getenv("INTENT_ROUTER_CUST_ID", "cust_demo")
 TIMEOUT_SECONDS = float(os.getenv("INTENT_ROUTER_TIMEOUT_SECONDS", "90"))
+INTERACTIVE_MODE = os.getenv("INTENT_ROUTER_INTERACTIVE", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
-# 直接在这里改测试对话，不需要额外 JSON 文件。
+# 如需非交互回放，可直接改这里的测试对话并设置 INTENT_ROUTER_INTERACTIVE=0。
 TURNS = [
     "帮我转账",
     "收款人王芳，收款卡号6222020100043219999",
@@ -121,19 +126,64 @@ def _dialog_result(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def main() -> int:
-    """Run the built-in dialog turns and print each turn result."""
-    session_id = _create_session()
+def _print_turn_result(*, turn_index: int, content: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Print one turn result in a compact JSON block and return it."""
+    result = {
+        "turn_index": turn_index,
+        "user_input": content,
+        **_dialog_result(snapshot),
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return result
+
+
+def _run_interactive_dialog(*, session_id: str) -> list[dict[str, Any]]:
+    """Read terminal input turn by turn and send it to the live router."""
+    outputs: list[dict[str, Any]] = []
+    print(f"session_id: {session_id}")
+    print("输入一轮用户话术后回车发送，空行或 quit 结束。")
+    turn_index = 1
+    while True:
+        try:
+            content = input("你: ").strip()
+        except EOFError:
+            break
+        if not content or content.lower() in {"quit", "exit"}:
+            break
+        snapshot = _send_turn(session_id=session_id, content=content)
+        outputs.append(
+            _print_turn_result(
+                turn_index=turn_index,
+                content=content,
+                snapshot=snapshot,
+            )
+        )
+        turn_index += 1
+    return outputs
+
+
+def _run_preset_dialog(*, session_id: str) -> list[dict[str, Any]]:
+    """Replay the built-in turns for quick smoke testing."""
     outputs: list[dict[str, Any]] = []
     for index, content in enumerate(TURNS, start=1):
         snapshot = _send_turn(session_id=session_id, content=content)
         outputs.append(
-            {
-                "turn_index": index,
-                "user_input": content,
-                **_dialog_result(snapshot),
-            }
+            _print_turn_result(
+                turn_index=index,
+                content=content,
+                snapshot=snapshot,
+            )
         )
+    return outputs
+
+
+def main() -> int:
+    """Run the dialog check in interactive or preset replay mode."""
+    session_id = _create_session()
+    if INTERACTIVE_MODE:
+        outputs = _run_interactive_dialog(session_id=session_id)
+    else:
+        outputs = _run_preset_dialog(session_id=session_id)
     print(
         json.dumps(
             {

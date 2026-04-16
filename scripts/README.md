@@ -124,7 +124,7 @@ python scripts/verify_multiturn_intent_slot_suite.py
 This script is user-side end-to-end dialog verification only:
 
 - it creates a session
-- sends real multi-turn dialog messages
+- by default it waits for your terminal input and sends one real dialog turn at a time
 - validates the returned reply, current intent, current slots, and dialog stage
 - it does not call the analyze-only endpoint
 - it sends `executionMode=router_only`, so the router stops before downstream agent execution
@@ -135,12 +135,21 @@ Useful environment variables:
 - `INTENT_ROUTER_HOST_HEADER`
 - `INTENT_ROUTER_CUST_ID`
 - `INTENT_ROUTER_TIMEOUT_SECONDS`
+- `INTENT_ROUTER_INTERACTIVE`
 
 Recommended usage:
 
-- edit `TURNS` at the top of the script directly
+- run the script directly, then type each user turn in the terminal
 - each turn prints only user input, assistant reply, current intent, current slots, and current stage
 - use this script when you want to validate the real multi-turn intent recognition + slot filling chain without running downstream agents
+
+If you want the old fixed-turn replay behavior:
+
+```bash
+INTENT_ROUTER_INTERACTIVE=0 python scripts/verify_multiturn_intent_slot_suite.py
+```
+
+In that mode, the script replays the built-in `TURNS` list defined at the top of the file.
 
 ### 6) Build target-cluster frontend artifacts
 
