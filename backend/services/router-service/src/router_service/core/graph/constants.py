@@ -4,6 +4,7 @@ from router_service.core.shared.graph_domain import GraphNodeStatus
 
 
 TERMINAL_NODE_STATUSES = {
+    GraphNodeStatus.READY_FOR_DISPATCH,
     GraphNodeStatus.COMPLETED,
     GraphNodeStatus.FAILED,
     GraphNodeStatus.CANCELLED,

@@ -156,6 +156,8 @@ class GraphRuntimeEngine:
             return GraphStatus.WAITING_CONFIRMATION_NODE
         if any(status == GraphNodeStatus.WAITING_USER_INPUT for status in statuses):
             return GraphStatus.WAITING_USER_INPUT
+        if all(status in {GraphNodeStatus.READY_FOR_DISPATCH, GraphNodeStatus.SKIPPED} for status in statuses):
+            return GraphStatus.READY_FOR_DISPATCH
         if any(status in {GraphNodeStatus.READY, GraphNodeStatus.BLOCKED, GraphNodeStatus.RUNNING} for status in statuses):
             return GraphStatus.RUNNING
         if all(status in {GraphNodeStatus.CANCELLED, GraphNodeStatus.SKIPPED} for status in statuses):
@@ -222,6 +224,7 @@ class GraphRuntimeEngine:
             TaskStatus.RUNNING: GraphNodeStatus.RUNNING,
             TaskStatus.WAITING_USER_INPUT: GraphNodeStatus.WAITING_USER_INPUT,
             TaskStatus.WAITING_CONFIRMATION: GraphNodeStatus.WAITING_CONFIRMATION,
+            TaskStatus.READY_FOR_DISPATCH: GraphNodeStatus.READY_FOR_DISPATCH,
             TaskStatus.RESUMING: GraphNodeStatus.RUNNING,
             TaskStatus.COMPLETED: GraphNodeStatus.COMPLETED,
             TaskStatus.FAILED: GraphNodeStatus.FAILED,
@@ -237,6 +240,7 @@ class GraphRuntimeEngine:
             GraphStatus.RUNNING: TaskStatus.RUNNING,
             GraphStatus.WAITING_USER_INPUT: TaskStatus.WAITING_USER_INPUT,
             GraphStatus.WAITING_CONFIRMATION_NODE: TaskStatus.WAITING_CONFIRMATION,
+            GraphStatus.READY_FOR_DISPATCH: TaskStatus.READY_FOR_DISPATCH,
             GraphStatus.PARTIALLY_COMPLETED: TaskStatus.COMPLETED,
             GraphStatus.COMPLETED: TaskStatus.COMPLETED,
             GraphStatus.FAILED: TaskStatus.FAILED,

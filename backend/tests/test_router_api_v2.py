@@ -2305,6 +2305,78 @@ def test_v2_router_message_execution_mode_analyze_only_supports_intent_only_mode
     asyncio.run(run())
 
 
+def test_v2_router_message_execution_mode_router_only_waits_for_missing_slots() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "帮我查询一下余额",
+                    "executionMode": "router_only",
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert snapshot["current_graph"]["nodes"][0]["status"] == "waiting_user_input"
+            assert "卡号" in snapshot["messages"][-1]["content"]
+            assert "手机号后4位" in snapshot["messages"][-1]["content"]
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.router_only_mode is True
+            assert session.tasks == []
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_execution_mode_router_only_stops_before_agent_dispatch() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(recognizer=_FirstMatchThenRateLimitedRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "帮我查一下余额",
+                    "executionMode": "router_only",
+                },
+            )
+            assert first_turn.status_code == 200
+            assert first_turn.json()["snapshot"]["current_graph"]["status"] == "waiting_user_input"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "卡号 6222021234567890，尾号1234",
+                    "executionMode": "router_only",
+                },
+            )
+            assert second_turn.status_code == 200
+            snapshot = second_turn.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "ready_for_dispatch"
+            assert snapshot["current_graph"]["nodes"][0]["status"] == "ready_for_dispatch"
+            assert snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "card_number": "6222021234567890",
+                "phone_last_four": "1234",
+            }
+            assert "路由识别完成" in snapshot["messages"][-1]["content"]
+            assert "未调用执行 agent" in snapshot["messages"][-1]["content"]
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.router_only_mode is True
+            assert session.tasks == []
+
+    asyncio.run(run())
+
+
 def test_v2_router_message_analyze_endpoint_extracts_slots_for_single_intent_without_execution() -> None:
     async def run() -> None:
         app, orchestrator = _test_v2_app(recognizer=_DirectTransferRecognizer())

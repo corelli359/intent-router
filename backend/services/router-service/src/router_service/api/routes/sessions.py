@@ -32,6 +32,7 @@ class MessageExecutionMode(StrEnum):
     """Execution behavior selected for one message request."""
 
     EXECUTE = "execute"
+    ROUTER_ONLY = "router_only"
     ANALYZE_ONLY = "analyze_only"
 
 
@@ -231,6 +232,7 @@ async def post_message(
             session_id=session_id,
             cust_id=resolved_cust_id,
             content=request.content or "",
+            router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
             guided_selection=request.guided_selection,
             recommendation_context=request.recommendation_context,
             proactive_recommendation=request.proactive_recommendation,
@@ -386,6 +388,7 @@ async def post_message_stream(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
+                router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
                 proactive_recommendation=request.proactive_recommendation,

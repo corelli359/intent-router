@@ -235,6 +235,7 @@ class GraphRouterOrchestrator:
         cust_id: str,
         content: str,
         *,
+        router_only: bool = False,
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
@@ -244,6 +245,7 @@ class GraphRouterOrchestrator:
             session_id,
             cust_id,
             content,
+            router_only=router_only,
             guided_selection=guided_selection,
             recommendation_context=recommendation_context,
             proactive_recommendation=proactive_recommendation,
@@ -512,6 +514,9 @@ class GraphRouterOrchestrator:
         3. otherwise pick the next ready node and run it
         4. repeat until no ready node remains
         """
+        if session.router_only_mode:
+            await self._drain_graph_router_only(session, seed_input)
+            return
         graph = session.current_graph
         if graph is None:
             await self._publish_session_state(session, "session.idle")
@@ -572,6 +577,54 @@ class GraphRouterOrchestrator:
                 next_node.intent_code,
                 next_node.status,
             )
+            return
+
+    async def _drain_graph_router_only(self, session: GraphSessionState, seed_input: str) -> None:
+        """Advance the graph only through router understanding, stopping before agent execution."""
+        graph = session.current_graph
+        if graph is None:
+            await self._publish_session_state(session, "session.idle")
+            return
+
+        iterations = 0
+        max_iterations = self._resolve_max_drain_iterations(graph)
+        while True:
+            iterations += 1
+            if iterations > max_iterations:
+                await self._fail_drain_graph(
+                    session,
+                    graph,
+                    max_iterations=max_iterations,
+                )
+                return
+            await self._refresh_graph_state(session, graph)
+            waiting_node = self._get_waiting_node(session)
+            if waiting_node is not None:
+                session.active_node_id = waiting_node.node_id
+                await self._publish_session_state(
+                    session,
+                    "session.waiting_confirmation"
+                    if waiting_node.status == GraphNodeStatus.WAITING_CONFIRMATION
+                    else "session.waiting_user_input",
+                )
+                await self._emit_graph_progress(session)
+                return
+
+            next_node = self._next_ready_node(graph)
+            if next_node is None:
+                session.active_node_id = None
+                await self._emit_graph_progress(session)
+                await self._publish_session_state(session, "session.idle")
+                return
+
+            session.active_node_id = next_node.node_id
+            if not await self._prepare_node_router_only(session, graph, next_node, dispatch_input=seed_input):
+                await self._emit_graph_progress(session)
+                await self._publish_session_state(session, "session.waiting_user_input")
+                return
+
+            session.active_node_id = None
+            await self._publish_session_state(session, "session.ready_for_dispatch")
             return
 
     def _resolve_max_drain_iterations(self, graph: ExecutionGraphState) -> int:
@@ -749,6 +802,33 @@ class GraphRouterOrchestrator:
         await self._publish_node_state(session, graph, node, task.status, "node.created", f"创建节点 {node.intent_code}")
         return task
 
+    async def _prepare_node_router_only(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        node: GraphNodeState,
+        *,
+        dispatch_input: str,
+    ) -> bool:
+        """Validate router understanding and stop once the node is ready to dispatch."""
+        active_intents = dict(self.intent_catalog.active_intents_by_code())
+        intent = active_intents.get(node.intent_code)
+        if intent is None:
+            raise ValueError(f"Intent {node.intent_code} is no longer active")
+
+        validation = await self._validate_node_understanding(
+            session,
+            graph,
+            node,
+            intent=intent,
+            current_message=dispatch_input,
+        )
+        if not validation.can_dispatch:
+            await self._mark_node_waiting_for_slots(session, graph, node, validation)
+            return False
+        await self._mark_node_ready_for_dispatch(session, graph, node)
+        return True
+
     async def _handle_agent_chunk(
         self,
         session: GraphSessionState,
@@ -898,6 +978,44 @@ class GraphRouterOrchestrator:
         )
         await self._emit_graph_progress(session)
 
+    async def _mark_node_ready_for_dispatch(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        node: GraphNodeState,
+    ) -> None:
+        """Freeze the node at the router boundary once intent and slots are ready."""
+        message = (
+            f"路由识别完成：事项「{node.title}」已具备执行条件，"
+            "当前为 router_only 模式，未调用执行 agent"
+        )
+        node.task_id = None
+        node.output_payload = {
+            "router_only": True,
+            "dispatch_ready": True,
+            "intent_code": node.intent_code,
+            "slot_memory": dict(node.slot_memory),
+        }
+        node.touch(GraphNodeStatus.READY_FOR_DISPATCH, blocking_reason=message)
+        graph.touch(GraphStatus.READY_FOR_DISPATCH)
+        session.last_diagnostics = list(node.diagnostics or [])
+        session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
+        session.touch()
+        await self._publish_node_state(
+            session,
+            graph,
+            node,
+            TaskStatus.READY_FOR_DISPATCH,
+            "node.ready_for_dispatch",
+            message,
+        )
+        await self._publish_graph_state(
+            session,
+            "graph.ready_for_dispatch",
+            message,
+            status=TaskStatus.READY_FOR_DISPATCH,
+        )
+
     async def _resume_waiting_node(
         self,
         session: GraphSessionState,
@@ -916,6 +1034,16 @@ class GraphRouterOrchestrator:
             event="node.resuming",
             message="恢复当前节点执行",
         )
+        if session.router_only_mode:
+            node.touch(GraphNodeStatus.READY)
+            graph.touch(GraphStatus.RUNNING)
+            if not await self._prepare_node_router_only(session, graph, node, dispatch_input=content):
+                session.active_node_id = node.node_id
+                await self._publish_session_state(session, "session.waiting_user_input")
+                return
+            session.active_node_id = None
+            await self._publish_session_state(session, "session.ready_for_dispatch")
+            return
         await self._run_node(session, graph, node, content)
         await self._drain_graph(session, content)
 

@@ -23,6 +23,8 @@ class GraphSnapshotPresenter:
 
     def graph_event_name(self, status: GraphStatus) -> str:
         """Map graph status to the canonical SSE event name."""
+        if status == GraphStatus.READY_FOR_DISPATCH:
+            return "graph.ready_for_dispatch"
         if status == GraphStatus.COMPLETED:
             return "graph.completed"
         if status == GraphStatus.PARTIALLY_COMPLETED:
@@ -56,6 +58,8 @@ class GraphSnapshotPresenter:
             return "执行图等待用户补充信息"
         if status == GraphStatus.WAITING_CONFIRMATION_NODE:
             return "执行图等待节点确认"
+        if status == GraphStatus.READY_FOR_DISPATCH:
+            return "路由识别完成，已具备执行条件；当前为 router_only 模式，未调用执行 agent"
         return "执行图状态更新"
 
     def should_append_graph_terminal_message(
@@ -65,6 +69,7 @@ class GraphSnapshotPresenter:
     ) -> bool:
         """Return whether the graph transition should append an assistant message."""
         if graph.status not in {
+            GraphStatus.READY_FOR_DISPATCH,
             GraphStatus.COMPLETED,
             GraphStatus.PARTIALLY_COMPLETED,
             GraphStatus.FAILED,

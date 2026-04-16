@@ -28,6 +28,7 @@ class GraphNodeStatus(StrEnum):
     RUNNING = "running"
     WAITING_USER_INPUT = "waiting_user_input"
     WAITING_CONFIRMATION = "waiting_confirmation"
+    READY_FOR_DISPATCH = "ready_for_dispatch"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -51,6 +52,7 @@ class GraphStatus(StrEnum):
     RUNNING = "running"
     WAITING_USER_INPUT = "waiting_user_input"
     WAITING_CONFIRMATION_NODE = "waiting_confirmation_node"
+    READY_FOR_DISPATCH = "ready_for_dispatch"
     PARTIALLY_COMPLETED = "partially_completed"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -193,6 +195,7 @@ class GraphSessionState(BaseModel):
     current_graph: ExecutionGraphState | None = None
     pending_graph: ExecutionGraphState | None = None
     active_node_id: str | None = None
+    router_only_mode: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     expires_at: datetime = Field(default_factory=lambda: utc_now() + SESSION_TTL)

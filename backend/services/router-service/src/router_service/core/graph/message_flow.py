@@ -35,6 +35,7 @@ PLANNING_RECENT_MESSAGE_PREFIXES = (
 )
 
 TERMINAL_GRAPH_STATUSES = {
+    GraphStatus.READY_FOR_DISPATCH,
     GraphStatus.COMPLETED,
     GraphStatus.PARTIALLY_COMPLETED,
     GraphStatus.FAILED,
@@ -95,6 +96,7 @@ class GraphMessageFlow:
         cust_id: str,
         content: str,
         *,
+        router_only: bool = False,
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
@@ -102,6 +104,7 @@ class GraphMessageFlow:
         """Entry point for all message-driven routing."""
         session = self.session_store.get_or_create(session_id, cust_id)
         session.last_diagnostics = []
+        session.router_only_mode = router_only
         message_content = content.strip()
         display_content = message_content or self.graph_compiler.guided_selection_display_content(guided_selection)
         if display_content:

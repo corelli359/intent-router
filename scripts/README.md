@@ -121,6 +121,14 @@ Standard multi-turn intent + slot verification suite:
 python scripts/verify_multiturn_intent_slot_suite.py
 ```
 
+This script is user-side end-to-end verification only:
+
+- it creates a session
+- sends real multi-turn dialog messages
+- validates the returned prompt, graph status, intent code, and slot memory
+- it does not call the analyze-only endpoint
+- it sends `executionMode=router_only`, so the router stops before downstream agent execution
+
 Default case file:
 
 - `docs/examples/multiturn_intent_slot_cases.json`
@@ -132,16 +140,14 @@ Useful environment variables:
 - `INTENT_ROUTER_CUST_ID`
 - `INTENT_ROUTER_TIMEOUT_SECONDS`
 - `INTENT_ROUTER_STANDARD_CASES`
-- `INTENT_ROUTER_ANALYZE_BEFORE_EXECUTE`
-- `INTENT_ROUTER_ANALYSIS_MODE`
 - `INTENT_ROUTER_CASE_IDS`
 - `INTENT_ROUTER_CASE_LIMIT`
 
 Recommended usage:
 
 - keep standard regression cases in the JSON file
-- each turn can separately assert analyze-stage recognition and execute-stage prompt/slot state
-- use this script when you want to validate multi-turn required-slot补齐能力，不只是单轮提槽
+- each turn asserts the actual response seen by a user-side caller
+- use this script when you want to validate the real multi-turn intent recognition + slot filling chain
 - the script is sequential and defaults to `INTENT_ROUTER_CASE_LIMIT=1`, so one run only executes one case unless you explicitly raise the limit
 
 ### 6) Build target-cluster frontend artifacts
