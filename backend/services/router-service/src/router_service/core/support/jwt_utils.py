@@ -70,7 +70,7 @@ class AuthHTTPClient(httpx.AsyncClient):
         """Generate a fresh JWT and attach it to the outbound request."""
         try:
             token = generate_jwt()
-            request.headers["Authorization"] = f"Bearer {token}"
+            request.headers["Authorization"] = token
             request.headers["x-app-id"] = X_APP_ID
         except Exception:
             logger.exception("Failed to generate JWT before outbound LLM request")
