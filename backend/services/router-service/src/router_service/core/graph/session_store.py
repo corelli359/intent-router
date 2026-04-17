@@ -54,6 +54,8 @@ class GraphSessionStore:
                 self.cust_id = source.cust_id
                 self.messages = source.messages
                 self.tasks = source.tasks
+                self.shared_slot_memory = source.shared_slot_memory
+                self.business_memory_digests = source.business_memory_digests
 
         return _Compat(session)
 

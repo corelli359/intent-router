@@ -13,7 +13,8 @@ from router_service.catalog.in_memory_intent_repository import InMemoryIntentRep
 from router_service.catalog.intent_repository import IntentRepository
 from router_service.catalog.sql_intent_repository import DatabaseIntentRepository
 from router_service.api.sse.broker import EventBroker
-from router_service.core.support.agent_client import StreamingAgentClient
+from router_service.core.support.agent_barrier import BarrierAgentClient
+from router_service.core.support.agent_client import AgentClient, StreamingAgentClient
 from router_service.core.support.intent_catalog import RepositoryIntentCatalog
 from router_service.core.support.llm_client import LangChainLLMClient
 from router_service.core.support.jwt_utils import AuthHTTPClient
@@ -93,7 +94,7 @@ class RouterRuntime:
     event_broker: EventBroker
     llm_client: LangChainLLMClient | None
     intent_catalog: RepositoryIntentCatalog
-    agent_client: StreamingAgentClient
+    agent_client: AgentClient
     orchestrator: GraphRouterOrchestrator
     session_store: GraphSessionStore
 
@@ -116,7 +117,7 @@ def build_router_runtime() -> RouterRuntime:
     planning_policy = getattr(settings, "router_v2_planning_policy", "auto")
     logger.info(
         "Building router runtime dependencies (catalog_backend=%s, llm_model=%s, recognizer_model=%s)",
-        settings.repository_backend,
+        getattr(settings, "repository_backend", "memory"),
         settings.llm_model,
         settings.llm_recognizer_model or settings.llm_model,
     )
@@ -133,7 +134,7 @@ def build_router_runtime() -> RouterRuntime:
     intent_catalog = RepositoryIntentCatalog(get_intent_repository())
     recognizer_fallback = (
         HeuristicIntentRecognizer()
-        if settings.router_llm_barrier_enabled
+        if getattr(settings, "router_llm_barrier_enabled", False)
         else NullIntentRecognizer()
     )
     baseline_recognizer = (
@@ -172,7 +173,11 @@ def build_router_runtime() -> RouterRuntime:
             leaf_router=LeafIntentRouter(leaf_recognizer),
             fallback=baseline_recognizer,
         )
-    agent_client = StreamingAgentClient(http_timeout_seconds=settings.agent_http_timeout_seconds)
+    if getattr(settings, "router_agent_barrier_enabled", False):
+        logger.info("Router agent barrier enabled; downstream agent HTTP calls will be blocked")
+        agent_client: AgentClient = BarrierAgentClient()
+    else:
+        agent_client = StreamingAgentClient(http_timeout_seconds=settings.agent_http_timeout_seconds)
     understanding_validator = UnderstandingValidator(
         slot_extractor=SlotExtractor(
             llm_client=llm_client,
@@ -249,7 +254,7 @@ def build_router_runtime() -> RouterRuntime:
 def _build_llm_client() -> LangChainLLMClient | None:
     """Create the shared LLM client when the required connection settings are present."""
     settings = get_settings()
-    if settings.router_llm_barrier_enabled:
+    if getattr(settings, "router_llm_barrier_enabled", False):
         logger.info(
             "Router LLM barrier enabled (base_url=%s, model=%s, structured_output_method=%s)",
             settings.llm_api_base_url,

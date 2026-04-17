@@ -658,7 +658,6 @@ class PerfTestService:
             return "message response is not a JSON object"
 
         snapshot = payload.get("snapshot")
-        analysis = payload.get("analysis")
         if case.expectations.required_graph_status:
             if not isinstance(snapshot, dict):
                 return "message response does not include snapshot"
@@ -673,7 +672,7 @@ class PerfTestService:
                 )
 
         if case.expectations.required_primary_intent_code:
-            primary_intent_code = self._extract_primary_intent_code(analysis)
+            primary_intent_code = self._extract_snapshot_primary_intent_code(snapshot)
             if primary_intent_code != case.expectations.required_primary_intent_code:
                 return (
                     f"expected primary intent {case.expectations.required_primary_intent_code}, "
@@ -681,12 +680,12 @@ class PerfTestService:
                 )
 
         if case.expectations.required_slot_keys or case.expectations.required_slot_values:
-            slot_memory = self._extract_analysis_slot_memory(
-                analysis=analysis,
+            slot_memory = self._extract_snapshot_slot_memory(
+                snapshot=snapshot,
                 intent_code=case.expectations.required_primary_intent_code,
             )
             if slot_memory is None:
-                return "message response does not include analysis slot_memory"
+                return "message response does not include router slot_memory"
             missing_keys = [
                 slot_key
                 for slot_key in case.expectations.required_slot_keys
@@ -703,7 +702,6 @@ class PerfTestService:
         if required_fragments:
             candidate_text = (
                 self._extract_snapshot_message(snapshot)
-                or self._extract_analysis_text(analysis)
                 or self._response_excerpt(response)
             )
             missing = [fragment for fragment in required_fragments if fragment not in candidate_text]
@@ -723,40 +721,37 @@ class PerfTestService:
         content = last_message.get("content")
         return content if isinstance(content, str) else ""
 
-    def _extract_analysis_text(self, analysis: Any) -> str:
-        if not isinstance(analysis, dict):
-            return ""
-        content = analysis.get("content")
-        return content if isinstance(content, str) else ""
-
-    def _extract_primary_intent_code(self, analysis: Any) -> str | None:
-        if not isinstance(analysis, dict):
+    def _extract_snapshot_primary_intent_code(self, snapshot: Any) -> str | None:
+        if not isinstance(snapshot, dict):
             return None
-        recognition = analysis.get("recognition")
-        if not isinstance(recognition, dict):
+        current_graph = snapshot.get("current_graph")
+        if not isinstance(current_graph, dict):
             return None
-        primary = recognition.get("primary")
-        if not isinstance(primary, list) or not primary:
+        nodes = current_graph.get("nodes")
+        if not isinstance(nodes, list) or not nodes:
             return None
-        first_match = primary[0]
-        if not isinstance(first_match, dict):
+        first_node = nodes[0]
+        if not isinstance(first_node, dict):
             return None
-        intent_code = first_match.get("intent_code")
+        intent_code = first_node.get("intent_code")
         return intent_code if isinstance(intent_code, str) else None
 
-    def _extract_analysis_slot_memory(
+    def _extract_snapshot_slot_memory(
         self,
         *,
-        analysis: Any,
+        snapshot: Any,
         intent_code: str | None,
     ) -> dict[str, Any] | None:
-        if not isinstance(analysis, dict):
+        if not isinstance(snapshot, dict):
             return None
-        slot_nodes = analysis.get("slot_nodes")
-        if not isinstance(slot_nodes, list):
+        current_graph = snapshot.get("current_graph")
+        if not isinstance(current_graph, dict):
+            return None
+        nodes = current_graph.get("nodes")
+        if not isinstance(nodes, list):
             return None
         selected_node: dict[str, Any] | None = None
-        for node in slot_nodes:
+        for node in nodes:
             if not isinstance(node, dict):
                 continue
             node_intent_code = node.get("intent_code")

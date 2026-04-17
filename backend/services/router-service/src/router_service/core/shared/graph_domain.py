@@ -59,6 +59,19 @@ class GraphStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class BusinessObjectStatus(StrEnum):
+    """Lifecycle status for one business runtime object attached to a session."""
+
+    ACTIVE = "active"
+    PENDING_CONFIRMATION = "pending_confirmation"
+    SUSPENDED = "suspended"
+    READY_FOR_DISPATCH = "ready_for_dispatch"
+    COMPLETED = "completed"
+    PARTIALLY_COMPLETED = "partially_completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class GraphAction(BaseModel):
     """User-visible action exposed on a graph card."""
 
@@ -183,6 +196,73 @@ class ExecutionGraphState(BaseModel):
         return [edge for edge in self.edges if edge.source_node_id == node_id]
 
 
+class BusinessObjectState(BaseModel):
+    """Live business runtime stored under one session and backed by one graph."""
+
+    business_id: str = Field(default_factory=lambda: f"biz_{uuid4().hex[:10]}")
+    graph: ExecutionGraphState
+    router_only_mode: bool = False
+    status: BusinessObjectStatus = BusinessObjectStatus.ACTIVE
+    ishandover: bool = False
+    suspended_reason: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+    def sync_from_graph(self) -> None:
+        """Derive business status from the underlying graph and router-only policy."""
+        graph_status = self.graph.status
+        if graph_status == GraphStatus.WAITING_CONFIRMATION:
+            self.status = BusinessObjectStatus.PENDING_CONFIRMATION
+            self.ishandover = False
+        elif graph_status == GraphStatus.READY_FOR_DISPATCH:
+            self.status = BusinessObjectStatus.READY_FOR_DISPATCH
+            self.ishandover = self.router_only_mode
+        elif graph_status == GraphStatus.COMPLETED:
+            self.status = BusinessObjectStatus.COMPLETED
+            self.ishandover = True
+        elif graph_status == GraphStatus.PARTIALLY_COMPLETED:
+            self.status = BusinessObjectStatus.PARTIALLY_COMPLETED
+            self.ishandover = True
+        elif graph_status == GraphStatus.FAILED:
+            self.status = BusinessObjectStatus.FAILED
+            self.ishandover = True
+        elif graph_status == GraphStatus.CANCELLED:
+            self.status = BusinessObjectStatus.CANCELLED
+            self.ishandover = True
+        else:
+            self.status = BusinessObjectStatus.ACTIVE
+            self.ishandover = False
+        self.updated_at = utc_now()
+
+    @property
+    def intent_codes(self) -> list[str]:
+        """Return the unique intent codes represented by this business object."""
+        return list(dict.fromkeys(node.intent_code for node in self.graph.nodes))
+
+
+class BusinessMemoryDigest(BaseModel):
+    """Compact summary persisted after a business object reaches handover."""
+
+    business_id: str
+    graph_id: str
+    intent_codes: list[str] = Field(default_factory=list)
+    status: str
+    ishandover: bool
+    summary: str = ""
+    slot_memory: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    finished_at: datetime = Field(default_factory=utc_now)
+
+
+class SessionWorkflowState(BaseModel):
+    """Minimal orchestration metadata independent from business object internals."""
+
+    focus_business_id: str | None = None
+    pending_business_id: str | None = None
+    suspended_business_ids: list[str] = Field(default_factory=list)
+    completed_business_ids: list[str] = Field(default_factory=list)
+
+
 class GraphSessionState(BaseModel):
     """Router session state spanning messages, tasks, current graph, and pending graph."""
 
@@ -192,6 +272,10 @@ class GraphSessionState(BaseModel):
     tasks: list[Task] = Field(default_factory=list)
     candidate_intents: list[IntentMatch] = Field(default_factory=list)
     last_diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
+    shared_slot_memory: dict[str, Any] = Field(default_factory=dict)
+    business_memory_digests: list[BusinessMemoryDigest] = Field(default_factory=list)
+    business_objects: list[BusinessObjectState] = Field(default_factory=list)
+    workflow: SessionWorkflowState = Field(default_factory=SessionWorkflowState)
     current_graph: ExecutionGraphState | None = None
     pending_graph: ExecutionGraphState | None = None
     active_node_id: str | None = None
@@ -211,6 +295,246 @@ class GraphSessionState(BaseModel):
         current = now or utc_now()
         return current >= self.expires_at
 
+    def business_object(self, business_id: str | None) -> BusinessObjectState | None:
+        """Return the business object with the given id when present."""
+        self._adopt_legacy_aliases()
+        if business_id is None:
+            return None
+        for item in self.business_objects:
+            if item.business_id == business_id:
+                return item
+        return None
+
+    def focus_business(self) -> BusinessObjectState | None:
+        """Return the current focus business object."""
+        self._adopt_legacy_aliases()
+        business_id = self.workflow.focus_business_id
+        if business_id is None:
+            return None
+        for item in self.business_objects:
+            if item.business_id == business_id:
+                return item
+        return None
+
+    def pending_business(self) -> BusinessObjectState | None:
+        """Return the current pending-confirmation business object."""
+        self._adopt_legacy_aliases()
+        business_id = self.workflow.pending_business_id
+        if business_id is None:
+            return None
+        for item in self.business_objects:
+            if item.business_id == business_id:
+                return item
+        return None
+
+    def business_for_graph(self, graph: ExecutionGraphState | None) -> BusinessObjectState | None:
+        """Resolve the business object backing the given graph."""
+        self._adopt_legacy_aliases()
+        if graph is None:
+            return None
+        for item in self.business_objects:
+            if item.graph.graph_id == graph.graph_id:
+                return item
+        return None
+
+    def attach_business(
+        self,
+        graph: ExecutionGraphState,
+        *,
+        router_only_mode: bool,
+        pending: bool,
+    ) -> BusinessObjectState:
+        """Create and focus a new business runtime object backed by the given graph."""
+        business = BusinessObjectState(graph=graph, router_only_mode=router_only_mode)
+        business.sync_from_graph()
+        self.business_objects.append(business)
+        if pending:
+            self.workflow.pending_business_id = business.business_id
+            self.workflow.focus_business_id = None
+        else:
+            self.workflow.focus_business_id = business.business_id
+            self.workflow.pending_business_id = None
+        self._sync_focus_aliases()
+        return business
+
+    def suspend_focus_business(self, *, reason: str | None = None) -> BusinessObjectState | None:
+        """Suspend the focus business so another business can take over the session."""
+        business = self.focus_business()
+        if business is None:
+            return None
+        business.status = BusinessObjectStatus.SUSPENDED
+        business.ishandover = False
+        business.suspended_reason = reason
+        business.updated_at = utc_now()
+        if business.business_id not in self.workflow.suspended_business_ids:
+            self.workflow.suspended_business_ids.append(business.business_id)
+        self.workflow.focus_business_id = None
+        self._sync_focus_aliases()
+        return business
+
+    def suspend_pending_business(self, *, reason: str | None = None) -> BusinessObjectState | None:
+        """Suspend the pending business waiting for confirmation."""
+        business = self.pending_business()
+        if business is None:
+            return None
+        business.status = BusinessObjectStatus.SUSPENDED
+        business.ishandover = False
+        business.suspended_reason = reason
+        business.updated_at = utc_now()
+        if business.business_id not in self.workflow.suspended_business_ids:
+            self.workflow.suspended_business_ids.append(business.business_id)
+        self.workflow.pending_business_id = None
+        self._sync_focus_aliases()
+        return business
+
+    def restore_latest_suspended_business(self) -> BusinessObjectState | None:
+        """Restore the most recently suspended business as the current session focus."""
+        if self.current_graph is not None or self.pending_graph is not None:
+            return None
+        while self.workflow.suspended_business_ids:
+            business_id = self.workflow.suspended_business_ids.pop()
+            business = self.business_object(business_id)
+            if business is None:
+                continue
+            business.suspended_reason = None
+            business.sync_from_graph()
+            if business.graph.status == GraphStatus.WAITING_CONFIRMATION:
+                self.workflow.pending_business_id = business.business_id
+                self.workflow.focus_business_id = None
+            else:
+                self.workflow.focus_business_id = business.business_id
+                self.workflow.pending_business_id = None
+            self._sync_focus_aliases()
+            return business
+        return None
+
+    def handover_business(self) -> BusinessObjectState | None:
+        """Return the business object that is ready to hand over and be compacted."""
+        self._adopt_legacy_aliases()
+        focus = self.focus_business()
+        if focus is not None:
+            focus.sync_from_graph()
+            if focus.ishandover:
+                return focus
+        pending = self.pending_business()
+        if pending is not None:
+            pending.sync_from_graph()
+            if pending.ishandover:
+                return pending
+        return None
+
+    def finalize_business(self, business_id: str) -> BusinessMemoryDigest | None:
+        """Compact one completed business into digest + shared slot cache and remove it."""
+        business = self.business_object(business_id)
+        if business is None:
+            return None
+        business.sync_from_graph()
+        slot_memory = self._collect_business_slot_memory(business)
+        self.shared_slot_memory.update(slot_memory)
+        digest = BusinessMemoryDigest(
+            business_id=business.business_id,
+            graph_id=business.graph.graph_id,
+            intent_codes=business.intent_codes,
+            status=business.status.value,
+            ishandover=business.ishandover,
+            summary=business.graph.summary,
+            slot_memory=slot_memory,
+            created_at=business.created_at,
+        )
+        self.business_memory_digests.append(digest)
+        if business.business_id not in self.workflow.completed_business_ids:
+            self.workflow.completed_business_ids.append(business.business_id)
+        task_ids = {node.task_id for node in business.graph.nodes if node.task_id}
+        if task_ids:
+            self.tasks = [task for task in self.tasks if task.task_id not in task_ids]
+        self.business_objects = [
+            item
+            for item in self.business_objects
+            if item.business_id != business.business_id
+        ]
+        if self.workflow.focus_business_id == business.business_id:
+            self.workflow.focus_business_id = None
+        if self.workflow.pending_business_id == business.business_id:
+            self.workflow.pending_business_id = None
+        self.workflow.suspended_business_ids = [
+            item
+            for item in self.workflow.suspended_business_ids
+            if item != business.business_id
+        ]
+        self._sync_focus_aliases()
+        return digest
+
+    def _collect_business_slot_memory(self, business: BusinessObjectState) -> dict[str, Any]:
+        """Collect the slot memory that should survive after business handover."""
+        merged: dict[str, Any] = {}
+        for node in business.graph.nodes:
+            for slot_key, value in node.slot_memory.items():
+                if value is None:
+                    continue
+                merged[slot_key] = value
+        return merged
+
+    def _sync_focus_aliases(self) -> None:
+        """Keep the compatibility aliases aligned with the workflow focus."""
+        focus = next(
+            (
+                item
+                for item in self.business_objects
+                if item.business_id == self.workflow.focus_business_id
+            ),
+            None,
+        )
+        pending = next(
+            (
+                item
+                for item in self.business_objects
+                if item.business_id == self.workflow.pending_business_id
+            ),
+            None,
+        )
+        self.current_graph = focus.graph if focus is not None else None
+        self.pending_graph = pending.graph if pending is not None else None
+        if focus is None:
+            self.active_node_id = None
+        self.router_only_mode = focus.router_only_mode if focus is not None else False
+
+    def _adopt_legacy_aliases(self) -> None:
+        """Backfill business objects from compatibility aliases when old code sets them directly."""
+        if self.current_graph is not None and self.workflow.focus_business_id is None:
+            existing = next(
+                (
+                    item
+                    for item in self.business_objects
+                    if item.graph.graph_id == self.current_graph.graph_id
+                ),
+                None,
+            )
+            if existing is None:
+                business = BusinessObjectState(
+                    graph=self.current_graph,
+                    router_only_mode=self.router_only_mode,
+                )
+                business.sync_from_graph()
+                self.business_objects.append(business)
+                self.workflow.focus_business_id = business.business_id
+        if self.pending_graph is not None and self.workflow.pending_business_id is None:
+            existing = next(
+                (
+                    item
+                    for item in self.business_objects
+                    if item.graph.graph_id == self.pending_graph.graph_id
+                ),
+                None,
+            )
+            if existing is None:
+                business = BusinessObjectState(
+                    graph=self.pending_graph,
+                    router_only_mode=self.router_only_mode,
+                )
+                business.sync_from_graph()
+                self.business_objects.append(business)
+                self.workflow.pending_business_id = business.business_id
+
 
 class GraphRouterSnapshot(BaseModel):
     """Read model returned to API callers and SSE subscribers."""
@@ -220,6 +544,7 @@ class GraphRouterSnapshot(BaseModel):
     messages: list[ChatMessage]
     candidate_intents: list[IntentMatch]
     last_diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
+    shared_slot_memory: dict[str, Any] = Field(default_factory=dict)
     current_graph: ExecutionGraphState | None = None
     pending_graph: ExecutionGraphState | None = None
     active_node_id: str | None = None

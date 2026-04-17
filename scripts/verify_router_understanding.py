@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Call router analyze-only mode to inspect intent recognition and slot filling."""
+"""Call router-only mode to inspect intent recognition and slot filling."""
 
 from __future__ import annotations
 
@@ -26,19 +26,13 @@ def _request(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify router analyze-only mode.")
+    parser = argparse.ArgumentParser(description="Verify router router-only mode.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Router base URL.")
     parser.add_argument("--host-header", default=None, help="Optional Host header for ingress routing.")
     parser.add_argument(
-        "--analysis-mode",
-        choices=("full", "intent_only"),
-        default="full",
-        help="Whether to verify full understanding or intent recognition only.",
-    )
-    parser.add_argument(
         "--message",
         default="帮我查一下余额，如果大于1000，就给小红转200，如果还大于1000，就再给小明转200",
-        help="Message to analyze.",
+        help="Message to route.",
     )
     args = parser.parse_args()
 
@@ -55,21 +49,32 @@ def main() -> int:
 
     status, body = _request(
         method="POST",
-        url=f"{base_url}/api/router/v2/sessions/{session_id}/messages/analyze",
+        url=f"{base_url}/api/router/v2/sessions/{session_id}/messages",
         payload={
             "content": args.message,
-            "analysisMode": args.analysis_mode,
+            "executionMode": "router_only",
         },
         host_header=args.host_header,
     )
     if status != 200:
-        raise RuntimeError(f"analyze failed: status={status}, body={body}")
+        raise RuntimeError(f"route failed: status={status}, body={body}")
+
+    payload = json.loads(body)
+    snapshot = payload.get("snapshot") or {}
+    current_graph = snapshot.get("current_graph") or {}
+    pending_graph = snapshot.get("pending_graph") or {}
+    active_graph = current_graph if current_graph else pending_graph
+    nodes = active_graph.get("nodes") or []
 
     print(
         json.dumps(
             {
                 "session_id": session_id,
-                "analysis": json.loads(body).get("analysis"),
+                "graph_status": active_graph.get("status"),
+                "assistant_reply": ((snapshot.get("messages") or [{}])[-1]).get("content"),
+                "intents": [node.get("intent_code") for node in nodes if isinstance(node, dict)],
+                "slot_memory": (nodes[0].get("slot_memory") if nodes and isinstance(nodes[0], dict) else {}),
+                "shared_slot_memory": snapshot.get("shared_slot_memory") or {},
             },
             ensure_ascii=False,
             indent=2,

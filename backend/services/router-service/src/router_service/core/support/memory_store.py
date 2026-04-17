@@ -17,6 +17,8 @@ class SessionMemoryView(Protocol):
     cust_id: str
     messages: list[object]
     tasks: list[object]
+    shared_slot_memory: dict[str, object]
+    business_memory_digests: list[object]
 
 
 class LongTermMemoryStore:
@@ -82,6 +84,44 @@ class LongTermMemoryStore:
                     cust_id=session.cust_id,
                     memory_type="task_slot_memory",
                     content=f"{task.intent_code}: {slot_pairs}",
+                    source_session_id=session.session_id,
+                ),
+            )
+        shared_slot_memory = getattr(session, "shared_slot_memory", None)
+        if isinstance(shared_slot_memory, dict) and shared_slot_memory:
+            slot_pairs = ", ".join(
+                f"{key}={value}"
+                for key, value in sorted(shared_slot_memory.items())
+                if value is not None
+            )
+            if slot_pairs:
+                self._remember_fact(
+                    memory,
+                    LongTermMemoryEntry(
+                        cust_id=session.cust_id,
+                        memory_type="session_shared_slot_memory",
+                        content=f"shared_slots: {slot_pairs}",
+                        source_session_id=session.session_id,
+                    ),
+                )
+        for digest in getattr(session, "business_memory_digests", []) or []:
+            slot_memory = getattr(digest, "slot_memory", None)
+            intent_codes = getattr(digest, "intent_codes", None) or []
+            if not isinstance(slot_memory, dict) or not slot_memory:
+                continue
+            slot_pairs = ", ".join(
+                f"{key}={value}"
+                for key, value in sorted(slot_memory.items())
+                if value is not None
+            )
+            if not slot_pairs:
+                continue
+            self._remember_fact(
+                memory,
+                LongTermMemoryEntry(
+                    cust_id=session.cust_id,
+                    memory_type="business_digest_slot_memory",
+                    content=f"{'/'.join(intent_codes) or 'business'}: {slot_pairs}",
                     source_session_id=session.session_id,
                 ),
             )

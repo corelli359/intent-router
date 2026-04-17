@@ -54,40 +54,62 @@ class _MockRouterTarget:
             return httpx.Response(
                 200,
                 json={
-                    "analysis": {
-                        "session_id": "session-analysis",
+                    "snapshot": {
+                        "session_id": "session-router-only",
                         "cust_id": "perf_test_cust",
-                        "content": "给小明转500元",
-                        "no_match": False,
-                        "recognition": {
-                            "primary": [
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "给小明转500元",
+                                "created_at": "2026-04-17T00:00:00Z",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+                                "created_at": "2026-04-17T00:00:01Z",
+                            },
+                        ],
+                        "candidate_intents": [],
+                        "last_diagnostics": [],
+                        "shared_slot_memory": {},
+                        "current_graph": {
+                            "graph_id": "graph_transfer",
+                            "source_message": "给小明转500元",
+                            "summary": "router_only handover",
+                            "version": 1,
+                            "status": "ready_for_dispatch",
+                            "confirm_token": "confirm-transfer",
+                            "nodes": [
                                 {
+                                    "node_id": "node_transfer",
                                     "intent_code": self.response_primary_intent_code,
+                                    "title": "立即发起一笔转账交易",
                                     "confidence": 0.92,
-                                    "reason": "heuristic matched catalog text '转5000元给朋友'",
+                                    "position": 0,
+                                    "status": "ready_for_dispatch",
+                                    "slot_memory": dict(self.response_slot_memory),
+                                    "slot_bindings": [],
+                                    "history_slot_keys": [],
+                                    "diagnostics": [],
+                                    "output_payload": {
+                                        "router_only": True,
+                                        "dispatch_ready": True,
+                                        "intent_code": self.response_primary_intent_code,
+                                        "slot_memory": dict(self.response_slot_memory),
+                                    },
+                                    "created_at": "2026-04-17T00:00:00Z",
+                                    "updated_at": "2026-04-17T00:00:00Z",
                                 }
                             ],
-                            "candidates": [],
+                            "edges": [],
+                            "actions": [],
+                            "diagnostics": [],
+                            "created_at": "2026-04-17T00:00:00Z",
+                            "updated_at": "2026-04-17T00:00:00Z",
                         },
-                        "slot_nodes": [
-                            {
-                                "node_id": "node_transfer",
-                                "intent_code": self.response_primary_intent_code,
-                                "title": "立即发起一笔转账交易",
-                                "confidence": 0.92,
-                                "position": 0,
-                                "status": "ready_for_dispatch",
-                                "slot_memory": dict(self.response_slot_memory),
-                                "slot_bindings": [],
-                                "history_slot_keys": [],
-                                "diagnostics": [],
-                                "output_payload": {},
-                                "created_at": "2026-04-17T00:00:00Z",
-                                "updated_at": "2026-04-17T00:00:00Z",
-                            }
-                        ],
-                        "conditional_edges": [],
-                        "diagnostics": [],
+                        "pending_graph": None,
+                        "active_node_id": None,
+                        "expires_at": "2026-04-17T01:00:00Z",
                     }
                 },
             )
@@ -96,25 +118,26 @@ class _MockRouterTarget:
 
 def _perf_case(
     *,
-    case_id: str = "transfer-intent-slot-analysis",
+    case_id: str = "transfer-intent-slot-router-only",
     required_primary_intent_code: str = "AG_TRANS",
     required_slot_values: dict[str, str] | None = None,
 ) -> PerfTestCaseDefinition:
     return PerfTestCaseDefinition(
         case_id=case_id,
         name="Transfer Intent And Slot Analysis",
-        description="Analyze-only transfer perf case",
-        category="analyze_only",
-        tags=["transfer", "analyze_only"],
+        description="Router-only transfer perf case",
+        category="router_only",
+        tags=["transfer", "router_only"],
         target_route="/api/router/v2/sessions/{session_id}/messages",
         notes=["test fixture"],
         session_request={"cust_id": "perf_test_case"},
         message_request={
             "content": "给小明转500元",
-            "executionMode": "analyze_only",
+            "executionMode": "router_only",
         },
         default_steps=[PerfTestStepPlan(concurrency=2, duration_sec=0.05, warmup_sec=0.0, timeout_ms=1000)],
         expectations=PerfTestExpectation(
+            required_graph_status="ready_for_dispatch",
             required_primary_intent_code=required_primary_intent_code,
             required_slot_keys=["payee_name", "amount"],
             required_slot_values=required_slot_values or {
@@ -167,15 +190,16 @@ async def _poll_run_until_terminal(client: httpx.AsyncClient, run_id: str) -> di
     raise AssertionError(f"run did not finish in time: {run_id}")
 
 
-def test_perf_case_catalog_loads_default_transfer_analysis_case() -> None:
+def test_perf_case_catalog_loads_default_transfer_router_only_case() -> None:
     catalog = PerfTestCaseCatalog.from_default_resource()
 
     cases = catalog.list_cases()
 
-    assert [case.case_id for case in cases] == ["transfer-intent-slot-analysis"]
-    assert cases[0].message_request["executionMode"] == "analyze_only"
+    assert [case.case_id for case in cases] == ["transfer-intent-slot-router-only"]
+    assert cases[0].message_request["executionMode"] == "router_only"
     assert cases[0].message_request["content"] == "给小明转500元"
     assert cases[0].expectations.required_primary_intent_code == "AG_TRANS"
+    assert cases[0].expectations.required_graph_status == "ready_for_dispatch"
     assert cases[0].expectations.required_slot_values == {
         "payee_name": "小明",
         "amount": "500",
@@ -189,7 +213,7 @@ def test_perf_service_executes_duration_ladder_and_uses_internal_target_url() ->
 
         created = await service.create_run(
             PerfTestCreateRunRequest(
-                case_id="transfer-intent-slot-analysis",
+                case_id="transfer-intent-slot-router-only",
                 ladder_steps=[PerfTestStepPlan(concurrency=2, duration_sec=0.05, timeout_ms=1000)],
             )
         )
@@ -230,7 +254,7 @@ def test_perf_service_records_failed_validation_samples() -> None:
 
         created = await service.create_run(
             PerfTestCreateRunRequest(
-                case_id="transfer-intent-slot-analysis",
+                case_id="transfer-intent-slot-router-only",
                 ladder_steps=[PerfTestStepPlan(concurrency=1, duration_sec=0.02, timeout_ms=1000)],
             )
         )
@@ -255,13 +279,14 @@ def test_perf_service_supports_case_override_and_cancel() -> None:
 
         overridden = await override_service.create_run(
             PerfTestCreateRunRequest(
-                case_id="transfer-intent-slot-analysis",
+                case_id="transfer-intent-slot-router-only",
                 case_override={
                     "message_request": {
                         "content": "给小红转800元",
-                        "executionMode": "analyze_only",
+                        "executionMode": "router_only",
                     },
                     "expectations": {
+                        "required_graph_status": "ready_for_dispatch",
                         "required_primary_intent_code": "AG_MENU_21",
                         "required_slot_keys": [],
                         "required_slot_values": {},
@@ -279,7 +304,7 @@ def test_perf_service_supports_case_override_and_cancel() -> None:
         cancel_service = _build_perf_service(cancel_target)
         created = await cancel_service.create_run(
             PerfTestCreateRunRequest(
-                case_id="transfer-intent-slot-analysis",
+                case_id="transfer-intent-slot-router-only",
                 ladder_steps=[PerfTestStepPlan(concurrency=2, duration_sec=1.0, timeout_ms=1000)],
             )
         )
@@ -312,7 +337,7 @@ def test_perf_api_exposes_cases_run_creation_polling_and_run_list() -> None:
             cases_response = await client.get("/api/admin/perf-tests/cases")
             assert cases_response.status_code == 200
             assert cases_response.json()["total"] == 1
-            assert cases_response.json()["items"][0]["case_id"] == "transfer-intent-slot-analysis"
+            assert cases_response.json()["items"][0]["case_id"] == "transfer-intent-slot-router-only"
             assert "default_steps" in cases_response.json()["items"][0]
             assert "message_request" in cases_response.json()["items"][0]
             assert "expectations" in cases_response.json()["items"][0]
@@ -320,7 +345,7 @@ def test_perf_api_exposes_cases_run_creation_polling_and_run_list() -> None:
             create_response = await client.post(
                 "/api/admin/perf-tests/runs",
                 json={
-                    "case_id": "transfer-intent-slot-analysis",
+                    "case_id": "transfer-intent-slot-router-only",
                     "ladder_steps": [
                         {
                             "name": "阶段 1",

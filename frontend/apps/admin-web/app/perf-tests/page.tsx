@@ -241,7 +241,7 @@ function localizeCaseName(caseId?: string | null, caseName?: string | null) {
 function localizeCaseDescription(caseId?: string | null, description?: string | null) {
   switch (caseId) {
     case "transfer-intent-slot-analysis":
-      return "只发送一条转账输入，不触发 agent 执行，直接校验主意图识别和提槽结果，适合做阶梯压测基线。";
+      return "只发送一条转账输入，在 router_only 边界直接返回，不触发 agent 执行，适合做阶梯压测基线。";
     default:
       return description?.trim() || "从后端加载结构化压测用例，优先确认用例和阶梯参数。";
   }
@@ -249,8 +249,8 @@ function localizeCaseDescription(caseId?: string | null, description?: string | 
 
 function localizeCaseCategory(category?: string | null) {
   switch (category) {
-    case "analyze_only":
-      return "只分析链路";
+    case "router_only":
+      return "路由边界返回";
     default:
       return category?.trim() || "默认场景";
   }

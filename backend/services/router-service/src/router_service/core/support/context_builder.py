@@ -11,6 +11,8 @@ class SessionLike(Protocol):
     session_id: str
     cust_id: str
     messages: list[ChatMessage]
+    shared_slot_memory: dict[str, object]
+    business_memory_digests: list[object]
 
 
 class ContextBuilder:
@@ -33,6 +35,11 @@ class ContextBuilder:
             "cust_id": session.cust_id,
             "recent_messages": self.build_recent_messages(session),
             "long_term_memory": long_term_memory,
+            "shared_slot_memory": dict(getattr(session, "shared_slot_memory", {}) or {}),
+            "business_memory_digests": [
+                digest.model_dump(mode="json") if hasattr(digest, "model_dump") else dict(digest)
+                for digest in getattr(session, "business_memory_digests", []) or []
+            ],
         }
         if task is None:
             return base

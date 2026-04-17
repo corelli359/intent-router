@@ -100,12 +100,18 @@ class SlotResolutionService:
         long_term_memory: list[str],
     ) -> dict[str, Any]:
         """Collect reusable slot values from recent task results and long-term memory."""
-        values: dict[str, Any] = {}
+        values: dict[str, Any] = dict(session.shared_slot_memory)
 
         for task in reversed(session.tasks):
             if not task.slot_memory:
                 continue
             for key, value in task.slot_memory.items():
+                if key in values or value is None:
+                    continue
+                values[key] = value
+
+        for digest in reversed(session.business_memory_digests):
+            for key, value in digest.slot_memory.items():
                 if key in values or value is None:
                     continue
                 values[key] = value

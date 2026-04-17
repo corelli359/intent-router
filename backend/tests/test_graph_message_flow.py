@@ -192,6 +192,7 @@ def test_pending_graph_replan_routes_new_message() -> None:
     asyncio.run(flow.handle_pending_graph_turn(session, "reroute"))
 
     assert session.pending_graph is None
+    assert session.workflow.suspended_business_ids
     assert any(call[0] == "route_new_message" for call in callbacks.actions)
 
 
@@ -245,7 +246,7 @@ def test_waiting_node_cancel_calls_cancel_and_drains() -> None:
     assert ("drain_graph", "cancel") in callbacks.actions
 
 
-def test_waiting_node_replan_cancels_and_rebuilds() -> None:
+def test_waiting_node_replan_suspends_and_rebuilds() -> None:
     decision = TurnDecisionPayload(action="replan")
     flow, store, callbacks, _ = build_message_flow(StubUnderstandingService(waiting=decision))
     session = store.create(cust_id="cust", session_id="session-id")
@@ -261,5 +262,6 @@ def test_waiting_node_replan_cancels_and_rebuilds() -> None:
 
     asyncio.run(flow.handle_waiting_node_turn(session, node, "replan"))
 
-    assert ("cancel_current_graph", "replan") in callbacks.actions
+    assert session.current_graph is None
+    assert session.workflow.suspended_business_ids
     assert any(call[0] == "route_new_message" for call in callbacks.actions)

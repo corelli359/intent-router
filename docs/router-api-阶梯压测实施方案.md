@@ -223,7 +223,6 @@
 
 如后续需要，再增加：
 
-- `analyze_only` 场景
 - 普通 `messages` 场景
 - SSE streaming 场景
 

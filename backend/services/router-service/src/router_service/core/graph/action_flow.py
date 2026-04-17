@@ -139,9 +139,12 @@ class GraphActionFlow:
             failure_summary = f"部分节点取消失败：{failure_items}"
             event_message = f"{event_message}；{failure_summary}"
             payload_overrides = {
-                "cancel_failures": cancel_failures,
-                "cancel_failure_summary": failure_summary,
+                    "cancel_failures": cancel_failures,
+                    "cancel_failure_summary": failure_summary,
             }
+        business = session.business_for_graph(graph)
+        if business is not None:
+            business.sync_from_graph()
         await self.publish_graph_state(
             session,
             "graph.cancelled",
@@ -166,8 +169,15 @@ class GraphActionFlow:
         if confirm_token is not None and confirm_token != graph.confirm_token:
             raise ValueError("Invalid graph confirm token")
 
-        session.pending_graph = None
-        session.current_graph = graph
+        pending_business = session.pending_business()
+        if pending_business is not None:
+            pending_business.sync_from_graph()
+            session.workflow.pending_business_id = None
+            session.workflow.focus_business_id = pending_business.business_id
+            session._sync_focus_aliases()
+        else:
+            session.pending_graph = None
+            session.current_graph = graph
         self.activate_graph(graph)
         await self.publish_graph_state(session, "graph.confirmed", "执行图已确认，开始执行")
         await self.drain_graph(session, graph.source_message)
@@ -190,5 +200,7 @@ class GraphActionFlow:
 
         graph.touch(GraphStatus.CANCELLED)
         graph.actions = []
+        business = session.pending_business()
+        if business is not None:
+            business.sync_from_graph()
         await self.event_publisher.publish_graph_cancelled(session, graph)
-        session.pending_graph = None

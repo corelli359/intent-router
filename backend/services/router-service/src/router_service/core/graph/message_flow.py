@@ -114,6 +114,8 @@ class GraphMessageFlow:
         ):
             session = self.session_store.get_or_create(session_id, cust_id)
             session.last_diagnostics = []
+            if session.current_graph is None and session.pending_graph is None:
+                session.restore_latest_suspended_business()
             session.router_only_mode = router_only
             message_content = content.strip()
             display_content = message_content or self.graph_compiler.guided_selection_display_content(guided_selection)
@@ -190,9 +192,9 @@ class GraphMessageFlow:
             if not proactive_recommendation.items:
                 raise ValueError("proactive_recommendation.items is required")
             if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
-                await self.cancel_pending_graph(session, graph_id=None, confirm_token=None)
+                session.suspend_pending_business(reason="用户切换到主动推荐事项处理")
             if session.current_graph is not None and session.current_graph.status not in TERMINAL_GRAPH_STATUSES:
-                await self.cancel_current_graph(session, reason="用户切换到主动推荐事项处理")
+                session.suspend_focus_business(reason="用户切换到主动推荐事项处理")
 
             decision = await self.recommendation_router.decide(
                 message=content,
@@ -254,9 +256,9 @@ class GraphMessageFlow:
             if not guided_selection.selected_intents:
                 raise ValueError("guided_selection.selected_intents is required")
             if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
-                await self.cancel_pending_graph(session, graph_id=None, confirm_token=None)
+                session.suspend_pending_business(reason="用户切换为引导式已选意图执行")
             if session.current_graph is not None and session.current_graph.status not in TERMINAL_GRAPH_STATUSES:
-                await self.cancel_current_graph(session, reason="用户切换为引导式已选意图执行")
+                session.suspend_focus_business(reason="用户切换为引导式已选意图执行")
             await self.route_guided_selection(session, content=content, guided_selection=guided_selection)
 
     async def route_new_message(
@@ -303,14 +305,19 @@ class GraphMessageFlow:
                 return
             if graph.status == GraphStatus.WAITING_CONFIRMATION:
                 graph.touch(GraphStatus.WAITING_CONFIRMATION)
-                session.pending_graph = graph
-                session.current_graph = None
-                session.active_node_id = None
+                session.attach_business(
+                    graph,
+                    router_only_mode=session.router_only_mode,
+                    pending=True,
+                )
                 await self.state_sync.publish_pending_graph(session)
                 return
 
-            session.pending_graph = None
-            session.current_graph = graph
+            session.attach_business(
+                graph,
+                router_only_mode=session.router_only_mode,
+                pending=False,
+            )
             self.activate_graph(graph)
             await self.state_sync.publish_graph_state(session, "graph.created", "已创建执行图")
             await self.drain_graph(session, graph.source_message)
@@ -334,8 +341,11 @@ class GraphMessageFlow:
             )
             session.candidate_intents = []
             session.last_diagnostics = []
-            session.pending_graph = None
-            session.current_graph = graph
+            session.attach_business(
+                graph,
+                router_only_mode=session.router_only_mode,
+                pending=False,
+            )
             self.activate_graph(graph)
             await self.state_sync.publish_graph_state(session, "graph.created", "已根据所选意图创建执行图")
             await self.drain_graph(session, graph.source_message)
@@ -370,14 +380,19 @@ class GraphMessageFlow:
                 return
             if graph.status == GraphStatus.WAITING_CONFIRMATION:
                 graph.touch(GraphStatus.WAITING_CONFIRMATION)
-                session.pending_graph = graph
-                session.current_graph = None
-                session.active_node_id = None
+                session.attach_business(
+                    graph,
+                    router_only_mode=session.router_only_mode,
+                    pending=True,
+                )
                 await self.state_sync.publish_pending_graph(session)
                 return
 
-            session.pending_graph = None
-            session.current_graph = graph
+            session.attach_business(
+                graph,
+                router_only_mode=session.router_only_mode,
+                pending=False,
+            )
             self.activate_graph(graph)
             await self.state_sync.publish_graph_state(session, "graph.created", "已创建执行图")
             await self.drain_graph(session, graph.source_message)
@@ -409,7 +424,7 @@ class GraphMessageFlow:
                 await self.cancel_pending_graph(session, graph_id=None, confirm_token=None)
                 return
             if decision.action == "replan":
-                session.pending_graph = None
+                session.suspend_pending_business(reason=decision.reason or "检测到新的主业务，挂起待确认业务")
                 await self.route_new_message(
                     session,
                     content,
@@ -460,7 +475,7 @@ class GraphMessageFlow:
                 await self.drain_graph(session, content)
                 return
             if decision.action == "replan":
-                await self.cancel_current_graph(session, reason=decision.reason or "检测到用户修改了目标，准备重规划")
+                session.suspend_focus_business(reason=decision.reason or "检测到新的主业务，挂起当前业务")
                 await self.route_new_message(
                     session,
                     content,

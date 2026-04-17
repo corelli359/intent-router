@@ -78,14 +78,18 @@ class GraphStateSync:
         graph = session.pending_graph if event in {"graph.proposed", "graph.waiting_confirmation"} else session.current_graph
         if graph is None:
             return
+        publish_kwargs: dict[str, Any] = {
+            "event": event,
+            "message": message,
+            "status": status,
+            "pending": graph is session.pending_graph,
+        }
+        if payload_overrides is not None:
+            publish_kwargs["payload_overrides"] = payload_overrides
         await self.event_publisher.publish_graph_state(
             session,
             graph,
-            event=event,
-            message=message,
-            status=status,
-            pending=graph is session.pending_graph,
-            payload_overrides=payload_overrides,
+            **publish_kwargs,
         )
 
     async def publish_node_state(

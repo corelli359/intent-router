@@ -22,7 +22,7 @@ from router_service.core.shared.graph_domain import (
     ProactiveRecommendationPayload,
     RecommendationContextPayload,
 )
-from router_service.core.graph.orchestrator import GraphRouterOrchestrator, MessageAnalysisResult
+from router_service.core.graph.orchestrator import GraphRouterOrchestrator
 
 
 router = APIRouter(tags=["router"])
@@ -33,14 +33,6 @@ class MessageExecutionMode(StrEnum):
 
     EXECUTE = "execute"
     ROUTER_ONLY = "router_only"
-    ANALYZE_ONLY = "analyze_only"
-
-
-class MessageAnalysisMode(StrEnum):
-    """Depth of analysis requested for analyze-only message calls."""
-
-    FULL = "full"
-    INTENT_ONLY = "intent_only"
 
 
 class CreateSessionResponse(BaseModel):
@@ -63,7 +55,6 @@ class MessageRequest(BaseModel):
     content: str | None = None
     message: str | None = None
     execution_mode: MessageExecutionMode = Field(default=MessageExecutionMode.EXECUTE, alias="executionMode")
-    analysis_mode: MessageAnalysisMode = Field(default=MessageAnalysisMode.FULL, alias="analysisMode")
     guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
     recommendation_context: RecommendationContextPayload | None = Field(default=None, alias="recommendationContext")
     proactive_recommendation: ProactiveRecommendationPayload | None = Field(default=None, alias="proactiveRecommendation")
@@ -76,27 +67,6 @@ class MessageRequest(BaseModel):
         if not self.content and (self.guided_selection is None or not self.guided_selection.selected_intents):
             raise ValueError("content/message or guided_selection is required")
         return self
-
-
-class RecognitionAnalysis(BaseModel):
-    """Recognition buckets returned by analyze-only mode."""
-
-    primary: list[IntentMatch] = Field(default_factory=list)
-    candidates: list[IntentMatch] = Field(default_factory=list)
-
-
-class MessageAnalysisPayload(BaseModel):
-    """Structured analyze-only payload for intent and slot verification."""
-
-    session_id: str
-    cust_id: str
-    content: str
-    no_match: bool = False
-    recognition: RecognitionAnalysis
-    graph: ExecutionGraphState | None = None
-    slot_nodes: list[GraphNodeState] = Field(default_factory=list)
-    conditional_edges: list[GraphEdge] = Field(default_factory=list)
-    diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
 
 
 class ActionRequest(BaseModel):
@@ -126,12 +96,12 @@ class ActionRequest(BaseModel):
 
 def _session_or_snapshot(orchestrator: GraphRouterOrchestrator, session_id: str, fallback: object | None = None) -> object:
     """Return the live in-memory session when available, otherwise fall back to snapshot APIs."""
+    if fallback is not None:
+        return fallback
     session_store = getattr(orchestrator, "session_store", None)
     getter = getattr(session_store, "get", None)
     if getter is not None:
         return getter(session_id)
-    if fallback is not None:
-        return fallback
     return orchestrator.snapshot(session_id)
 
 
@@ -295,6 +265,7 @@ def _serialize_session_payload(
         "messages": [_serialize_message(item) for item in session.messages],
         "candidate_intents": [_serialize_match(item) for item in session.candidate_intents],
         "last_diagnostics": [_serialize_diagnostic(item) for item in session.last_diagnostics],
+        "shared_slot_memory": dict(getattr(session, "shared_slot_memory", {}) or {}),
         "current_graph": _serialize_graph(session.current_graph),
         "pending_graph": _serialize_graph(session.pending_graph),
         "active_node_id": session.active_node_id,
@@ -306,27 +277,6 @@ def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
     """Encode one router event as an SSE frame."""
     body = json.dumps(payload, ensure_ascii=False)
     return f"event: {event_name}\ndata: {body}\n\n"
-
-
-def _build_message_analysis_payload(result: MessageAnalysisResult) -> MessageAnalysisPayload:
-    """Convert orchestrator analysis output into an API response model."""
-    # Analyze-only graphs are assembled for the response and are not stored back into
-    # session state, so they can be serialized directly without another deep copy.
-    graph = result.graph
-    return MessageAnalysisPayload(
-        session_id=result.session_id,
-        cust_id=result.cust_id,
-        content=result.content,
-        no_match=result.no_match,
-        recognition=RecognitionAnalysis(
-            primary=list(result.recognition.primary),
-            candidates=list(result.recognition.candidates),
-        ),
-        graph=graph,
-        slot_nodes=list(graph.nodes) if graph is not None else [],
-        conditional_edges=[edge for edge in graph.edges if edge.condition is not None] if graph is not None else [],
-        diagnostics=list(result.diagnostics or []),
-    )
 
 
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
@@ -369,17 +319,6 @@ async def post_message(
     # drive the router directly without rendering any UI.
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     try:
-        if request.execution_mode == MessageExecutionMode.ANALYZE_ONLY:
-            analysis = await orchestrator.analyze_user_message(
-                session_id=session_id,
-                cust_id=resolved_cust_id,
-                content=request.content or "",
-                analysis_mode=request.analysis_mode,
-                guided_selection=request.guided_selection,
-                recommendation_context=request.recommendation_context,
-                proactive_recommendation=request.proactive_recommendation,
-            )
-            return {"ok": True, "analysis": _build_message_analysis_payload(analysis).model_dump(mode="json")}
         snapshot = await orchestrator.handle_user_message(
             session_id=session_id,
             cust_id=resolved_cust_id,
@@ -397,33 +336,6 @@ async def post_message(
             message=str(exc),
         ) from exc
     return {"ok": True, "snapshot": _serialize_session_payload(orchestrator, session_id, fallback=snapshot)}
-
-
-@router.post("/sessions/{session_id}/messages/analyze")
-async def analyze_message(
-    session_id: str,
-    request: MessageRequest,
-    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
-):
-    """Analyze one message turn without executing downstream agents."""
-    resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
-    try:
-        analysis = await orchestrator.analyze_user_message(
-            session_id=session_id,
-            cust_id=resolved_cust_id,
-            content=request.content or "",
-            analysis_mode=request.analysis_mode,
-            guided_selection=request.guided_selection,
-            recommendation_context=request.recommendation_context,
-            proactive_recommendation=request.proactive_recommendation,
-        )
-    except ValueError as exc:
-        raise RouterApiException(
-            status_code=400,
-            code=RouterErrorCode.ROUTER_BAD_REQUEST,
-            message=str(exc),
-        ) from exc
-    return {"ok": True, "analysis": _build_message_analysis_payload(analysis).model_dump(mode="json")}
 
 
 @router.post("/sessions/{session_id}/actions")
@@ -524,12 +436,6 @@ async def post_message_stream(
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     """Execute one message turn while streaming router events over SSE."""
-    if request.execution_mode == MessageExecutionMode.ANALYZE_ONLY:
-        raise RouterApiException(
-            status_code=400,
-            code=RouterErrorCode.ROUTER_STREAM_MODE_UNSUPPORTED,
-            message="analyze_only is not supported on the stream endpoint",
-        )
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
 
     async def event_generator():

@@ -132,7 +132,7 @@ This script is user-side end-to-end dialog verification only:
 - it creates a session
 - by default it waits for your terminal input and sends one real dialog turn at a time
 - validates the returned reply, current intent, current slots, and dialog stage
-- it does not call the analyze-only endpoint
+- it does not call any removed analyze endpoint
 - it sends `executionMode=router_only`, so the router stops before downstream agent execution
 
 Useful environment variables:

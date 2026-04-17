@@ -24,6 +24,7 @@ from router_service.api.dependencies import (
     run_session_cleanup,
 )
 from router_service.api.routes.sessions import router as graph_session_router
+from router_service.core.support.agent_barrier import AgentBarrierTriggeredError
 from router_service.core.support.llm_barrier import LLMBarrierTriggeredError
 from router_service.logging_utils import (
     bind_router_logger_to_runtime_handlers,
@@ -171,6 +172,17 @@ def create_router_app() -> FastAPI:
         payload = RouterApiErrorResponse(
             error=RouterApiError(
                 code=RouterErrorCode.ROUTER_LLM_BARRIER_TRIGGERED,
+                message=str(exc),
+            )
+        )
+        return JSONResponse(status_code=503, content=payload.model_dump(mode="json"))
+
+    @app.exception_handler(AgentBarrierTriggeredError)
+    async def handle_agent_barrier_exception(_, exc: AgentBarrierTriggeredError) -> JSONResponse:
+        """Expose agent barrier failures as explicit client-visible errors."""
+        payload = RouterApiErrorResponse(
+            error=RouterApiError(
+                code=RouterErrorCode.ROUTER_AGENT_BARRIER_TRIGGERED,
                 message=str(exc),
             )
         )

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-from typing import Any, Literal
+from typing import Any
 
 from router_service.core.support.agent_client import AgentClient, StreamingAgentClient
 from router_service.core.support.context_builder import ContextBuilder
@@ -56,7 +56,6 @@ from router_service.core.graph.action_flow import GraphActionFlow
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.state_sync import GraphStateSync
 from router_service.core.graph.message_flow import GraphMessageFlow
-from router_service.core.shared.diagnostics import RouterDiagnostic, merge_diagnostics
 from router_service.core.support.trace_logging import current_trace_id, router_stage, router_trace
 
 
@@ -72,19 +71,6 @@ class GraphRouterOrchestratorConfig:
     max_drain_iterations: int | None = None
     drain_iteration_multiplier: int = 3
     drain_iteration_floor: int = 8
-
-
-@dataclass(slots=True)
-class MessageAnalysisResult:
-    """Non-executing analysis result used to inspect recognition and slot filling."""
-
-    session_id: str
-    cust_id: str
-    content: str
-    recognition: RecognitionResult
-    graph: ExecutionGraphState | None
-    no_match: bool = False
-    diagnostics: list[RouterDiagnostic] | None = None
 
 
 class _NoopIntentRecognizer:
@@ -218,17 +204,32 @@ class GraphRouterOrchestrator:
     def snapshot(self, session_id: str) -> GraphRouterSnapshot:
         """Build a deep-enough read snapshot safe for API exposure."""
         session = self.session_store.get(session_id)
+        return self._build_session_dump(session)
+
+    def _build_session_dump(self, session: GraphSessionState) -> GraphRouterSnapshot:
+        """Build one API-facing dump directly from the current live session object."""
         return GraphRouterSnapshot(
             session_id=session.session_id,
             cust_id=session.cust_id,
             messages=list(session.messages),
             candidate_intents=list(session.candidate_intents),
             last_diagnostics=list(session.last_diagnostics),
+            shared_slot_memory=dict(session.shared_slot_memory),
             current_graph=session.current_graph.model_copy(deep=True) if session.current_graph is not None else None,
             pending_graph=session.pending_graph.model_copy(deep=True) if session.pending_graph is not None else None,
             active_node_id=session.active_node_id,
             expires_at=session.expires_at,
         )
+
+    def _finalize_handover_business(self, session: GraphSessionState) -> GraphRouterSnapshot | None:
+        """Compact the current handover-ready business after preserving the response dump."""
+        business = session.handover_business()
+        if business is None:
+            return None
+        response_dump = self._build_session_dump(session)
+        session.finalize_business(business.business_id)
+        session.touch()
+        return response_dump
 
     async def handle_user_message(
         self,
@@ -258,7 +259,7 @@ class GraphRouterOrchestrator:
             details=trace_details,
         ):
             with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
-                snapshot = await self.message_flow.handle_user_message(
+                await self.message_flow.handle_user_message(
                     session_id,
                     cust_id,
                     content,
@@ -266,8 +267,12 @@ class GraphRouterOrchestrator:
                     guided_selection=guided_selection,
                     recommendation_context=recommendation_context,
                     proactive_recommendation=proactive_recommendation,
-                    return_snapshot=return_snapshot,
+                    return_snapshot=False,
                 )
+            session = self.session_store.get(session_id)
+            snapshot = self._finalize_handover_business(session)
+            if snapshot is None and return_snapshot:
+                snapshot = self._build_session_dump(session)
             logger.info(
                 "Router message snapshot (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s)",
                 current_trace_id(),
@@ -275,166 +280,9 @@ class GraphRouterOrchestrator:
                 snapshot.current_graph.status.value if snapshot is not None and snapshot.current_graph is not None else None,
                 snapshot.pending_graph.status.value if snapshot is not None and snapshot.pending_graph is not None else None,
                 snapshot.active_node_id if snapshot is not None else None,
-                len(snapshot.candidate_intents) if snapshot is not None else len(self.session_store.get(session_id).candidate_intents),
+                len(snapshot.candidate_intents) if snapshot is not None else len(session.candidate_intents),
             )
-            return snapshot
-
-    async def analyze_user_message(
-        self,
-        session_id: str,
-        cust_id: str,
-        content: str,
-        *,
-        analysis_mode: Literal["full", "intent_only"] = "full",
-        guided_selection: GuidedSelectionPayload | None = None,
-        recommendation_context: RecommendationContextPayload | None = None,
-        proactive_recommendation: ProactiveRecommendationPayload | None = None,
-    ) -> MessageAnalysisResult:
-        """Compile one turn into recognition and slots without dispatching any agent."""
-        trace_details = {
-            "analysis_mode": analysis_mode,
-            "has_guided_selection": guided_selection is not None,
-            "has_recommendation_context": recommendation_context is not None,
-            "has_proactive_recommendation": proactive_recommendation is not None,
-        }
-        with router_trace(
-            logger,
-            entrypoint="analyze_user_message",
-            session_id=session_id,
-            cust_id=cust_id,
-            content=content,
-            details=trace_details,
-        ):
-            if proactive_recommendation is not None:
-                raise ValueError("analyze_only does not support proactive_recommendation yet")
-
-            session = self.session_store.get_or_create(session_id, cust_id)
-            message_content = content.strip()
-            display_content = message_content or self._guided_selection_display_content(guided_selection)
-
-            if analysis_mode == "intent_only":
-                with router_stage(logger, "orchestrator.analyze.intent_only"):
-                    recognition = await self.graph_compiler.recognize_only(
-                        session,
-                        message_content,
-                        build_session_context=self._build_session_context,
-                        sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
-                        recommendation_context=recommendation_context,
-                        emit_events=False,
-                    )
-                logger.info(
-                    "Router analysis result (trace_id=%s, session_id=%s, analysis_mode=%s, primary_intents=%s, candidate_intents=%s, no_match=%s)",
-                    current_trace_id(),
-                    session.session_id,
-                    analysis_mode,
-                    len(recognition.primary),
-                    len(recognition.candidates),
-                    not recognition.primary,
-                )
-                return MessageAnalysisResult(
-                    session_id=session.session_id,
-                    cust_id=session.cust_id,
-                    content=display_content,
-                    recognition=recognition,
-                    graph=None,
-                    no_match=not recognition.primary,
-                    diagnostics=merge_diagnostics(recognition.diagnostics),
-                )
-
-            if guided_selection is not None:
-                with router_stage(logger, "orchestrator.analyze.guided_selection_graph"):
-                    graph = self.graph_compiler.build_guided_selection_graph(
-                        content=message_content,
-                        guided_selection=guided_selection,
-                    )
-                logger.info(
-                    "Router analysis result (trace_id=%s, session_id=%s, analysis_mode=%s, graph_nodes=%s, graph_status=%s)",
-                    current_trace_id(),
-                    session.session_id,
-                    analysis_mode,
-                    len(graph.nodes),
-                    graph.status.value,
-                )
-                return MessageAnalysisResult(
-                    session_id=session.session_id,
-                    cust_id=session.cust_id,
-                    content=display_content,
-                    recognition=RecognitionResult(primary=[], candidates=[], diagnostics=[]),
-                    graph=graph,
-                    no_match=False,
-                    diagnostics=[],
-                )
-
-            with router_stage(logger, "orchestrator.analyze.compile_message"):
-                compile_result = await self.graph_compiler.compile_message(
-                    session,
-                    message_content,
-                    build_session_context=self._build_session_context,
-                    sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
-                    recommendation_context=recommendation_context,
-                    emit_events=False,
-                )
-            if compile_result.graph is not None:
-                with router_stage(
-                    logger,
-                    "orchestrator.analyze.hydrate_graph_understanding",
-                    graph_id=compile_result.graph.graph_id,
-                    node_count=len(compile_result.graph.nodes),
-                ):
-                    await self._hydrate_analysis_graph_understanding(
-                        session,
-                        compile_result.graph,
-                        current_message=message_content,
-                    )
-            diagnostics = merge_diagnostics(
-                compile_result.diagnostics,
-                compile_result.graph.diagnostics if compile_result.graph is not None else [],
-                *(
-                    node.diagnostics
-                    for node in (compile_result.graph.nodes if compile_result.graph is not None else [])
-                ),
-            )
-            logger.info(
-                "Router analysis result (trace_id=%s, session_id=%s, analysis_mode=%s, primary_intents=%s, candidate_intents=%s, graph_nodes=%s, graph_status=%s, no_match=%s)",
-                current_trace_id(),
-                session.session_id,
-                analysis_mode,
-                len(compile_result.recognition.primary),
-                len(compile_result.recognition.candidates),
-                len(compile_result.graph.nodes) if compile_result.graph is not None else 0,
-                compile_result.graph.status.value if compile_result.graph is not None else None,
-                compile_result.no_match,
-            )
-            return MessageAnalysisResult(
-                session_id=session.session_id,
-                cust_id=session.cust_id,
-                content=display_content,
-                recognition=compile_result.recognition,
-                graph=compile_result.graph,
-                no_match=compile_result.no_match,
-                diagnostics=diagnostics,
-            )
-
-    async def _hydrate_analysis_graph_understanding(
-        self,
-        session: GraphSessionState,
-        graph: ExecutionGraphState,
-        *,
-        current_message: str,
-    ) -> None:
-        """Populate per-node slot understanding for analyze-only responses without dispatching."""
-        active_intents = dict(self.intent_catalog.active_intents_by_code())
-        for node in graph.nodes:
-            intent = active_intents.get(node.intent_code)
-            if intent is None:
-                continue
-            await self._validate_node_understanding(
-                session,
-                graph,
-                node,
-                intent=intent,
-                current_message=current_message,
-            )
+            return snapshot if return_snapshot or snapshot is not None else None
 
     async def _handle_proactive_recommendation_turn(
         self,
@@ -477,7 +325,7 @@ class GraphRouterOrchestrator:
         return_snapshot: bool = True,
     ) -> GraphRouterSnapshot | None:
         """Delegate one explicit graph action into the action-flow state machine."""
-        return await self.action_flow.handle_action(
+        await self.action_flow.handle_action(
             session_id=session_id,
             cust_id=cust_id,
             action_code=action_code,
@@ -485,8 +333,13 @@ class GraphRouterOrchestrator:
             task_id=task_id,
             confirm_token=confirm_token,
             payload=payload,
-            return_snapshot=return_snapshot,
+            return_snapshot=False,
         )
+        session = self.session_store.get(session_id)
+        snapshot = self._finalize_handover_business(session)
+        if snapshot is None and return_snapshot:
+            snapshot = self._build_session_dump(session)
+        return snapshot if return_snapshot or snapshot is not None else None
 
     async def _route_new_message(
         self,

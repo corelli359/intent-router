@@ -195,12 +195,11 @@ ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
 The generated web deployments run directly from `prod_target/chat-web` and `prod_target/admin-web`
 instead of rebuilding Next.js inside the cluster.
 
-## Analyze-Only Verification
+## Router-Only Verification
 
 To verify intent recognition and slot filling without dispatching downstream agents, call:
 
-- `POST /api/router/v2/sessions/{session_id}/messages/analyze`
-- or `POST /api/router/v2/sessions/{session_id}/messages` with `"executionMode": "analyze_only"`
+- `POST /api/router/v2/sessions/{session_id}/messages` with `"executionMode": "router_only"`
 
 Helper script:
 
