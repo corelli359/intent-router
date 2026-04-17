@@ -617,7 +617,7 @@
         "转5000元给朋友",
         "立即转账"
       ],
-      "agent_url": "http://intent-appointment-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "agent_url": "http://localhost:8001/api/agent/run",
       "is_leaf_intent": true,
       "parent_intent_code": "",
       "status": "active",
