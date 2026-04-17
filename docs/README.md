@@ -8,6 +8,7 @@
 - `意图设计.md`
 - `slot-schema-field-catalog-design.md`
 - `槽位填充准确率提升调研报告.md`
+- `openai-agents-python调研与可借鉴点报告.md`
 - `层级意图路由与条件槽位治理改造方案.md`
 - `router-service-core重构任务清单与分包方案.md`
 
