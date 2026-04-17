@@ -6,13 +6,16 @@ import json
 from dataclasses import dataclass, field
 from json import JSONDecodeError
 import logging
+import time
 from typing import Any, Awaitable, Callable, Literal, Protocol
+from uuid import uuid4
 
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
 from router_service.core.support.jwt_utils import AuthHTTPClient
+from router_service.core.support.trace_logging import current_trace_id
 
 AsyncDeltaCallback = Callable[[str], Awaitable[None]]
 logger = logging.getLogger(__name__)
@@ -128,8 +131,58 @@ class LangChainLLMClient:
         on_delta: AsyncDeltaCallback | None = None,
     ) -> Any:
         """Run one prompt, stream its raw text, and extract JSON from the result."""
-        response_text = await self._stream_prompt(prompt, variables, model=model, on_delta=on_delta)
-        return extract_json_value(response_text)
+        effective_model = model or self.default_model
+        call_id = uuid4().hex[:8]
+        trace_id = current_trace_id()
+        variable_keys = ",".join(sorted(str(key) for key in variables.keys()))
+        started_at = time.perf_counter()
+        logger.info(
+            "LLM call request (trace_id=%s, call_id=%s, model=%s, base_url=%s, prompt=%s, variable_keys=%s, messages=%s)",
+            trace_id,
+            call_id,
+            effective_model,
+            self.base_url,
+            prompt.__class__.__name__,
+            variable_keys,
+            self._render_prompt_messages(prompt, variables),
+        )
+        try:
+            response_text = await self._stream_prompt(prompt, variables, model=model, on_delta=on_delta)
+            parsed_payload = extract_json_value(response_text)
+        except Exception:
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            logger.warning(
+                "LLM call failed (trace_id=%s, call_id=%s, model=%s, base_url=%s, elapsed_ms=%.2f, prompt=%s)",
+                trace_id,
+                call_id,
+                effective_model,
+                self.base_url,
+                elapsed_ms,
+                prompt.__class__.__name__,
+                exc_info=True,
+            )
+            raise
+        logger.info(
+            "LLM call response (trace_id=%s, call_id=%s, model=%s, base_url=%s, response_text=%s)",
+            trace_id,
+            call_id,
+            effective_model,
+            self.base_url,
+            response_text,
+        )
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info(
+            "LLM call completed (trace_id=%s, call_id=%s, model=%s, base_url=%s, elapsed_ms=%.2f, prompt=%s, variable_keys=%s, response_chars=%s)",
+            trace_id,
+            call_id,
+            effective_model,
+            self.base_url,
+            elapsed_ms,
+            prompt.__class__.__name__,
+            variable_keys,
+            len(response_text),
+        )
+        return parsed_payload
 
     def _create_model(self, model: str | None = None) -> ChatOpenAI:
         """Create the configured ChatOpenAI client instance for one request."""
@@ -250,3 +303,21 @@ class LangChainLLMClient:
                     texts.append(str(item["text"]))
             return "".join(texts)
         return str(content or "")
+
+    def _render_prompt_messages(self, prompt: ChatPromptTemplate, variables: dict[str, Any]) -> str:
+        """Render the final prompt messages into a JSON log payload."""
+        try:
+            rendered_messages = prompt.format_messages(**variables)
+        except Exception as exc:
+            return json.dumps(
+                [{"role": "render_error", "content": f"prompt render failed: {exc}"}],
+                ensure_ascii=False,
+            )
+        serialized_messages = [
+            {
+                "role": getattr(message, "type", message.__class__.__name__),
+                "content": self._chunk_text(getattr(message, "content", "")),
+            }
+            for message in rendered_messages
+        ]
+        return json.dumps(serialized_messages, ensure_ascii=False)

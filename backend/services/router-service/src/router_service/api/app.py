@@ -24,26 +24,40 @@ from router_service.api.dependencies import (
     run_session_cleanup,
 )
 from router_service.api.routes.sessions import router as graph_session_router
+from router_service.logging_utils import bind_router_logger_to_runtime_handlers
 
 
 def create_router_app() -> FastAPI:
     """Create the FastAPI application and wire runtime lifecycle hooks."""
     settings = get_settings()
-    app_logger = logging.getLogger("router_service")
-    handlers = list(logging.getLogger("uvicorn.error").handlers)
-    if not handlers:
-        handlers = list(logging.getLogger().handlers)
-    if not handlers:
-        handlers = [logging.StreamHandler()]
-    app_logger.handlers = handlers
-    app_logger.setLevel(logging.INFO)
-    app_logger.propagate = False
+    app_logger = bind_router_logger_to_runtime_handlers(settings.router_log_level)
+    app_logger.info(
+        "Initializing router app (env=%s, log_level=%s)",
+        settings.env,
+        settings.router_log_level,
+    )
+    app_logger.info(
+        "Router startup LLM target (api_base_url=%s, default_model=%s, recognizer_model=%s)",
+        settings.llm_api_base_url,
+        settings.llm_model,
+        settings.llm_recognizer_model or settings.llm_model,
+    )
     runtime = build_router_runtime()
+    app_logger.info(
+        "Router runtime initialized (catalog_backend=%s, recognizer_backend=%s, llm_ready=%s, graph_build_mode=%s, understanding_mode=%s, planning_policy=%s)",
+        settings.repository_backend,
+        settings.recognizer_backend,
+        settings.llm_connection_ready,
+        settings.router_v2_graph_build_mode,
+        settings.router_v2_understanding_mode,
+        settings.router_v2_planning_policy,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """Refresh the catalog on startup and stop background tasks on shutdown."""
-        await asyncio.to_thread(runtime.intent_catalog.refresh_now)
+        app_logger.info("Router startup: refreshing intent catalog")
+        active_intents = await asyncio.to_thread(runtime.intent_catalog.refresh_now)
         stop_event = asyncio.Event()
         refresh_task = asyncio.create_task(
             run_intent_catalog_refresh(
@@ -68,15 +82,25 @@ def create_router_app() -> FastAPI:
         app.state.intent_catalog_refresh_task = refresh_task
         app.state.router_session_cleanup_task = session_cleanup_task
         app.state.router_session_cleanup_stop = session_cleanup_stop
+        fallback_intent = runtime.intent_catalog.get_fallback_intent()
+        app_logger.info(
+            "Router startup complete (active_intents=%s, fallback_intent=%s, refresh_interval_seconds=%s, session_cleanup_enabled=%s)",
+            len(active_intents),
+            fallback_intent.intent_code if fallback_intent is not None else None,
+            settings.router_intent_refresh_interval_seconds,
+            settings.router_session_cleanup_enabled,
+        )
         try:
             yield
         finally:
+            app_logger.info("Router shutdown: stopping background tasks")
             stop_event.set()
             await refresh_task
             if session_cleanup_task is not None and session_cleanup_stop is not None:
                 session_cleanup_stop.set()
                 await session_cleanup_task
             await close_router_runtime(runtime)
+            app_logger.info("Router shutdown complete")
 
     app = FastAPI(title="Intent Router API", version="0.1.0", lifespan=lifespan)
     app.state.router_runtime = runtime

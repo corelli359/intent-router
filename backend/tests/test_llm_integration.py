@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import httpx
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -221,6 +222,85 @@ def test_langchain_llm_client_retries_rate_limited_requests_once() -> None:
         assert client.calls == 2
 
     asyncio.run(run())
+
+
+def test_langchain_llm_client_logs_elapsed_time_for_completed_call(caplog) -> None:
+    class _LoggingClient(LangChainLLMClient):
+        async def _stream_prompt(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        client = _LoggingClient(
+            base_url="https://example.com",
+            default_model="test-model",
+        )
+        client_logger = logging.getLogger("router_service.core.support.llm_client")
+        original_handlers = list(client_logger.handlers)
+        original_level = client_logger.level
+        original_propagate = client_logger.propagate
+        client_logger.handlers = [caplog.handler]
+        client_logger.setLevel(logging.INFO)
+        client_logger.propagate = False
+        try:
+            payload = await client.run_json(
+                prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                variables={"message": "hi"},
+            )
+        finally:
+            client_logger.handlers = original_handlers
+            client_logger.setLevel(original_level)
+            client_logger.propagate = original_propagate
+
+        assert payload == {"matches": []}
+
+    asyncio.run(run())
+
+    assert "LLM call completed" in caplog.text
+    assert "LLM call request" in caplog.text
+    assert "LLM call response" in caplog.text
+    assert "model=test-model" in caplog.text
+    assert "elapsed_ms=" in caplog.text
+    assert "variable_keys=message" in caplog.text
+    assert '"content": "hi"' in caplog.text
+    assert 'response_text={"matches":[]}' in caplog.text
+
+
+def test_langchain_llm_client_logs_elapsed_time_for_failed_call(caplog) -> None:
+    class _InvalidJsonClient(LangChainLLMClient):
+        async def _stream_prompt(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            return "not-json"
+
+    async def run() -> None:
+        client = _InvalidJsonClient(
+            base_url="https://example.com",
+            default_model="test-model",
+        )
+        client_logger = logging.getLogger("router_service.core.support.llm_client")
+        original_handlers = list(client_logger.handlers)
+        original_level = client_logger.level
+        original_propagate = client_logger.propagate
+        client_logger.handlers = [caplog.handler]
+        client_logger.setLevel(logging.INFO)
+        client_logger.propagate = False
+        try:
+            with pytest.raises(ValueError):
+                await client.run_json(
+                    prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                    variables={"message": "hi"},
+                )
+        finally:
+            client_logger.handlers = original_handlers
+            client_logger.setLevel(original_level)
+            client_logger.propagate = original_propagate
+
+    asyncio.run(run())
+
+    assert "LLM call failed" in caplog.text
+    assert "LLM call request" in caplog.text
+    assert "model=test-model" in caplog.text
+    assert "elapsed_ms=" in caplog.text
 
 
 def test_langchain_llm_client_passes_custom_http_async_client_to_chat_openai(monkeypatch) -> None:
