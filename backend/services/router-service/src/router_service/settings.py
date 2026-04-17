@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field
 
+from router_service.core.support.llm_barrier import ROUTER_LLM_BARRIER_ENABLED_ENV
+
 
 ROUTER_ENV_FILE_ENV = "ROUTER_ENV_FILE"
 DEFAULT_ROUTER_ENV_FILE = "/etc/intent-router/.env.local"
@@ -129,6 +131,7 @@ class Settings(BaseModel):
     llm_rate_limit_retry_delay_seconds: float = Field(default=2.0, gt=0)
     agent_http_timeout_seconds: float = Field(default=60.0, gt=0)
     llm_headers: dict[str, str] = Field(default_factory=dict)
+    router_llm_barrier_enabled: bool = Field(default=False)
 
     @property
     def default_llm_model(self) -> str | None:
@@ -203,4 +206,5 @@ class Settings(BaseModel):
             ),
             agent_http_timeout_seconds=float(os.getenv("ROUTER_AGENT_HTTP_TIMEOUT_SECONDS", "60")),
             llm_headers=_env_headers("ROUTER_LLM_HEADERS_JSON"),
+            router_llm_barrier_enabled=_parse_bool_env(ROUTER_LLM_BARRIER_ENABLED_ENV, False),
         )

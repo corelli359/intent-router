@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from admin_service.api.dependencies import get_settings
 from admin_service.api.routes.fields import router as fields_router
 from admin_service.api.routes.intents import router as intents_router
+from admin_service.api.routes.perf_tests import router as perf_tests_router
 
 
 def create_admin_app() -> FastAPI:
@@ -21,9 +22,11 @@ def create_admin_app() -> FastAPI:
     # Canonical admin API routes for independent admin deployment.
     app.include_router(fields_router, prefix="/api")
     app.include_router(intents_router, prefix="/api")
+    app.include_router(perf_tests_router, prefix="/api")
     # Keep legacy routes for local/dev compatibility.
     app.include_router(fields_router)
     app.include_router(intents_router)
+    app.include_router(perf_tests_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

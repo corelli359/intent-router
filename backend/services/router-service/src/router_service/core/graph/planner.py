@@ -11,6 +11,7 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
+from router_service.core.support.llm_barrier import llm_barrier_triggered
 from router_service.core.support.llm_client import JsonLLMClient
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
@@ -401,6 +402,8 @@ class LLMIntentGraphPlanner:
             )
             payload = GraphPlanningPayload.model_validate(raw_payload)
         except Exception as exc:
+            if llm_barrier_triggered(exc):
+                raise
             graph = await self.fallback.plan(
                 message=message,
                 matches=matches,
@@ -554,5 +557,7 @@ class LLMGraphTurnInterpreter:
                 model=self.model,
             )
             return TurnDecisionPayload.model_validate(raw_payload)
-        except Exception:
+        except Exception as exc:
+            if llm_barrier_triggered(exc):
+                raise
             return await fallback()

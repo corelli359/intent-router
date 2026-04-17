@@ -9,6 +9,7 @@ description = "Admin API for intent registration and activation"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1.0",
+  "httpx>=0.28,<1.0",
   "uvicorn>=0.30,<1.0",
   "pydantic>=2.8,<3.0",
   "sqlalchemy>=2.0,<3.0",
@@ -17,3 +18,6 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+admin_service = ["perf/cases/*.json"]

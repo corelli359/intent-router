@@ -15,6 +15,7 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
+from router_service.core.support.llm_barrier import llm_barrier_triggered
 from router_service.core.support.llm_client import JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
@@ -189,7 +190,8 @@ class SlotExtractor:
         )
         ambiguous_slot_keys: list[str] = []
         diagnostics: list[RouterDiagnostic] = []
-        if self.llm_client is not None and (llm_missing_required or not merged_memory):
+        llm_barrier_enabled = bool(getattr(self.llm_client, "barrier_enabled", False))
+        if self.llm_client is not None and not llm_barrier_enabled and (llm_missing_required or not merged_memory):
             llm_result = await self._extract_with_llm(
                 intent=intent,
                 current_message=current_message or graph_source_message,
@@ -209,6 +211,14 @@ class SlotExtractor:
                     history_text=history_text,
                     allow_replace_existing_user_message=True,
                 )
+        elif llm_barrier_enabled and (llm_missing_required or not merged_memory):
+            logger.info(
+                "Skipping LLM slot extraction because router perf barrier is enabled "
+                "(intent_code=%s, missing_required=%s, merged_memory_empty=%s)",
+                intent.intent_code,
+                llm_missing_required,
+                not merged_memory,
+            )
 
         return SlotExtractionResult(
             slot_memory=merged_memory,
@@ -317,6 +327,8 @@ class SlotExtractor:
                 model=self.model,
             )
         except Exception as exc:
+            if llm_barrier_triggered(exc):
+                raise
             if llm_exception_is_retryable(exc):
                 logger.warning(
                     "Slot extraction LLM is temporarily unavailable, preserving heuristic extraction",
@@ -472,6 +484,19 @@ class SlotExtractor:
         text: str,
     ) -> tuple[Any | None, str | None]:
         """Extract generic string slots with special handling for currency semantics."""
+        slot_signature = slot_semantic_signature(slot_def)
+        if any(token in slot_signature for token in ("card", "account", "卡号", "账号", "账户", "银行卡")):
+            matched = self._extract_account_number_match(slot_def=slot_def, text=text)
+            if matched is not None:
+                return matched.group(1), matched.group(0)
+        if any(token in slot_signature for token in ("phone", "手机号", "尾号", "后4位", "后四位")):
+            matched = self._extract_phone_last4_match(slot_def=slot_def, text=text)
+            if matched is not None:
+                return matched.group(1), matched.group(0)
+        if any(token in slot_signature for token in ("person", "name", "姓名", "收款人", "付款人")):
+            matched = NAME_RE.search(text)
+            if matched is not None:
+                return matched.group(1), matched.group(0)
         if slot_has_currency_semantics(slot_def):
             return self._extract_currency_like_slot(slot_def=slot_def, text=text)
         return None, None

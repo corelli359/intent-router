@@ -91,6 +91,22 @@ class Settings(BaseModel):
     llm_rate_limit_retry_delay_seconds: float = Field(default=2.0, gt=0)
     agent_http_timeout_seconds: float = Field(default=60.0, gt=0)
     llm_headers: dict[str, str] = Field(default_factory=dict)
+    perf_test_target_base_url: str = Field(
+        default="http://router-api-test.intent.svc.cluster.local:8000",
+        min_length=1,
+        max_length=2048,
+    )
+    perf_test_session_create_path: str = Field(
+        default="/api/router/v2/sessions",
+        min_length=1,
+        max_length=512,
+    )
+    perf_test_message_path_template: str = Field(
+        default="/api/router/v2/sessions/{session_id}/messages",
+        min_length=1,
+        max_length=1024,
+    )
+    perf_test_request_timeout_seconds: float = Field(default=15.0, gt=0)
 
     @property
     def default_llm_model(self) -> str | None:
@@ -131,4 +147,19 @@ class Settings(BaseModel):
             ),
             agent_http_timeout_seconds=float(os.getenv("ROUTER_AGENT_HTTP_TIMEOUT_SECONDS", "60")),
             llm_headers=_env_headers("ROUTER_LLM_HEADERS_JSON"),
+            perf_test_target_base_url=os.getenv(
+                "ADMIN_PERF_TEST_TARGET_BASE_URL",
+                "http://router-api-test.intent.svc.cluster.local:8000",
+            ),
+            perf_test_session_create_path=os.getenv(
+                "ADMIN_PERF_TEST_SESSION_CREATE_PATH",
+                "/api/router/v2/sessions",
+            ),
+            perf_test_message_path_template=os.getenv(
+                "ADMIN_PERF_TEST_MESSAGE_PATH_TEMPLATE",
+                "/api/router/v2/sessions/{session_id}/messages",
+            ),
+            perf_test_request_timeout_seconds=float(
+                os.getenv("ADMIN_PERF_TEST_REQUEST_TIMEOUT_SECONDS", "15")
+            ),
         )

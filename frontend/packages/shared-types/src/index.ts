@@ -151,3 +151,114 @@ export interface SessionActionInput {
   confirmToken?: string;
   payload?: Record<string, unknown>;
 }
+
+export type PerfRunStatus =
+  | "queued"
+  | "validating"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type PerfStageStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface PerfMetrics {
+  totalRequests?: number | null;
+  successCount?: number | null;
+  failureCount?: number | null;
+  successRate?: number | null;
+  rps?: number | null;
+  avgMs?: number | null;
+  p50Ms?: number | null;
+  p95Ms?: number | null;
+  p99Ms?: number | null;
+  maxMs?: number | null;
+  timeoutCount?: number | null;
+  statusCodeBreakdown?: Record<string, number>;
+  errorTypeBreakdown?: Record<string, number>;
+}
+
+export interface PerfTestStepInput {
+  name?: string;
+  concurrency: number;
+  durationSec: number;
+  warmupSec?: number;
+  requestLimit?: number;
+  cooldownSec?: number;
+  timeoutMs?: number;
+}
+
+export interface PerfFailureSample {
+  sampleId: string;
+  stageName?: string;
+  stepIndex?: number | null;
+  statusCode?: number | string | null;
+  errorType?: string | null;
+  message: string;
+  latencyMs?: number | null;
+  requestSummary?: string | null;
+  occurredAt?: string | null;
+}
+
+export interface PerfTestCase {
+  caseId: string;
+  name: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  targetRoute?: string;
+  defaultSteps: PerfTestStepInput[];
+  notes?: string[];
+}
+
+export interface PerfTestRunSummary {
+  runId: string;
+  caseId: string;
+  caseName?: string;
+  status: PerfRunStatus;
+  startedAt?: string | null;
+  updatedAt?: string | null;
+  finishedAt?: string | null;
+  currentStageIndex?: number | null;
+  totalStages?: number | null;
+  aggregateMetrics?: PerfMetrics;
+}
+
+export interface PerfRunProgress {
+  completedStages: number;
+  totalStages: number;
+  currentStageIndex?: number | null;
+  currentStageName?: string | null;
+  elapsedSec?: number | null;
+  lastHeartbeatAt?: string | null;
+}
+
+export interface PerfStageResult {
+  stageId: string;
+  stepIndex: number;
+  name: string;
+  status: PerfStageStatus;
+  concurrency: number;
+  durationSec: number;
+  warmupSec?: number | null;
+  requestLimit?: number | null;
+  cooldownSec?: number | null;
+  timeoutMs?: number | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  metrics: PerfMetrics;
+  failureSamples?: PerfFailureSample[];
+}
+
+export interface PerfTestRunDetail extends PerfTestRunSummary {
+  targetBaseUrl?: string | null;
+  progress: PerfRunProgress;
+  ladderSteps: PerfTestStepInput[];
+  stepResults: PerfStageResult[];
+  errorSamples: PerfFailureSample[];
+}
+
+export interface PerfTestRunCreateInput {
+  caseId: string;
+  ladderSteps: PerfTestStepInput[];
+}

@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intent-admin-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: admin-api
+          env:
+            - name: ADMIN_PERF_TEST_TARGET_BASE_URL
+              value: http://router-api-test.intent.svc.cluster.local:8000

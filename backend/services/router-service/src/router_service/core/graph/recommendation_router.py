@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Protocol
 
+from router_service.core.support.llm_barrier import llm_barrier_triggered
 from router_service.core.support.llm_client import JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_PROACTIVE_RECOMMENDATION_HUMAN_PROMPT,
@@ -94,7 +95,7 @@ class LLMProactiveRecommendationRouter:
             )
             decision = ProactiveRecommendationRouteDecision.model_validate(raw_payload)
         except Exception as exc:
-            if llm_exception_is_retryable(exc):
+            if llm_exception_is_retryable(exc) or llm_barrier_triggered(exc):
                 raise
             logger.warning("Proactive recommendation router failed, falling back", exc_info=True)
             return await self.fallback.decide(

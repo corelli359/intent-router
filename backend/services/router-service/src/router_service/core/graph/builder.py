@@ -15,6 +15,7 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
+from router_service.core.support.llm_barrier import llm_barrier_triggered
 from router_service.core.support.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
@@ -475,7 +476,7 @@ class LLMIntentGraphBuilder:
                 on_delta=on_delta,
             )
         except Exception as exc:
-            if llm_exception_is_retryable(exc):
+            if llm_exception_is_retryable(exc) or llm_barrier_triggered(exc):
                 raise
             logger.warning("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
             result = await self._build_via_legacy_chain(

@@ -14,6 +14,7 @@ import httpx
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
+from router_service.core.support.llm_barrier import build_llm_barrier_error
 from router_service.core.support.jwt_utils import AuthHTTPClient
 from router_service.core.support.trace_logging import current_trace_id
 
@@ -121,6 +122,7 @@ class LangChainLLMClient:
     extra_headers: dict[str, str] = field(default_factory=dict)
     structured_output_method: Literal["function_calling", "json_mode", "json_schema"] = "json_mode"
     http_async_client: httpx.AsyncClient | None = None
+    barrier_enabled: bool = False
 
     async def run_json(
         self,
@@ -134,6 +136,21 @@ class LangChainLLMClient:
         effective_model = model or self.default_model
         call_id = uuid4().hex[:8]
         trace_id = current_trace_id()
+        prompt_name = prompt.__class__.__name__
+        if self.barrier_enabled:
+            logger.error(
+                "LLM barrier blocked call (trace_id=%s, call_id=%s, model=%s, base_url=%s, prompt=%s)",
+                trace_id,
+                call_id,
+                effective_model,
+                self.base_url,
+                prompt_name,
+            )
+            raise build_llm_barrier_error(
+                model=effective_model,
+                prompt_name=prompt_name,
+                base_url=self.base_url,
+            )
         variable_keys = ",".join(sorted(str(key) for key in variables.keys()))
         started_at = time.perf_counter()
         logger.info(
@@ -142,7 +159,7 @@ class LangChainLLMClient:
             call_id,
             effective_model,
             self.base_url,
-            prompt.__class__.__name__,
+            prompt_name,
             variable_keys,
             self._render_prompt_messages(prompt, variables),
         )
@@ -158,7 +175,7 @@ class LangChainLLMClient:
                 effective_model,
                 self.base_url,
                 elapsed_ms,
-                prompt.__class__.__name__,
+                prompt_name,
                 exc_info=True,
             )
             raise
@@ -178,7 +195,7 @@ class LangChainLLMClient:
             effective_model,
             self.base_url,
             elapsed_ms,
-            prompt.__class__.__name__,
+            prompt_name,
             variable_keys,
             len(response_text),
         )

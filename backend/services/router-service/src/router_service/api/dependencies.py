@@ -26,7 +26,11 @@ from router_service.core.prompts.prompt_templates import (
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
 )
-from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer
+from router_service.core.recognition.recognizer import (
+    HeuristicIntentRecognizer,
+    LLMIntentRecognizer,
+    NullIntentRecognizer,
+)
 from router_service.core.graph.builder import LLMIntentGraphBuilder
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
@@ -127,11 +131,16 @@ def build_router_runtime() -> RouterRuntime:
     )
     llm_client = _build_llm_client()
     intent_catalog = RepositoryIntentCatalog(get_intent_repository())
+    recognizer_fallback = (
+        HeuristicIntentRecognizer()
+        if settings.router_llm_barrier_enabled
+        else NullIntentRecognizer()
+    )
     baseline_recognizer = (
         LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=NullIntentRecognizer(),
+            fallback=recognizer_fallback,
             system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
             human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
         )
@@ -146,14 +155,14 @@ def build_router_runtime() -> RouterRuntime:
         domain_recognizer = LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=NullIntentRecognizer(),
+            fallback=recognizer_fallback,
             system_prompt_template=DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
             human_prompt_template=DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
         )
         leaf_recognizer = LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=NullIntentRecognizer(),
+            fallback=recognizer_fallback,
             system_prompt_template=DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
             human_prompt_template=DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,
         )
@@ -240,6 +249,24 @@ def build_router_runtime() -> RouterRuntime:
 def _build_llm_client() -> LangChainLLMClient | None:
     """Create the shared LLM client when the required connection settings are present."""
     settings = get_settings()
+    if settings.router_llm_barrier_enabled:
+        logger.info(
+            "Router LLM barrier enabled (base_url=%s, model=%s, structured_output_method=%s)",
+            settings.llm_api_base_url,
+            settings.default_llm_model or "router-llm-barrier",
+            settings.llm_structured_output_method,
+        )
+        return LangChainLLMClient(
+            base_url=settings.llm_api_base_url or "barrier://router-llm-disabled",
+            api_key=settings.llm_api_key,
+            default_model=settings.default_llm_model or "router-llm-barrier",
+            timeout_seconds=settings.llm_timeout_seconds,
+            rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),
+            rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),
+            extra_headers=settings.llm_headers,
+            structured_output_method=settings.llm_structured_output_method,
+            barrier_enabled=True,
+        )
     if not settings.llm_connection_ready or settings.default_llm_model is None:
         logger.info(
             "Router LLM client disabled (base_url=%s, model=%s)",
