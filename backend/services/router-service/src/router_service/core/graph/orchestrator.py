@@ -57,6 +57,7 @@ from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.state_sync import GraphStateSync
 from router_service.core.graph.message_flow import GraphMessageFlow
 from router_service.core.shared.diagnostics import RouterDiagnostic, merge_diagnostics
+from router_service.core.support.trace_logging import current_trace_id, router_stage, router_trace
 
 
 logger = logging.getLogger(__name__)
@@ -241,15 +242,40 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
     ) -> GraphRouterSnapshot:
         """Delegate one user message turn into the message-flow state machine."""
-        return await self.message_flow.handle_user_message(
-            session_id,
-            cust_id,
-            content,
-            router_only=router_only,
-            guided_selection=guided_selection,
-            recommendation_context=recommendation_context,
-            proactive_recommendation=proactive_recommendation,
-        )
+        trace_details = {
+            "router_only": router_only,
+            "has_guided_selection": guided_selection is not None,
+            "has_recommendation_context": recommendation_context is not None,
+            "has_proactive_recommendation": proactive_recommendation is not None,
+        }
+        with router_trace(
+            logger,
+            entrypoint="handle_user_message",
+            session_id=session_id,
+            cust_id=cust_id,
+            content=content,
+            details=trace_details,
+        ):
+            with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
+                snapshot = await self.message_flow.handle_user_message(
+                    session_id,
+                    cust_id,
+                    content,
+                    router_only=router_only,
+                    guided_selection=guided_selection,
+                    recommendation_context=recommendation_context,
+                    proactive_recommendation=proactive_recommendation,
+                )
+            logger.info(
+                "Router message snapshot (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s)",
+                current_trace_id(),
+                snapshot.session_id,
+                snapshot.current_graph.status.value if snapshot.current_graph is not None else None,
+                snapshot.pending_graph.status.value if snapshot.pending_graph is not None else None,
+                snapshot.active_node_id,
+                len(snapshot.candidate_intents),
+            )
+            return snapshot
 
     async def analyze_user_message(
         self,
@@ -263,78 +289,129 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
     ) -> MessageAnalysisResult:
         """Compile one turn into recognition and slots without dispatching any agent."""
-        if proactive_recommendation is not None:
-            raise ValueError("analyze_only does not support proactive_recommendation yet")
+        trace_details = {
+            "analysis_mode": analysis_mode,
+            "has_guided_selection": guided_selection is not None,
+            "has_recommendation_context": recommendation_context is not None,
+            "has_proactive_recommendation": proactive_recommendation is not None,
+        }
+        with router_trace(
+            logger,
+            entrypoint="analyze_user_message",
+            session_id=session_id,
+            cust_id=cust_id,
+            content=content,
+            details=trace_details,
+        ):
+            if proactive_recommendation is not None:
+                raise ValueError("analyze_only does not support proactive_recommendation yet")
 
-        session = self.session_store.get_or_create(session_id, cust_id)
-        message_content = content.strip()
-        display_content = message_content or self._guided_selection_display_content(guided_selection)
+            session = self.session_store.get_or_create(session_id, cust_id)
+            message_content = content.strip()
+            display_content = message_content or self._guided_selection_display_content(guided_selection)
 
-        if analysis_mode == "intent_only":
-            recognition = await self.graph_compiler.recognize_only(
-                session,
-                message_content,
-                build_session_context=self._build_session_context,
-                sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
-                recommendation_context=recommendation_context,
-                emit_events=False,
+            if analysis_mode == "intent_only":
+                with router_stage(logger, "orchestrator.analyze.intent_only"):
+                    recognition = await self.graph_compiler.recognize_only(
+                        session,
+                        message_content,
+                        build_session_context=self._build_session_context,
+                        sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
+                        recommendation_context=recommendation_context,
+                        emit_events=False,
+                    )
+                logger.info(
+                    "Router analysis result (trace_id=%s, session_id=%s, analysis_mode=%s, primary_intents=%s, candidate_intents=%s, no_match=%s)",
+                    current_trace_id(),
+                    session.session_id,
+                    analysis_mode,
+                    len(recognition.primary),
+                    len(recognition.candidates),
+                    not recognition.primary,
+                )
+                return MessageAnalysisResult(
+                    session_id=session.session_id,
+                    cust_id=session.cust_id,
+                    content=display_content,
+                    recognition=recognition,
+                    graph=None,
+                    no_match=not recognition.primary,
+                    diagnostics=merge_diagnostics(recognition.diagnostics),
+                )
+
+            if guided_selection is not None:
+                with router_stage(logger, "orchestrator.analyze.guided_selection_graph"):
+                    graph = self.graph_compiler.build_guided_selection_graph(
+                        content=message_content,
+                        guided_selection=guided_selection,
+                    )
+                logger.info(
+                    "Router analysis result (trace_id=%s, session_id=%s, analysis_mode=%s, graph_nodes=%s, graph_status=%s)",
+                    current_trace_id(),
+                    session.session_id,
+                    analysis_mode,
+                    len(graph.nodes),
+                    graph.status.value,
+                )
+                return MessageAnalysisResult(
+                    session_id=session.session_id,
+                    cust_id=session.cust_id,
+                    content=display_content,
+                    recognition=RecognitionResult(primary=[], candidates=[], diagnostics=[]),
+                    graph=graph,
+                    no_match=False,
+                    diagnostics=[],
+                )
+
+            with router_stage(logger, "orchestrator.analyze.compile_message"):
+                compile_result = await self.graph_compiler.compile_message(
+                    session,
+                    message_content,
+                    build_session_context=self._build_session_context,
+                    sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
+                    recommendation_context=recommendation_context,
+                    emit_events=False,
+                )
+            if compile_result.graph is not None:
+                with router_stage(
+                    logger,
+                    "orchestrator.analyze.hydrate_graph_understanding",
+                    graph_id=compile_result.graph.graph_id,
+                    node_count=len(compile_result.graph.nodes),
+                ):
+                    await self._hydrate_analysis_graph_understanding(
+                        session,
+                        compile_result.graph,
+                        current_message=message_content,
+                    )
+            diagnostics = merge_diagnostics(
+                compile_result.diagnostics,
+                compile_result.graph.diagnostics if compile_result.graph is not None else [],
+                *(
+                    node.diagnostics
+                    for node in (compile_result.graph.nodes if compile_result.graph is not None else [])
+                ),
+            )
+            logger.info(
+                "Router analysis result (trace_id=%s, session_id=%s, analysis_mode=%s, primary_intents=%s, candidate_intents=%s, graph_nodes=%s, graph_status=%s, no_match=%s)",
+                current_trace_id(),
+                session.session_id,
+                analysis_mode,
+                len(compile_result.recognition.primary),
+                len(compile_result.recognition.candidates),
+                len(compile_result.graph.nodes) if compile_result.graph is not None else 0,
+                compile_result.graph.status.value if compile_result.graph is not None else None,
+                compile_result.no_match,
             )
             return MessageAnalysisResult(
                 session_id=session.session_id,
                 cust_id=session.cust_id,
                 content=display_content,
-                recognition=recognition,
-                graph=None,
-                no_match=not recognition.primary,
-                diagnostics=merge_diagnostics(recognition.diagnostics),
+                recognition=compile_result.recognition,
+                graph=compile_result.graph,
+                no_match=compile_result.no_match,
+                diagnostics=diagnostics,
             )
-
-        if guided_selection is not None:
-            graph = self.graph_compiler.build_guided_selection_graph(
-                content=message_content,
-                guided_selection=guided_selection,
-            )
-            return MessageAnalysisResult(
-                session_id=session.session_id,
-                cust_id=session.cust_id,
-                content=display_content,
-                recognition=RecognitionResult(primary=[], candidates=[], diagnostics=[]),
-                graph=graph,
-                no_match=False,
-                diagnostics=[],
-            )
-
-        compile_result = await self.graph_compiler.compile_message(
-            session,
-            message_content,
-            build_session_context=self._build_session_context,
-            sanitize_recent_messages_for_planning=self._sanitize_recent_messages_for_planning,
-            recommendation_context=recommendation_context,
-            emit_events=False,
-        )
-        if compile_result.graph is not None:
-            await self._hydrate_analysis_graph_understanding(
-                session,
-                compile_result.graph,
-                current_message=message_content,
-            )
-        diagnostics = merge_diagnostics(
-            compile_result.diagnostics,
-            compile_result.graph.diagnostics if compile_result.graph is not None else [],
-            *(
-                node.diagnostics
-                for node in (compile_result.graph.nodes if compile_result.graph is not None else [])
-            ),
-        )
-        return MessageAnalysisResult(
-            session_id=session.session_id,
-            cust_id=session.cust_id,
-            content=display_content,
-            recognition=compile_result.recognition,
-            graph=compile_result.graph,
-            no_match=compile_result.no_match,
-            diagnostics=diagnostics,
-        )
 
     async def _hydrate_analysis_graph_understanding(
         self,
@@ -514,118 +591,125 @@ class GraphRouterOrchestrator:
         3. otherwise pick the next ready node and run it
         4. repeat until no ready node remains
         """
-        if session.router_only_mode:
-            await self._drain_graph_router_only(session, seed_input)
-            return
-        graph = session.current_graph
-        if graph is None:
-            await self._publish_session_state(session, "session.idle")
-            return
-
-        iterations = 0
-        max_iterations = self._resolve_max_drain_iterations(graph)
-        while True:
-            iterations += 1
-            if iterations > max_iterations:
-                await self._fail_drain_graph(
-                    session,
-                    graph,
-                    max_iterations=max_iterations,
-                )
+        with router_stage(
+            logger,
+            "orchestrator.drain_graph",
+            router_only=session.router_only_mode,
+            current_graph_id=session.current_graph.graph_id if session.current_graph is not None else None,
+        ):
+            if session.router_only_mode:
+                await self._drain_graph_router_only(session, seed_input)
                 return
-            await self._refresh_graph_state(session, graph)
-            waiting_node = self._get_waiting_node(session)
-            if waiting_node is not None:
-                # Waiting nodes are surfaced at session level so the API/UI can
-                # immediately know whether to show a slot prompt or confirmation.
-                session.active_node_id = waiting_node.node_id
-                await self._publish_session_state(
-                    session,
-                    "session.waiting_confirmation"
-                    if waiting_node.status == GraphNodeStatus.WAITING_CONFIRMATION
-                    else "session.waiting_user_input",
-                )
-                await self._emit_graph_progress(session)
-                return
-
-            next_node = self._next_ready_node(graph)
-            if next_node is None:
-                # No waiting node and no ready node means the graph has naturally
-                # reached a terminal aggregate state such as completed/cancelled.
-                session.active_node_id = None
-                await self._emit_graph_progress(session)
+            graph = session.current_graph
+            if graph is None:
                 await self._publish_session_state(session, "session.idle")
                 return
 
-            session.active_node_id = next_node.node_id
-            await self._run_node(session, graph, next_node, seed_input)
+            iterations = 0
+            max_iterations = self._resolve_max_drain_iterations(graph)
+            while True:
+                iterations += 1
+                if iterations > max_iterations:
+                    await self._fail_drain_graph(
+                        session,
+                        graph,
+                        max_iterations=max_iterations,
+                    )
+                    return
+                await self._refresh_graph_state(session, graph)
+                waiting_node = self._get_waiting_node(session)
+                if waiting_node is not None:
+                    session.active_node_id = waiting_node.node_id
+                    await self._publish_session_state(
+                        session,
+                        "session.waiting_confirmation"
+                        if waiting_node.status == GraphNodeStatus.WAITING_CONFIRMATION
+                        else "session.waiting_user_input",
+                    )
+                    await self._emit_graph_progress(session)
+                    return
 
-            if next_node.status in TERMINAL_NODE_STATUSES:
-                continue
-            if next_node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}:
-                await self._emit_graph_progress(session)
-                await self._publish_session_state(
-                    session,
-                    "session.waiting_confirmation"
-                    if next_node.status == GraphNodeStatus.WAITING_CONFIRMATION
-                    else "session.waiting_user_input",
+                next_node = self._next_ready_node(graph)
+                if next_node is None:
+                    session.active_node_id = None
+                    await self._emit_graph_progress(session)
+                    await self._publish_session_state(session, "session.idle")
+                    return
+
+                session.active_node_id = next_node.node_id
+                await self._run_node(session, graph, next_node, seed_input)
+
+                if next_node.status in TERMINAL_NODE_STATUSES:
+                    continue
+                if next_node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}:
+                    await self._emit_graph_progress(session)
+                    await self._publish_session_state(
+                        session,
+                        "session.waiting_confirmation"
+                        if next_node.status == GraphNodeStatus.WAITING_CONFIRMATION
+                        else "session.waiting_user_input",
+                    )
+                    return
+                logger.warning(
+                    "Node %s (%s) exited run loop with unexpected status %s",
+                    next_node.node_id,
+                    next_node.intent_code,
+                    next_node.status,
                 )
                 return
-            logger.warning(
-                "Node %s (%s) exited run loop with unexpected status %s",
-                next_node.node_id,
-                next_node.intent_code,
-                next_node.status,
-            )
-            return
 
     async def _drain_graph_router_only(self, session: GraphSessionState, seed_input: str) -> None:
         """Advance the graph only through router understanding, stopping before agent execution."""
-        graph = session.current_graph
-        if graph is None:
-            await self._publish_session_state(session, "session.idle")
-            return
-
-        iterations = 0
-        max_iterations = self._resolve_max_drain_iterations(graph)
-        while True:
-            iterations += 1
-            if iterations > max_iterations:
-                await self._fail_drain_graph(
-                    session,
-                    graph,
-                    max_iterations=max_iterations,
-                )
-                return
-            await self._refresh_graph_state(session, graph)
-            waiting_node = self._get_waiting_node(session)
-            if waiting_node is not None:
-                session.active_node_id = waiting_node.node_id
-                await self._publish_session_state(
-                    session,
-                    "session.waiting_confirmation"
-                    if waiting_node.status == GraphNodeStatus.WAITING_CONFIRMATION
-                    else "session.waiting_user_input",
-                )
-                await self._emit_graph_progress(session)
-                return
-
-            next_node = self._next_ready_node(graph)
-            if next_node is None:
-                session.active_node_id = None
-                await self._emit_graph_progress(session)
+        with router_stage(
+            logger,
+            "orchestrator.drain_graph_router_only",
+            current_graph_id=session.current_graph.graph_id if session.current_graph is not None else None,
+        ):
+            graph = session.current_graph
+            if graph is None:
                 await self._publish_session_state(session, "session.idle")
                 return
 
-            session.active_node_id = next_node.node_id
-            if not await self._prepare_node_router_only(session, graph, next_node, dispatch_input=seed_input):
-                await self._emit_graph_progress(session)
-                await self._publish_session_state(session, "session.waiting_user_input")
-                return
+            iterations = 0
+            max_iterations = self._resolve_max_drain_iterations(graph)
+            while True:
+                iterations += 1
+                if iterations > max_iterations:
+                    await self._fail_drain_graph(
+                        session,
+                        graph,
+                        max_iterations=max_iterations,
+                    )
+                    return
+                await self._refresh_graph_state(session, graph)
+                waiting_node = self._get_waiting_node(session)
+                if waiting_node is not None:
+                    session.active_node_id = waiting_node.node_id
+                    await self._publish_session_state(
+                        session,
+                        "session.waiting_confirmation"
+                        if waiting_node.status == GraphNodeStatus.WAITING_CONFIRMATION
+                        else "session.waiting_user_input",
+                    )
+                    await self._emit_graph_progress(session)
+                    return
 
-            session.active_node_id = None
-            await self._publish_session_state(session, "session.ready_for_dispatch")
-            return
+                next_node = self._next_ready_node(graph)
+                if next_node is None:
+                    session.active_node_id = None
+                    await self._emit_graph_progress(session)
+                    await self._publish_session_state(session, "session.idle")
+                    return
+
+                session.active_node_id = next_node.node_id
+                if not await self._prepare_node_router_only(session, graph, next_node, dispatch_input=seed_input):
+                    await self._emit_graph_progress(session)
+                    await self._publish_session_state(session, "session.waiting_user_input")
+                    return
+
+                session.active_node_id = None
+                await self._publish_session_state(session, "session.ready_for_dispatch")
+                return
 
     def _resolve_max_drain_iterations(self, graph: ExecutionGraphState) -> int:
         """Return the guardrail threshold for one graph drain loop."""
@@ -676,74 +760,80 @@ class GraphRouterOrchestrator:
         user_input: str,
     ) -> None:
         """Dispatch one node to its backing intent agent and consume streamed chunks."""
-        task = self._get_task(session, node.task_id)
-        created_new_task = task is None
-        node_was_waiting = node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
-        if task is None:
-            task = await self._create_task_for_node(
-                session,
-                graph,
-                node,
-                dispatch_input=user_input,
-            )
+        with router_stage(
+            logger,
+            "orchestrator.run_node",
+            graph_id=graph.graph_id,
+            node_id=node.node_id,
+            intent_code=node.intent_code,
+            node_status=node.status.value,
+        ):
+            task = self._get_task(session, node.task_id)
+            created_new_task = task is None
+            node_was_waiting = node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
             if task is None:
-                return
+                task = await self._create_task_for_node(
+                    session,
+                    graph,
+                    node,
+                    dispatch_input=user_input,
+                )
+                if task is None:
+                    return
 
-        previous_initial_source_input = task.input_context.get("initial_source_input")
-        if not (isinstance(previous_initial_source_input, str) and previous_initial_source_input):
-            previous_initial_source_input = node.source_fragment or graph.source_message
-        # New tasks default to node source text, while resumed tasks consume the
-        # latest user utterance that unblocked the node.
-        effective_user_input = (
-            user_input
-            if created_new_task and node_was_waiting
-            else (node.source_fragment or user_input or graph.source_message)
-            if created_new_task
-            else user_input
-        )
-        task.input_context = self._build_graph_task_context(session, graph=graph, task=task)
-        task.input_context.update(
-            {
-                "graph_id": graph.graph_id,
-                "graph_version": graph.version,
-                "node_id": node.node_id,
-                "source_input": effective_user_input,
-                "initial_source_input": previous_initial_source_input,
-            }
-        )
-
-        task.touch(TaskStatus.DISPATCHING)
-        node.slot_memory = dict(task.slot_memory)
-        node.touch(GraphNodeStatus.RUNNING)
-        graph.touch(GraphStatus.RUNNING)
-        await self._publish_node_state(session, graph, node, task.status, "node.dispatching", "节点开始分发")
-
-        task.touch(TaskStatus.RUNNING)
-        await self._publish_node_state(session, graph, node, task.status, "node.running", "节点执行中")
-
-        try:
-            async with asyncio.timeout(self.config.agent_timeout_seconds):
-                async for chunk in self.agent_client.stream(task, effective_user_input):
-                    await self._handle_agent_chunk(session, graph, node, task, chunk)
-                    if chunk.status in {
-                        TaskStatus.WAITING_USER_INPUT,
-                        TaskStatus.WAITING_CONFIRMATION,
-                        TaskStatus.COMPLETED,
-                        TaskStatus.FAILED,
-                    }:
-                        break
-        except TimeoutError:
-            await self._fail_node(
-                session,
-                graph,
-                node,
-                task,
-                (
-                    f"节点执行超时（{self.config.agent_timeout_seconds:.0f}s），"
-                    "已自动终止，请稍后重试"
-                ),
-                payload={"timeout_seconds": self.config.agent_timeout_seconds},
+            previous_initial_source_input = task.input_context.get("initial_source_input")
+            if not (isinstance(previous_initial_source_input, str) and previous_initial_source_input):
+                previous_initial_source_input = node.source_fragment or graph.source_message
+            effective_user_input = (
+                user_input
+                if created_new_task and node_was_waiting
+                else (node.source_fragment or user_input or graph.source_message)
+                if created_new_task
+                else user_input
             )
+            task.input_context = self._build_graph_task_context(session, graph=graph, task=task)
+            task.input_context.update(
+                {
+                    "graph_id": graph.graph_id,
+                    "graph_version": graph.version,
+                    "node_id": node.node_id,
+                    "source_input": effective_user_input,
+                    "initial_source_input": previous_initial_source_input,
+                }
+            )
+
+            task.touch(TaskStatus.DISPATCHING)
+            node.slot_memory = dict(task.slot_memory)
+            node.touch(GraphNodeStatus.RUNNING)
+            graph.touch(GraphStatus.RUNNING)
+            await self._publish_node_state(session, graph, node, task.status, "node.dispatching", "节点开始分发")
+
+            task.touch(TaskStatus.RUNNING)
+            await self._publish_node_state(session, graph, node, task.status, "node.running", "节点执行中")
+
+            try:
+                async with asyncio.timeout(self.config.agent_timeout_seconds):
+                    async for chunk in self.agent_client.stream(task, effective_user_input):
+                        await self._handle_agent_chunk(session, graph, node, task, chunk)
+                        if chunk.status in {
+                            TaskStatus.WAITING_USER_INPUT,
+                            TaskStatus.WAITING_CONFIRMATION,
+                            TaskStatus.COMPLETED,
+                            TaskStatus.FAILED,
+                        }:
+                            break
+            except TimeoutError:
+                await self._fail_node(
+                    session,
+                    graph,
+                    node,
+                    task,
+                    (
+                        f"节点执行超时（{self.config.agent_timeout_seconds:.0f}s），"
+                        "已自动终止，请稍后重试"
+                    ),
+                    payload={"timeout_seconds": self.config.agent_timeout_seconds},
+                )
 
     async def _create_task_for_node(
         self,
@@ -913,30 +1003,46 @@ class GraphRouterOrchestrator:
         current_message: str,
     ) -> UnderstandingValidationResult:
         """Run router-side slot extraction/validation before agent dispatch."""
-        session_context = self._build_session_context(session)
-        memory_candidates = list(session_context["long_term_memory"])
-        # Expose historical slot values as lightweight textual memory so the slot
-        # extractor can reuse them without depending on a separate memory service.
-        history_slot_values = self._history_slot_values(
-            session,
-            long_term_memory=session_context["long_term_memory"],
-        )
-        for slot_key, value in history_slot_values.items():
-            candidate = f"{slot_key}={value}"
-            if candidate not in memory_candidates:
-                memory_candidates.append(candidate)
-        validation = await self.understanding_validator.validate_node(
-            intent=intent,
-            node=node,
-            graph_source_message=graph.source_message,
-            current_message=current_message,
-            long_term_memory=memory_candidates,
-        )
-        node.slot_memory = dict(validation.slot_memory)
-        node.slot_bindings = list(validation.slot_bindings)
-        node.history_slot_keys = list(validation.history_slot_keys)
-        node.diagnostics = list(validation.diagnostics or [])
-        return validation
+        with router_stage(
+            logger,
+            "orchestrator.validate_node_understanding",
+            graph_id=graph.graph_id,
+            node_id=node.node_id,
+            intent_code=intent.intent_code,
+        ):
+            session_context = self._build_session_context(session)
+            memory_candidates = list(session_context["long_term_memory"])
+            history_slot_values = self._history_slot_values(
+                session,
+                long_term_memory=session_context["long_term_memory"],
+            )
+            for slot_key, value in history_slot_values.items():
+                candidate = f"{slot_key}={value}"
+                if candidate not in memory_candidates:
+                    memory_candidates.append(candidate)
+            validation = await self.understanding_validator.validate_node(
+                intent=intent,
+                node=node,
+                graph_source_message=graph.source_message,
+                current_message=current_message,
+                long_term_memory=memory_candidates,
+            )
+            node.slot_memory = dict(validation.slot_memory)
+            node.slot_bindings = list(validation.slot_bindings)
+            node.history_slot_keys = list(validation.history_slot_keys)
+            node.diagnostics = list(validation.diagnostics or [])
+            logger.info(
+                "Router node understanding result (trace_id=%s, graph_id=%s, node_id=%s, intent_code=%s, can_dispatch=%s, missing_required_slots=%s, ambiguous_slot_keys=%s, invalid_slot_keys=%s)",
+                current_trace_id(),
+                graph.graph_id,
+                node.node_id,
+                intent.intent_code,
+                validation.can_dispatch,
+                validation.missing_required_slots,
+                validation.ambiguous_slot_keys,
+                validation.invalid_slot_keys,
+            )
+            return validation
 
     async def _mark_node_waiting_for_slots(
         self,

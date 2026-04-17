@@ -92,6 +92,7 @@ class Settings(BaseModel):
 
     app_name: str = Field(default="Intent Router API")
     env: str = Field(default="dev")
+    router_log_level: str = Field(default="INFO")
     repository_backend: Literal["memory", "database", "postgres", "file"] = Field(default="memory")
     database_url: str | None = Field(default=None)
     router_intent_catalog_file: str | None = Field(default=None)
@@ -146,6 +147,7 @@ class Settings(BaseModel):
         return cls(
             app_name=os.getenv("ROUTER_API_APP_NAME", "Intent Router API"),
             env=os.getenv("ROUTER_API_ENV", "dev"),
+            router_log_level=os.getenv("ROUTER_LOG_LEVEL", "INFO"),
             repository_backend=os.getenv("ROUTER_INTENT_CATALOG_BACKEND", os.getenv("ADMIN_REPOSITORY_BACKEND", "memory")),
             database_url=os.getenv("ROUTER_INTENT_CATALOG_DATABASE_URL")
             or os.getenv("ADMIN_DATABASE_URL")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import re
 from typing import Any, Callable, Literal
 
@@ -31,12 +32,15 @@ from router_service.core.shared.graph_domain import (
 )
 from router_service.core.graph.semantics import repair_unexecutable_condition_edges
 from router_service.core.graph.planner import IntentGraphPlanner, SequentialIntentGraphPlanner
+from router_service.core.support.trace_logging import current_trace_id, router_stage
 from router_service.models.intent import GraphConfirmPolicy
 
 
 SessionContextBuilder = Callable[[GraphSessionState], dict[str, Any]]
 RecentMessageSanitizer = Callable[[list[str]], list[str]]
 GraphPlanningPolicy = Literal["always", "never", "multi_intent_only", "auto"]
+
+logger = logging.getLogger(__name__)
 
 _COMPLEX_GRAPH_SIGNAL_PATTERNS = (
     re.compile(r"(如果|若|要是).*(就|则)"),
@@ -105,111 +109,138 @@ class GraphCompiler:
         5. repair condition edges
         6. inject proactive defaults and optional history prefill
         """
-        graph: ExecutionGraphState | None = None
-        if recognition is None and (recent_messages is None or long_term_memory is None):
-            context = build_session_context(session)
-            recent_messages = context["recent_messages"]
-            long_term_memory = context["long_term_memory"]
-        else:
-            recent_messages = recent_messages or []
-            long_term_memory = long_term_memory or []
-        if exclude_current_turn_from_context:
-            recent_messages = self._exclude_inflight_user_message(
-                message=content,
-                recent_messages=recent_messages,
-            )
-        recent_messages = sanitize_recent_messages_for_planning(recent_messages)
-        recent_messages = self.augment_recent_messages_with_recommendations(
-            recent_messages,
-            recommendation_context=recommendation_context,
-        )
-
-        if self.understanding_service.has_graph_builder and self.planning_policy == "always":
-            build_result = await self.understanding_service.build_graph_from_message(
-                session,
-                content,
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
-                recognition=recognition,
-                emit_events=emit_events,
-            )
-            recognition = build_result.recognition
-            graph = build_result.graph
-        elif recognition is None:
-            recognition = await self.understanding_service.recognize_message(
-                session,
-                content,
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
-                emit_events=emit_events,
-            )
-
-        recognition = recognition or RecognitionResult(primary=[], candidates=[], diagnostics=[])
-        active_intent_index = self.intent_catalog.active_intents_by_code()
-        matches = [match for match in recognition.primary if match.intent_code in active_intent_index]
-        intents_by_code = dict(active_intent_index)
-        diagnostics: list[RouterDiagnostic] = list(recognition.diagnostics or [])
-
-        if not matches:
-            # Fallback is a router-level escape hatch so unmatched requests can
-            # still be dispatched to a dedicated generic agent when configured.
-            fallback_intent = self.fallback_intent()
-            if fallback_intent is None:
-                diagnostics = merge_diagnostics(
-                    diagnostics,
-                    [
-                        diagnostic(
-                            RouterDiagnosticCode.ROUTER_NO_MATCH,
-                            source="compiler",
-                            message="当前消息未识别到可执行意图",
-                            details={"content": content},
-                        )
-                    ],
+        with router_stage(
+            logger,
+            "compiler.compile_message",
+            planning_policy=self.planning_policy,
+            has_recognition_hint=recognition is not None,
+            has_recent_messages=recent_messages is not None,
+            has_long_term_memory=long_term_memory is not None,
+            has_recommendation_context=recommendation_context is not None,
+            proactive_defaults=len(proactive_defaults or []),
+            skip_history_prefill=skip_history_prefill,
+            exclude_current_turn_from_context=exclude_current_turn_from_context,
+        ):
+            graph: ExecutionGraphState | None = None
+            if recognition is None and (recent_messages is None or long_term_memory is None):
+                context = build_session_context(session)
+                recent_messages = context["recent_messages"]
+                long_term_memory = context["long_term_memory"]
+            else:
+                recent_messages = recent_messages or []
+                long_term_memory = long_term_memory or []
+            if exclude_current_turn_from_context:
+                recent_messages = self._exclude_inflight_user_message(
+                    message=content,
+                    recent_messages=recent_messages,
                 )
-                return GraphCompilationResult(
+            recent_messages = sanitize_recent_messages_for_planning(recent_messages)
+            recent_messages = self.augment_recent_messages_with_recommendations(
+                recent_messages,
+                recommendation_context=recommendation_context,
+            )
+
+            if self.understanding_service.has_graph_builder and self.planning_policy == "always":
+                build_result = await self.understanding_service.build_graph_from_message(
+                    session,
+                    content,
+                    recent_messages=recent_messages,
+                    long_term_memory=long_term_memory,
                     recognition=recognition,
-                    graph=None,
-                    no_match=True,
-                    diagnostics=diagnostics,
+                    emit_events=emit_events,
                 )
-            matches = [IntentMatch(intent_code=fallback_intent.intent_code, confidence=0.0, reason="fallback")]
-            intents_by_code[fallback_intent.intent_code] = fallback_intent
+                recognition = build_result.recognition
+                graph = build_result.graph
+            elif recognition is None:
+                recognition = await self.understanding_service.recognize_message(
+                    session,
+                    content,
+                    recent_messages=recent_messages,
+                    long_term_memory=long_term_memory,
+                    emit_events=emit_events,
+                )
 
-        if graph is None:
-            graph = await self._plan_graph(
-                message=content,
-                matches=matches,
-                intents_by_code=intents_by_code,
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
+            recognition = recognition or RecognitionResult(primary=[], candidates=[], diagnostics=[])
+            active_intent_index = self.intent_catalog.active_intents_by_code()
+            matches = [match for match in recognition.primary if match.intent_code in active_intent_index]
+            intents_by_code = dict(active_intent_index)
+            diagnostics: list[RouterDiagnostic] = list(recognition.diagnostics or [])
+
+            if not matches:
+                fallback_intent = self.fallback_intent()
+                if fallback_intent is None:
+                    diagnostics = merge_diagnostics(
+                        diagnostics,
+                        [
+                            diagnostic(
+                                RouterDiagnosticCode.ROUTER_NO_MATCH,
+                                source="compiler",
+                                message="当前消息未识别到可执行意图",
+                                details={"content": content},
+                            )
+                        ],
+                    )
+                    logger.info(
+                        "Compiler result (trace_id=%s, session_id=%s, no_match=%s, primary_intents=%s, candidate_intents=%s)",
+                        current_trace_id(),
+                        session.session_id,
+                        True,
+                        len(recognition.primary),
+                        len(recognition.candidates),
+                    )
+                    return GraphCompilationResult(
+                        recognition=recognition,
+                        graph=None,
+                        no_match=True,
+                        diagnostics=diagnostics,
+                    )
+                matches = [IntentMatch(intent_code=fallback_intent.intent_code, confidence=0.0, reason="fallback")]
+                intents_by_code[fallback_intent.intent_code] = fallback_intent
+
+            if graph is None:
+                graph = await self._plan_graph(
+                    message=content,
+                    matches=matches,
+                    intents_by_code=intents_by_code,
+                    recent_messages=recent_messages,
+                    long_term_memory=long_term_memory,
+                )
+            diagnostics = merge_diagnostics(
+                diagnostics,
+                graph.diagnostics,
             )
-        diagnostics = merge_diagnostics(
-            diagnostics,
-            graph.diagnostics,
-        )
-        repair_unexecutable_condition_edges(graph=graph, intents_by_code=intents_by_code)
-        self.slot_resolution_service.apply_proactive_slot_defaults(
-            graph,
-            selected_items=proactive_defaults or [],
-            proactive_recommendation=proactive_recommendation,
-            intents_by_code=intents_by_code,
-        )
-        if not skip_history_prefill:
-            self.slot_resolution_service.apply_history_prefill_policy(
-                session,
+            repair_unexecutable_condition_edges(graph=graph, intents_by_code=intents_by_code)
+            self.slot_resolution_service.apply_proactive_slot_defaults(
                 graph,
-                source_message=content,
+                selected_items=proactive_defaults or [],
+                proactive_recommendation=proactive_recommendation,
                 intents_by_code=intents_by_code,
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
             )
+            if not skip_history_prefill:
+                self.slot_resolution_service.apply_history_prefill_policy(
+                    session,
+                    graph,
+                    source_message=content,
+                    intents_by_code=intents_by_code,
+                    recent_messages=recent_messages,
+                    long_term_memory=long_term_memory,
+                )
 
-        return GraphCompilationResult(
-            recognition=recognition,
-            graph=graph,
-            no_match=False,
-            diagnostics=diagnostics,
-        )
+            logger.info(
+                "Compiler result (trace_id=%s, session_id=%s, primary_intents=%s, candidate_intents=%s, graph_nodes=%s, graph_status=%s)",
+                current_trace_id(),
+                session.session_id,
+                len(recognition.primary),
+                len(recognition.candidates),
+                len(graph.nodes),
+                graph.status.value,
+            )
+            return GraphCompilationResult(
+                recognition=recognition,
+                graph=graph,
+                no_match=False,
+                diagnostics=diagnostics,
+            )
 
     def _exclude_inflight_user_message(
         self,
@@ -243,19 +274,32 @@ class GraphCompiler:
         emit_events: bool = False,
     ) -> RecognitionResult:
         """Run intent recognition only, without planning, graph building, or slot hydration."""
-        context = build_session_context(session)
-        recent_messages = sanitize_recent_messages_for_planning(context["recent_messages"])
-        recent_messages = self.augment_recent_messages_with_recommendations(
-            recent_messages,
-            recommendation_context=recommendation_context,
-        )
-        return await self.understanding_service.recognize_message(
-            session,
-            content,
-            recent_messages=recent_messages,
-            long_term_memory=context["long_term_memory"],
-            emit_events=emit_events,
-        )
+        with router_stage(
+            logger,
+            "compiler.recognize_only",
+            has_recommendation_context=recommendation_context is not None,
+        ):
+            context = build_session_context(session)
+            recent_messages = sanitize_recent_messages_for_planning(context["recent_messages"])
+            recent_messages = self.augment_recent_messages_with_recommendations(
+                recent_messages,
+                recommendation_context=recommendation_context,
+            )
+            recognition = await self.understanding_service.recognize_message(
+                session,
+                content,
+                recent_messages=recent_messages,
+                long_term_memory=context["long_term_memory"],
+                emit_events=emit_events,
+            )
+            logger.info(
+                "Recognize-only result (trace_id=%s, session_id=%s, primary_intents=%s, candidate_intents=%s)",
+                current_trace_id(),
+                session.session_id,
+                len(recognition.primary),
+                len(recognition.candidates),
+            )
+            return recognition
 
     async def _plan_graph(
         self,
@@ -267,21 +311,33 @@ class GraphCompiler:
         long_term_memory: list[str],
     ) -> ExecutionGraphState:
         """Choose between heavy planning and deterministic fallback planning."""
-        planner = (
-            self.planner
-            if self._should_use_heavy_planner(message=message, matches=matches)
-            else self.fallback_planner
-        )
-        graph = await planner.plan(
-            message=message,
-            matches=matches,
-            intents_by_code=intents_by_code,
-            recent_messages=recent_messages,
-            long_term_memory=long_term_memory,
-        )
-        if planner is self.fallback_planner:
-            self._apply_single_node_confirmation_policy(graph=graph, intents_by_code=intents_by_code)
-        return graph
+        use_heavy_planner = self._should_use_heavy_planner(message=message, matches=matches)
+        planner = self.planner if use_heavy_planner else self.fallback_planner
+        with router_stage(
+            logger,
+            "compiler.plan_graph",
+            planner=planner.__class__.__name__,
+            use_heavy_planner=use_heavy_planner,
+            match_count=len(matches),
+        ):
+            graph = await planner.plan(
+                message=message,
+                matches=matches,
+                intents_by_code=intents_by_code,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+            )
+            if planner is self.fallback_planner:
+                self._apply_single_node_confirmation_policy(graph=graph, intents_by_code=intents_by_code)
+            logger.info(
+                "Planner result (trace_id=%s, planner=%s, graph_id=%s, graph_nodes=%s, graph_status=%s)",
+                current_trace_id(),
+                planner.__class__.__name__,
+                graph.graph_id,
+                len(graph.nodes),
+                graph.status.value,
+            )
+            return graph
 
     def _should_use_heavy_planner(
         self,

@@ -3,6 +3,7 @@
 当前优先阅读：
 
 - `router-service开发架构与代码导读.md`
+- `router-service多轮提槽记忆机制详解.md`
 - `router-service代码评审改造方案设计.md`
 - `intent-router-prd.md`
 - `意图设计.md`

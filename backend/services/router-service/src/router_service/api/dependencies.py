@@ -110,6 +110,12 @@ def build_router_runtime() -> RouterRuntime:
     """Assemble the full router runtime from repository, LLM, graph, and agent components."""
     settings = get_settings()
     planning_policy = getattr(settings, "router_v2_planning_policy", "auto")
+    logger.info(
+        "Building router runtime dependencies (catalog_backend=%s, llm_model=%s, recognizer_model=%s)",
+        settings.repository_backend,
+        settings.llm_model,
+        settings.llm_recognizer_model or settings.llm_model,
+    )
     session_store = GraphSessionStore(
         long_term_memory=LongTermMemoryStore(
             fact_limit=getattr(settings, "router_long_term_memory_fact_limit", 100)
@@ -235,7 +241,19 @@ def _build_llm_client() -> LangChainLLMClient | None:
     """Create the shared LLM client when the required connection settings are present."""
     settings = get_settings()
     if not settings.llm_connection_ready or settings.default_llm_model is None:
+        logger.info(
+            "Router LLM client disabled (base_url=%s, model=%s)",
+            bool(settings.llm_api_base_url),
+            settings.default_llm_model,
+        )
         return None
+    logger.info(
+        "Router LLM client enabled (base_url=%s, model=%s, structured_output_method=%s, auth_http_client=%s)",
+        settings.llm_api_base_url,
+        settings.default_llm_model,
+        settings.llm_structured_output_method,
+        settings.llm_auth_http_client_enabled,
+    )
     http_async_client = (
         AuthHTTPClient(timeout=settings.llm_timeout_seconds)
         if settings.llm_auth_http_client_enabled

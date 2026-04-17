@@ -1,12 +1,9 @@
 import logging
 
+from router_service.logging_utils import bootstrap_router_logging
 
-logging.getLogger("router_service").setLevel(logging.INFO)
-if not logging.getLogger().handlers:
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
+
+bootstrap_router_logging()
 
 app = None
 
