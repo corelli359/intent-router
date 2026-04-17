@@ -37,6 +37,19 @@ class RecognitionResult:
     diagnostics: list[RouterDiagnostic] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _HeuristicIntentSpec:
+    """Pre-normalized intent metadata reused across heuristic recognition calls."""
+
+    intent_code: str
+    dispatch_priority: int
+    primary_threshold: float
+    candidate_threshold: float
+    candidate_texts: tuple[tuple[str, str], ...]
+    has_currency_slot: bool
+    has_required_slots: bool
+
+
 def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
     """Convert one intent definition into the JSON payload consumed by the LLM prompt."""
     field_catalog = getattr(intent, "field_catalog", []) or []
@@ -110,6 +123,7 @@ class HeuristicIntentRecognizer:
         self.minimum_similarity = minimum_similarity
         self.currency_slot_boost = currency_slot_boost
         self.required_slot_boost = required_slot_boost
+        self._catalog_specs_cache: dict[tuple[int, ...], tuple[_HeuristicIntentSpec, ...]] = {}
 
     async def recognize(
         self,
@@ -125,15 +139,18 @@ class HeuristicIntentRecognizer:
         if not message_text:
             return RecognitionResult(primary=[], candidates=[], diagnostics=[])
 
-        matches: list[IntentMatch] = []
         active_intents = [intent for intent in intents if intent.status == "active"]
-        for intent in active_intents:
-            confidence, best_text = self._score_intent(message_text=message_text, intent=intent)
+        if not active_intents:
+            return RecognitionResult(primary=[], candidates=[], diagnostics=[])
+        specs = self._resolve_specs(active_intents)
+        matches: list[IntentMatch] = []
+        for spec in specs:
+            confidence, best_text = self._score_spec(message_text=message_text, spec=spec)
             if confidence < self.minimum_similarity:
                 continue
             matches.append(
                 IntentMatch(
-                    intent_code=intent.intent_code,
+                    intent_code=spec.intent_code,
                     confidence=confidence,
                     reason=(
                         f"heuristic matched catalog text {best_text!r}"
@@ -143,34 +160,79 @@ class HeuristicIntentRecognizer:
                 )
             )
 
+        specs_by_code = {spec.intent_code: spec for spec in specs}
+
         def _sort_key(match: IntentMatch) -> tuple[int, float]:
-            intent = next((item for item in active_intents if item.intent_code == match.intent_code), None)
-            return ((intent.dispatch_priority if intent is not None else 0), match.confidence)
+            spec = specs_by_code.get(match.intent_code)
+            return ((spec.dispatch_priority if spec is not None else 0), match.confidence)
 
         matches.sort(key=_sort_key, reverse=True)
-        primary = [match for match in matches if self._confidence_threshold(match, active_intents, "primary")]
-        candidates = [match for match in matches if match not in primary and self._confidence_threshold(match, active_intents, "candidate")]
+        primary = [
+            match
+            for match in matches
+            if self._confidence_threshold(match, specs_by_code, "primary")
+        ]
+        candidates = [
+            match
+            for match in matches
+            if match not in primary and self._confidence_threshold(match, specs_by_code, "candidate")
+        ]
         return RecognitionResult(primary=primary, candidates=candidates, diagnostics=[])
 
-    def _score_intent(self, *, message_text: str, intent: IntentDefinition) -> tuple[float, str | None]:
+    def _resolve_specs(self, active_intents: list[IntentDefinition]) -> tuple[_HeuristicIntentSpec, ...]:
+        """Build or reuse pre-normalized heuristic specs for one active catalog snapshot."""
+        cache_key = tuple(id(intent) for intent in active_intents)
+        cached = self._catalog_specs_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        specs = tuple(self._build_spec(intent) for intent in active_intents)
+        if len(self._catalog_specs_cache) >= 8:
+            self._catalog_specs_cache.clear()
+        self._catalog_specs_cache[cache_key] = specs
+        return specs
+
+    def _build_spec(self, intent: IntentDefinition) -> _HeuristicIntentSpec:
+        """Normalize the subset of intent metadata used by heuristic recognition."""
+        return _HeuristicIntentSpec(
+            intent_code=intent.intent_code,
+            dispatch_priority=intent.dispatch_priority,
+            primary_threshold=intent.primary_threshold,
+            candidate_threshold=intent.candidate_threshold,
+            candidate_texts=tuple(
+                (candidate_text, _normalize_text(candidate_text))
+                for candidate_text in self._candidate_texts(intent)
+            ),
+            has_currency_slot=any(
+                slot.slot_key == "amount" or str(slot.value_type) == "currency"
+                for slot in intent.slot_schema
+            ),
+            has_required_slots=any(slot.required for slot in intent.slot_schema),
+        )
+
+    def _score_spec(
+        self,
+        *,
+        message_text: str,
+        spec: _HeuristicIntentSpec,
+    ) -> tuple[float, str | None]:
         best_similarity = 0.0
         best_text: str | None = None
-        for candidate_text in self._candidate_texts(intent):
-            similarity = self._text_similarity(message_text=message_text, candidate_text=_normalize_text(candidate_text))
+        for original_text, normalized_text in spec.candidate_texts:
+            similarity = self._text_similarity(
+                message_text=message_text,
+                candidate_text=normalized_text,
+            )
             if similarity > best_similarity:
                 best_similarity = similarity
-                best_text = candidate_text
+                best_text = original_text
 
         if best_similarity <= 0:
             return 0.0, best_text
 
         score = best_similarity
-        if any(character.isdigit() for character in message_text) and any(
-            slot.slot_key == "amount" or str(slot.value_type) == "currency"
-            for slot in intent.slot_schema
-        ):
+        if any(character.isdigit() for character in message_text) and spec.has_currency_slot:
             score += self.currency_slot_boost
-        if intent.slot_schema and any(slot.required for slot in intent.slot_schema):
+        if spec.has_required_slots:
             score += self.required_slot_boost
         return round(min(0.99, score), 2), best_text
 
@@ -191,13 +253,13 @@ class HeuristicIntentRecognizer:
     def _confidence_threshold(
         self,
         match: IntentMatch,
-        intents: list[IntentDefinition],
+        specs_by_code: dict[str, _HeuristicIntentSpec],
         kind: str,
     ) -> bool:
-        intent = next((item for item in intents if item.intent_code == match.intent_code), None)
-        if intent is None:
+        spec = specs_by_code.get(match.intent_code)
+        if spec is None:
             return False
-        threshold = intent.primary_threshold if kind == "primary" else intent.candidate_threshold
+        threshold = spec.primary_threshold if kind == "primary" else spec.candidate_threshold
         return match.confidence >= threshold
 
     def _text_similarity(self, *, message_text: str, candidate_text: str) -> float:

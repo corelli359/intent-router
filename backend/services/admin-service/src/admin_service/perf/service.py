@@ -17,6 +17,7 @@ from admin_service.perf.models import (
     PerfRunProgress,
     PerfStageResult,
     PerfTestCaseDefinition,
+    PerfTestCaseRuntimeOverride,
     PerfTestCreateRunRequest,
     PerfTestRunDetail,
     PerfTestRunStatus,
@@ -68,7 +69,7 @@ class PerfTestService:
         return self._registry.get_run(run_id)
 
     async def create_run(self, request: PerfTestCreateRunRequest) -> PerfTestRunDetail:
-        case = self._case_catalog.get_case(request.case_id)
+        case = self._resolve_case(request.case_id, request.case_override)
         plan = [step.model_copy(deep=True) for step in (request.ladder_steps or case.default_steps)]
         if not plan:
             raise RuntimeError(f"perf test case has no default steps: {case.case_id}")
@@ -83,6 +84,9 @@ class PerfTestService:
             created_at=created_at,
             updated_at=created_at,
             progress=PerfRunProgress(total_stages=len(plan)),
+            session_request=dict(case.session_request),
+            message_request=dict(case.message_request),
+            expectations=case.expectations.model_copy(deep=True),
             ladder_steps=plan,
             step_results=[
                 PerfStageResult(
@@ -111,6 +115,31 @@ class PerfTestService:
         )
         self._registry.set_task(run.run_id, task)
         return self._registry.get_run(run.run_id)
+
+    async def cancel_run(self, run_id: str) -> PerfTestRunDetail:
+        run = self._registry.get_run(run_id)
+        if run.status in {
+            PerfTestRunStatus.COMPLETED,
+            PerfTestRunStatus.FAILED,
+            PerfTestRunStatus.CANCELLED,
+        }:
+            return run
+
+        task = self._registry.get_task(run_id)
+        if task is None:
+            self._registry.update_run(
+                run_id,
+                lambda current: self._finalize_run_cancelled(current, "task_missing"),
+            )
+            return self._registry.get_run(run_id)
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        return self._registry.get_run(run_id)
 
     async def wait_for_run(self, run_id: str, timeout_seconds: float = 10.0) -> PerfTestRunDetail:
         task = self._registry.get_task(run_id)
@@ -146,6 +175,12 @@ class PerfTestService:
                         max_failed_samples=max_failed_samples,
                     )
             self._registry.update_run(run_id, self._finalize_run_success)
+        except asyncio.CancelledError:
+            self._registry.update_run(
+                run_id,
+                lambda run: self._finalize_run_cancelled(run, "cancelled_by_admin"),
+            )
+            raise
         except Exception as exc:
             self._registry.update_run(
                 run_id,
@@ -369,6 +404,7 @@ class PerfTestService:
         run.started_at = run.started_at or now
         run.updated_at = now
         run.progress.last_heartbeat_at = now
+        run.progress.elapsed_sec = self._calculate_elapsed_from_created(run, now)
 
     def _mark_step_started(
         self,
@@ -431,11 +467,7 @@ class PerfTestService:
         run.aggregate_metrics = self._aggregate_metrics(run.step_results)
         run.updated_at = self._utcnow()
         run.progress.last_heartbeat_at = run.updated_at
-        run.progress.elapsed_sec = (
-            (run.updated_at - run.started_at).total_seconds()
-            if run.started_at is not None
-            else None
-        )
+        run.progress.elapsed_sec = self._calculate_elapsed_from_created(run, run.updated_at)
 
     def _mark_step_finished(
         self,
@@ -464,11 +496,7 @@ class PerfTestService:
         )
         run.updated_at = self._utcnow()
         run.progress.last_heartbeat_at = run.updated_at
-        run.progress.elapsed_sec = (
-            (run.updated_at - run.started_at).total_seconds()
-            if run.started_at is not None
-            else None
-        )
+        run.progress.elapsed_sec = self._calculate_elapsed_from_created(run, run.updated_at)
 
     def _finalize_run_success(self, run: PerfTestRunDetail) -> None:
         run.finished_at = self._utcnow()
@@ -480,11 +508,7 @@ class PerfTestService:
         )
         run.progress.total_stages = len(run.step_results)
         run.progress.last_heartbeat_at = run.finished_at
-        run.progress.elapsed_sec = (
-            (run.finished_at - run.started_at).total_seconds()
-            if run.started_at is not None
-            else None
-        )
+        run.progress.elapsed_sec = self._calculate_elapsed_from_created(run, run.finished_at)
         if any(item.status == PerfTestStepStatus.FAILED for item in run.step_results):
             run.status = PerfTestRunStatus.FAILED
         else:
@@ -502,11 +526,7 @@ class PerfTestService:
         )
         run.progress.total_stages = len(run.step_results)
         run.progress.last_heartbeat_at = run.finished_at
-        run.progress.elapsed_sec = (
-            (run.finished_at - run.started_at).total_seconds()
-            if run.started_at is not None
-            else None
-        )
+        run.progress.elapsed_sec = self._calculate_elapsed_from_created(run, run.finished_at)
         if len(run.error_samples) < 200:
             run.error_samples.append(
                 PerfFailureSample(
@@ -516,6 +536,50 @@ class PerfTestService:
                     error_type="run_execution_error",
                     message=message,
                     occurred_at=run.finished_at,
+                )
+            )
+        run.aggregate_metrics = self._aggregate_metrics(run.step_results)
+
+    def _finalize_run_cancelled(self, run: PerfTestRunDetail, reason: str) -> None:
+        now = self._utcnow()
+        current_stage_index = run.progress.current_stage_index
+        if current_stage_index is not None and 0 <= current_stage_index < len(run.step_results):
+            current_stage = run.step_results[current_stage_index]
+            if current_stage.status == PerfTestStepStatus.RUNNING:
+                current_stage.status = PerfTestStepStatus.CANCELLED
+                current_stage.finished_at = now
+                if current_stage.started_at is not None:
+                    current_stage.metrics = self._finalize_metrics(
+                        current=current_stage.metrics,
+                        latencies_ms=list(current_stage.latency_samples_ms),
+                        wall_time_ms=max((now - current_stage.started_at).total_seconds() * 1000, 0.0),
+                    )
+
+        for stage in run.step_results:
+            if stage.status == PerfTestStepStatus.PENDING:
+                stage.status = PerfTestStepStatus.CANCELLED
+                stage.finished_at = now
+
+        run.finished_at = now
+        run.updated_at = now
+        run.status = PerfTestRunStatus.CANCELLED
+        run.progress.current_stage_index = None
+        run.progress.current_stage_name = None
+        run.progress.completed_stages = len(
+            [item for item in run.step_results if item.status == PerfTestStepStatus.COMPLETED]
+        )
+        run.progress.total_stages = len(run.step_results)
+        run.progress.last_heartbeat_at = now
+        run.progress.elapsed_sec = self._calculate_elapsed_from_created(run, now)
+        if len(run.error_samples) < 200:
+            run.error_samples.append(
+                PerfFailureSample(
+                    sample_id=f"{run.run_id}-cancelled",
+                    stage_name=None,
+                    step_index=current_stage_index,
+                    error_type="run_cancelled",
+                    message=reason,
+                    occurred_at=now,
                 )
             )
         run.aggregate_metrics = self._aggregate_metrics(run.step_results)
@@ -720,6 +784,30 @@ class PerfTestService:
 
     def _utcnow(self) -> datetime:
         return datetime.now(UTC)
+
+    def _calculate_elapsed_from_created(self, run: PerfTestRunDetail, now: datetime) -> float:
+        return max((now - run.created_at).total_seconds(), 0.0)
+
+    def _resolve_case(
+        self,
+        case_id: str,
+        case_override: PerfTestCaseRuntimeOverride | None,
+    ) -> PerfTestCaseDefinition:
+        base_case = self._case_catalog.get_case(case_id)
+        if case_override is None:
+            return base_case
+
+        merged_payload = base_case.model_dump(mode="python")
+        if case_override.session_request is not None:
+            merged_payload["session_request"] = dict(case_override.session_request)
+        if case_override.message_request is not None:
+            merged_payload["message_request"] = dict(case_override.message_request)
+        if case_override.expectations is not None:
+            merged_expectations = base_case.expectations.model_dump(mode="python")
+            for key, value in case_override.expectations.model_dump(exclude_none=True).items():
+                merged_expectations[key] = value
+            merged_payload["expectations"] = merged_expectations
+        return PerfTestCaseDefinition.model_validate(merged_payload)
 
     def _percentile(self, values: list[float], percentile: int) -> float | None:
         if not values:

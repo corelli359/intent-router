@@ -178,6 +178,16 @@ export interface PerfMetrics {
   errorTypeBreakdown?: Record<string, number>;
 }
 
+export interface PerfTestExpectation {
+  sessionStatusCode?: number | null;
+  messageStatusCode?: number | null;
+  requiredGraphStatus?: string | null;
+  requiredMessageContains?: string[];
+  requiredPrimaryIntentCode?: string | null;
+  requiredSlotKeys?: string[];
+  requiredSlotValues?: Record<string, unknown>;
+}
+
 export interface PerfTestStepInput {
   name?: string;
   concurrency: number;
@@ -207,6 +217,9 @@ export interface PerfTestCase {
   category?: string;
   tags?: string[];
   targetRoute?: string;
+  sessionRequest?: Record<string, unknown>;
+  messageRequest?: Record<string, unknown>;
+  expectations?: PerfTestExpectation;
   defaultSteps: PerfTestStepInput[];
   notes?: string[];
 }
@@ -216,6 +229,7 @@ export interface PerfTestRunSummary {
   caseId: string;
   caseName?: string;
   status: PerfRunStatus;
+  createdAt?: string | null;
   startedAt?: string | null;
   updatedAt?: string | null;
   finishedAt?: string | null;
@@ -253,12 +267,22 @@ export interface PerfStageResult {
 export interface PerfTestRunDetail extends PerfTestRunSummary {
   targetBaseUrl?: string | null;
   progress: PerfRunProgress;
+  sessionRequest?: Record<string, unknown>;
+  messageRequest?: Record<string, unknown>;
+  expectations?: PerfTestExpectation;
   ladderSteps: PerfTestStepInput[];
   stepResults: PerfStageResult[];
   errorSamples: PerfFailureSample[];
 }
 
+export interface PerfTestCaseOverride {
+  sessionRequest?: Record<string, unknown>;
+  messageRequest?: Record<string, unknown>;
+  expectations?: PerfTestExpectation;
+}
+
 export interface PerfTestRunCreateInput {
   caseId: string;
   ladderSteps: PerfTestStepInput[];
+  caseOverride?: PerfTestCaseOverride;
 }

@@ -240,7 +240,8 @@ class GraphRouterOrchestrator:
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
-    ) -> GraphRouterSnapshot:
+        return_snapshot: bool = True,
+    ) -> GraphRouterSnapshot | None:
         """Delegate one user message turn into the message-flow state machine."""
         trace_details = {
             "router_only": router_only,
@@ -265,15 +266,16 @@ class GraphRouterOrchestrator:
                     guided_selection=guided_selection,
                     recommendation_context=recommendation_context,
                     proactive_recommendation=proactive_recommendation,
+                    return_snapshot=return_snapshot,
                 )
             logger.info(
                 "Router message snapshot (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s)",
                 current_trace_id(),
-                snapshot.session_id,
-                snapshot.current_graph.status.value if snapshot.current_graph is not None else None,
-                snapshot.pending_graph.status.value if snapshot.pending_graph is not None else None,
-                snapshot.active_node_id,
-                len(snapshot.candidate_intents),
+                session_id,
+                snapshot.current_graph.status.value if snapshot is not None and snapshot.current_graph is not None else None,
+                snapshot.pending_graph.status.value if snapshot is not None and snapshot.pending_graph is not None else None,
+                snapshot.active_node_id if snapshot is not None else None,
+                len(snapshot.candidate_intents) if snapshot is not None else len(self.session_store.get(session_id).candidate_intents),
             )
             return snapshot
 
@@ -472,7 +474,8 @@ class GraphRouterOrchestrator:
         task_id: str | None = None,
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
-    ) -> GraphRouterSnapshot:
+        return_snapshot: bool = True,
+    ) -> GraphRouterSnapshot | None:
         """Delegate one explicit graph action into the action-flow state machine."""
         return await self.action_flow.handle_action(
             session_id=session_id,
@@ -482,6 +485,7 @@ class GraphRouterOrchestrator:
             task_id=task_id,
             confirm_token=confirm_token,
             payload=payload,
+            return_snapshot=return_snapshot,
         )
 
     async def _route_new_message(

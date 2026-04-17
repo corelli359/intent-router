@@ -52,3 +52,14 @@ def get_perf_test_run(
         return service.get_run(run_id)
     except PerfTestRunNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/cancel", response_model=PerfTestRunDetail)
+async def cancel_perf_test_run(
+    run_id: str,
+    service: PerfTestService = Depends(get_perf_test_service),
+) -> PerfTestRunDetail:
+    try:
+        return await service.cancel_run(run_id)
+    except PerfTestRunNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

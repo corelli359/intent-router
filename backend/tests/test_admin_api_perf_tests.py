@@ -157,7 +157,11 @@ async def _poll_run_until_terminal(client: httpx.AsyncClient, run_id: str) -> di
         response = await client.get(f"/api/admin/perf-tests/runs/{run_id}")
         assert response.status_code == 200
         payload = response.json()
-        if payload["status"] in {PerfTestRunStatus.COMPLETED, PerfTestRunStatus.FAILED}:
+        if payload["status"] in {
+            PerfTestRunStatus.COMPLETED,
+            PerfTestRunStatus.FAILED,
+            PerfTestRunStatus.CANCELLED,
+        }:
             return payload
         await asyncio.sleep(0.01)
     raise AssertionError(f"run did not finish in time: {run_id}")
@@ -244,6 +248,56 @@ def test_perf_service_records_failed_validation_samples() -> None:
     asyncio.run(run())
 
 
+def test_perf_service_supports_case_override_and_cancel() -> None:
+    async def run() -> None:
+        override_target = _MockRouterTarget(response_primary_intent_code="AG_MENU_21")
+        override_service = _build_perf_service(override_target)
+
+        overridden = await override_service.create_run(
+            PerfTestCreateRunRequest(
+                case_id="transfer-intent-slot-analysis",
+                case_override={
+                    "message_request": {
+                        "content": "给小红转800元",
+                        "executionMode": "analyze_only",
+                    },
+                    "expectations": {
+                        "required_primary_intent_code": "AG_MENU_21",
+                        "required_slot_keys": [],
+                        "required_slot_values": {},
+                    },
+                },
+                ladder_steps=[PerfTestStepPlan(concurrency=1, duration_sec=0.02, timeout_ms=1000)],
+            )
+        )
+        override_completed = await override_service.wait_for_run(overridden.run_id, timeout_seconds=5)
+        assert override_completed.status == PerfTestRunStatus.COMPLETED
+        assert override_completed.message_request["content"] == "给小红转800元"
+        assert override_completed.expectations.required_primary_intent_code == "AG_MENU_21"
+
+        cancel_target = _MockRouterTarget(delay_seconds=0.2)
+        cancel_service = _build_perf_service(cancel_target)
+        created = await cancel_service.create_run(
+            PerfTestCreateRunRequest(
+                case_id="transfer-intent-slot-analysis",
+                ladder_steps=[PerfTestStepPlan(concurrency=2, duration_sec=1.0, timeout_ms=1000)],
+            )
+        )
+
+        await asyncio.sleep(0.02)
+        cancelled = await cancel_service.cancel_run(created.run_id)
+        assert cancelled.status == PerfTestRunStatus.CANCELLED
+        assert cancelled.finished_at is not None
+        assert cancelled.progress.elapsed_sec is not None
+        assert cancelled.progress.elapsed_sec >= 0
+        assert all(
+            stage.status in {PerfTestStepStatus.COMPLETED, PerfTestStepStatus.CANCELLED}
+            for stage in cancelled.step_results
+        )
+
+    asyncio.run(run())
+
+
 def test_perf_api_exposes_cases_run_creation_polling_and_run_list() -> None:
     async def run() -> None:
         target = _MockRouterTarget(delay_seconds=0.005)
@@ -260,6 +314,8 @@ def test_perf_api_exposes_cases_run_creation_polling_and_run_list() -> None:
             assert cases_response.json()["total"] == 1
             assert cases_response.json()["items"][0]["case_id"] == "transfer-intent-slot-analysis"
             assert "default_steps" in cases_response.json()["items"][0]
+            assert "message_request" in cases_response.json()["items"][0]
+            assert "expectations" in cases_response.json()["items"][0]
 
             create_response = await client.post(
                 "/api/admin/perf-tests/runs",
@@ -290,6 +346,11 @@ def test_perf_api_exposes_cases_run_creation_polling_and_run_list() -> None:
             assert detail_payload["aggregate_metrics"]["success_count"] >= 1
             assert detail_payload["aggregate_metrics"]["failure_count"] == 0
             assert "progress" in detail_payload
+            assert detail_payload["created_at"] is not None
+
+            cancel_response = await client.post(f"/api/admin/perf-tests/runs/{run_id}/cancel")
+            assert cancel_response.status_code == 200
+            assert cancel_response.json()["status"] == "completed"
 
             runs_response = await client.get("/api/admin/perf-tests/runs")
             assert runs_response.status_code == 200

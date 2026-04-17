@@ -176,6 +176,23 @@ interface BackendPerfMetrics {
   errorTypeBreakdown?: Record<string, number | string>;
 }
 
+interface BackendPerfExpectation {
+  session_status_code?: number | string | null;
+  sessionStatusCode?: number | string | null;
+  message_status_code?: number | string | null;
+  messageStatusCode?: number | string | null;
+  required_graph_status?: string | null;
+  requiredGraphStatus?: string | null;
+  required_message_contains?: string[];
+  requiredMessageContains?: string[];
+  required_primary_intent_code?: string | null;
+  requiredPrimaryIntentCode?: string | null;
+  required_slot_keys?: string[];
+  requiredSlotKeys?: string[];
+  required_slot_values?: Record<string, unknown>;
+  requiredSlotValues?: Record<string, unknown>;
+}
+
 interface BackendPerfStep {
   name?: string;
   concurrency?: number | string;
@@ -223,6 +240,11 @@ interface BackendPerfCase {
   tags?: string[];
   target_route?: string;
   targetRoute?: string;
+  session_request?: Record<string, unknown>;
+  sessionRequest?: Record<string, unknown>;
+  message_request?: Record<string, unknown>;
+  messageRequest?: Record<string, unknown>;
+  expectations?: BackendPerfExpectation;
   default_steps?: BackendPerfStep[];
   defaultSteps?: BackendPerfStep[];
   ladder_steps?: BackendPerfStep[];
@@ -279,8 +301,15 @@ interface BackendPerfRun {
   caseId?: string;
   case_name?: string;
   caseName?: string;
+  created_at?: string | null;
+  createdAt?: string | null;
   target_base_url?: string | null;
   targetBaseUrl?: string | null;
+  session_request?: Record<string, unknown>;
+  sessionRequest?: Record<string, unknown>;
+  message_request?: Record<string, unknown>;
+  messageRequest?: Record<string, unknown>;
+  expectations?: BackendPerfExpectation;
   ladder_steps?: BackendPerfStep[];
   ladderSteps?: BackendPerfStep[];
   status: PerfTestRunSummary["status"];
@@ -418,6 +447,36 @@ function mapPerfMetrics(metrics: BackendPerfMetrics | undefined): PerfMetrics {
   };
 }
 
+function mapPerfExpectation(expectation: BackendPerfExpectation | undefined) {
+  if (!expectation) {
+    return undefined;
+  }
+
+  return {
+    sessionStatusCode: readNumber(expectation.sessionStatusCode, expectation.session_status_code),
+    messageStatusCode: readNumber(expectation.messageStatusCode, expectation.message_status_code),
+    requiredGraphStatus: readString(expectation.requiredGraphStatus, expectation.required_graph_status) ?? null,
+    requiredMessageContains: Array.isArray(expectation.requiredMessageContains ?? expectation.required_message_contains)
+      ? (expectation.requiredMessageContains ?? expectation.required_message_contains)?.filter(
+          (fragment): fragment is string => typeof fragment === "string"
+        )
+      : undefined,
+    requiredPrimaryIntentCode:
+      readString(expectation.requiredPrimaryIntentCode, expectation.required_primary_intent_code) ?? null,
+    requiredSlotKeys: Array.isArray(expectation.requiredSlotKeys ?? expectation.required_slot_keys)
+      ? (expectation.requiredSlotKeys ?? expectation.required_slot_keys)?.filter(
+          (slotKey): slotKey is string => typeof slotKey === "string"
+        )
+      : undefined,
+    requiredSlotValues:
+      expectation.requiredSlotValues && typeof expectation.requiredSlotValues === "object"
+        ? expectation.requiredSlotValues
+        : expectation.required_slot_values && typeof expectation.required_slot_values === "object"
+          ? expectation.required_slot_values
+          : undefined
+  };
+}
+
 function mapPerfStep(step: BackendPerfStep | undefined, index: number): PerfTestStepInput {
   return {
     name: readString(step?.name) ?? `阶段 ${index + 1}`,
@@ -506,6 +565,19 @@ function mapPerfCase(item: BackendPerfCase): PerfTestCase {
     category: readString(item.category),
     tags: Array.isArray(item.tags) ? item.tags.filter((tag) => typeof tag === "string") : undefined,
     targetRoute: readString(item.targetRoute, item.target_route),
+    sessionRequest:
+      item.sessionRequest && typeof item.sessionRequest === "object"
+        ? item.sessionRequest
+        : item.session_request && typeof item.session_request === "object"
+          ? item.session_request
+          : undefined,
+    messageRequest:
+      item.messageRequest && typeof item.messageRequest === "object"
+        ? item.messageRequest
+        : item.message_request && typeof item.message_request === "object"
+          ? item.message_request
+          : undefined,
+    expectations: mapPerfExpectation(item.expectations),
     defaultSteps: defaultSteps.map(mapPerfStep),
     notes: Array.isArray(item.notes) ? item.notes.filter((note) => typeof note === "string") : undefined
   };
@@ -520,6 +592,7 @@ function mapPerfRunSummary(run: BackendPerfRun): PerfTestRunSummary {
     caseId: readString(run.caseId, run.case_id) ?? "unknown-case",
     caseName: readString(run.caseName, run.case_name),
     status: run.status,
+    createdAt: readString(run.createdAt, run.created_at) ?? null,
     startedAt: readString(run.startedAt, run.started_at) ?? null,
     updatedAt: readString(run.updatedAt, run.updated_at) ?? null,
     finishedAt: readString(run.finishedAt, run.finished_at) ?? null,
@@ -538,6 +611,19 @@ function mapPerfRunDetail(run: BackendPerfRun): PerfTestRunDetail {
   return {
     ...summary,
     targetBaseUrl: readString(run.targetBaseUrl, run.target_base_url) ?? null,
+    sessionRequest:
+      run.sessionRequest && typeof run.sessionRequest === "object"
+        ? run.sessionRequest
+        : run.session_request && typeof run.session_request === "object"
+          ? run.session_request
+          : undefined,
+    messageRequest:
+      run.messageRequest && typeof run.messageRequest === "object"
+        ? run.messageRequest
+        : run.message_request && typeof run.message_request === "object"
+          ? run.message_request
+          : undefined,
+    expectations: mapPerfExpectation(run.expectations),
     progress: mapPerfProgress(run.progress, stepResults, ladderSteps, summary.currentStageIndex ?? undefined, summary.totalStages ?? undefined),
     ladderSteps,
     stepResults,
@@ -1058,7 +1144,24 @@ export class IntentRouterApiClient {
           request_limit: step.requestLimit,
           cooldown_sec: step.cooldownSec,
           timeout_ms: step.timeoutMs
-        }))
+        })),
+        case_override: input.caseOverride
+          ? {
+              session_request: input.caseOverride.sessionRequest,
+              message_request: input.caseOverride.messageRequest,
+              expectations: input.caseOverride.expectations
+                ? {
+                    session_status_code: input.caseOverride.expectations.sessionStatusCode,
+                    message_status_code: input.caseOverride.expectations.messageStatusCode,
+                    required_graph_status: input.caseOverride.expectations.requiredGraphStatus,
+                    required_message_contains: input.caseOverride.expectations.requiredMessageContains,
+                    required_primary_intent_code: input.caseOverride.expectations.requiredPrimaryIntentCode,
+                    required_slot_keys: input.caseOverride.expectations.requiredSlotKeys,
+                    required_slot_values: input.caseOverride.expectations.requiredSlotValues
+                  }
+                : undefined
+            }
+          : undefined
       })
     });
     if (!response.ok) {
@@ -1070,6 +1173,21 @@ export class IntentRouterApiClient {
       throw new Error("压测任务创建成功，但返回体缺少 run 信息");
     }
     return mapPerfRunSummary(run);
+  }
+
+  async cancelPerfTestRun(runId: string): Promise<PerfTestRunDetail> {
+    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST"
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const payload = await response.json();
+    const run = getObjectPayload<BackendPerfRun>(payload, ["item", "run"]);
+    if (!run) {
+      throw new Error("压测任务取消成功，但返回体缺少 run 信息");
+    }
+    return mapPerfRunDetail(run);
   }
 
   async getPerfTestRun(runId: string): Promise<PerfTestRunDetail> {

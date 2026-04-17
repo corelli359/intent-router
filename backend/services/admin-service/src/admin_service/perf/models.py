@@ -77,6 +77,16 @@ class PerfTestExpectation(BaseModel):
     required_slot_values: dict[str, Any] = Field(default_factory=dict)
 
 
+class PerfTestExpectationOverride(BaseModel):
+    session_status_code: int | None = Field(default=None, ge=100, le=599)
+    message_status_code: int | None = Field(default=None, ge=100, le=599)
+    required_graph_status: str | None = Field(default=None, min_length=1, max_length=128)
+    required_message_contains: list[str] | None = None
+    required_primary_intent_code: str | None = Field(default=None, min_length=1, max_length=128)
+    required_slot_keys: list[str] | None = None
+    required_slot_values: dict[str, Any] | None = None
+
+
 class PerfTestCaseDefinition(BaseModel):
     case_id: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=256)
@@ -168,6 +178,9 @@ class PerfTestRunDetail(BaseModel):
     finished_at: datetime | None = None
     progress: PerfRunProgress = Field(default_factory=PerfRunProgress)
     aggregate_metrics: PerfMetrics = Field(default_factory=PerfMetrics)
+    session_request: dict[str, Any] = Field(default_factory=dict)
+    message_request: dict[str, Any] = Field(default_factory=dict)
+    expectations: PerfTestExpectation = Field(default_factory=PerfTestExpectation)
     ladder_steps: list[PerfTestStepPlan] = Field(default_factory=list)
     step_results: list[PerfStageResult] = Field(default_factory=list)
     error_samples: list[PerfFailureSample] = Field(default_factory=list)
@@ -201,9 +214,16 @@ class PerfTestRunSummary(BaseModel):
         )
 
 
+class PerfTestCaseRuntimeOverride(BaseModel):
+    session_request: dict[str, Any] | None = None
+    message_request: dict[str, Any] | None = None
+    expectations: PerfTestExpectationOverride | None = None
+
+
 class PerfTestCreateRunRequest(BaseModel):
     case_id: str = Field(min_length=1, max_length=128)
     ladder_steps: list[PerfTestStepPlan] | None = None
+    case_override: PerfTestCaseRuntimeOverride | None = None
     max_failed_samples: int = Field(default=20, ge=1, le=200)
 
     @model_validator(mode="before")

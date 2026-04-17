@@ -101,7 +101,8 @@ class GraphMessageFlow:
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
-    ) -> GraphRouterSnapshot:
+        return_snapshot: bool = True,
+    ) -> GraphRouterSnapshot | None:
         """Entry point for all message-driven routing."""
         with router_stage(
             logger,
@@ -127,7 +128,7 @@ class GraphMessageFlow:
                         content=message_content,
                         proactive_recommendation=proactive_recommendation,
                     )
-                    return self.snapshot_session(session.session_id)
+                    return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 if guided_selection is not None:
                     await self.handle_guided_selection_turn(
@@ -135,16 +136,16 @@ class GraphMessageFlow:
                         content=message_content,
                         guided_selection=guided_selection,
                     )
-                    return self.snapshot_session(session.session_id)
+                    return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
                     await self.handle_pending_graph_turn(session, message_content)
-                    return self.snapshot_session(session.session_id)
+                    return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 waiting_node = self.get_waiting_node(session)
                 if waiting_node is not None:
                     await self.handle_waiting_node_turn(session, waiting_node, message_content)
-                    return self.snapshot_session(session.session_id)
+                    return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 await self.route_new_message(
                     session,
@@ -163,16 +164,15 @@ class GraphMessageFlow:
                     )
                 )
                 session.touch()
-            snapshot = self.snapshot_session(session.session_id)
             logger.info(
                 "Message flow result (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s)",
                 current_trace_id(),
-                snapshot.session_id,
-                snapshot.current_graph.status.value if snapshot.current_graph is not None else None,
-                snapshot.pending_graph.status.value if snapshot.pending_graph is not None else None,
-                snapshot.active_node_id,
+                session.session_id,
+                session.current_graph.status.value if session.current_graph is not None else None,
+                session.pending_graph.status.value if session.pending_graph is not None else None,
+                session.active_node_id,
             )
-            return snapshot
+            return self.snapshot_session(session.session_id) if return_snapshot else None
 
     async def handle_proactive_recommendation_turn(
         self,

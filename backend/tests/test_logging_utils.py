@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+from logging.handlers import QueueHandler
 
 from router_service.logging_utils import (
+    ROUTER_ASYNC_LOGGING_ENABLED_ENV,
     bind_router_logger_to_runtime_handlers,
     bootstrap_router_logging,
     resolve_log_level,
+    stop_router_logging_listener,
 )
 
 
@@ -61,12 +64,37 @@ def test_bind_router_logger_to_runtime_handlers_reuses_uvicorn_handler() -> None
         uvicorn_error_logger.handlers = [runtime_handler]
         uvicorn_error_logger.setLevel(logging.INFO)
 
-        logger = bind_router_logger_to_runtime_handlers("INFO")
+        logger = bind_router_logger_to_runtime_handlers("INFO", async_enabled=False)
 
         assert logger is package_logger
         assert logger.handlers == [runtime_handler]
         assert logger.level == logging.INFO
         assert logger.propagate is False
     finally:
+        stop_router_logging_listener(package_logger)
+        _restore_logger_state(package_logger, package_snapshot)
+        _restore_logger_state(uvicorn_error_logger, uvicorn_snapshot)
+
+
+def test_bind_router_logger_to_runtime_handlers_supports_async_queue(monkeypatch) -> None:
+    package_logger = logging.getLogger("router_service")
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    package_snapshot = _snapshot_logger_state(package_logger)
+    uvicorn_snapshot = _snapshot_logger_state(uvicorn_error_logger)
+    try:
+        runtime_handler = logging.StreamHandler()
+        uvicorn_error_logger.handlers = [runtime_handler]
+        uvicorn_error_logger.setLevel(logging.INFO)
+        monkeypatch.setenv(ROUTER_ASYNC_LOGGING_ENABLED_ENV, "true")
+
+        logger = bind_router_logger_to_runtime_handlers("INFO")
+
+        assert logger is package_logger
+        assert len(logger.handlers) == 1
+        assert isinstance(logger.handlers[0], QueueHandler)
+        assert logger.level == logging.INFO
+        assert logger.propagate is False
+    finally:
+        stop_router_logging_listener(package_logger)
         _restore_logger_state(package_logger, package_snapshot)
         _restore_logger_state(uvicorn_error_logger, uvicorn_snapshot)

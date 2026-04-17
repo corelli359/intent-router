@@ -68,7 +68,8 @@ class GraphActionFlow:
         task_id: str | None = None,
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
-    ) -> GraphRouterSnapshot:
+        return_snapshot: bool = True,
+    ) -> GraphRouterSnapshot | None:
         """Entry point for action APIs and graph-originated control actions."""
         session = self.session_store.get_or_create(session_id, cust_id)
         if source not in {None, "router", "graph"}:
@@ -76,16 +77,16 @@ class GraphActionFlow:
 
         if action_code in {"confirm_graph", "confirm_plan"}:
             await self.confirm_pending_graph(session, graph_id=task_id, confirm_token=confirm_token)
-            return self.snapshot_session(session.session_id)
+            return self.snapshot_session(session.session_id) if return_snapshot else None
         if action_code in {"cancel_graph", "cancel_plan"}:
             await self.cancel_pending_graph(session, graph_id=task_id, confirm_token=confirm_token)
-            return self.snapshot_session(session.session_id)
+            return self.snapshot_session(session.session_id) if return_snapshot else None
         if action_code == "cancel_node":
             await self.cancel_current_node(
                 session,
                 reason=(payload or {}).get("reason") or "用户取消当前节点",
             )
-            return self.snapshot_session(session.session_id)
+            return self.snapshot_session(session.session_id) if return_snapshot else None
 
         raise ValueError(f"Unsupported action_code: {action_code}")
 

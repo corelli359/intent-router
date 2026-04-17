@@ -25,7 +25,10 @@ from router_service.api.dependencies import (
 )
 from router_service.api.routes.sessions import router as graph_session_router
 from router_service.core.support.llm_barrier import LLMBarrierTriggeredError
-from router_service.logging_utils import bind_router_logger_to_runtime_handlers
+from router_service.logging_utils import (
+    bind_router_logger_to_runtime_handlers,
+    stop_router_logging_listener,
+)
 
 
 def create_router_app() -> FastAPI:
@@ -102,6 +105,7 @@ def create_router_app() -> FastAPI:
                 await session_cleanup_task
             await close_router_runtime(runtime)
             app_logger.info("Router shutdown complete")
+            stop_router_logging_listener(app_logger)
 
     app = FastAPI(title="Intent Router API", version="0.1.0", lifespan=lifespan)
     app.state.router_runtime = runtime

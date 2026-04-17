@@ -34,6 +34,14 @@ spec:
               value: /etc/intent-router/catalog/graph-build-hints.json
             - name: ROUTER_LLM_BARRIER_ENABLED
               value: "true"
+            - name: ROUTER_LOG_LEVEL
+              value: "WARNING"
+            - name: ROUTER_ASYNC_LOGGING_ENABLED
+              value: "true"
+            - name: ROUTER_INTENT_REFRESH_INTERVAL_SECONDS
+              value: "3600"
+            - name: ROUTER_SESSION_CLEANUP_ENABLED
+              value: "false"
           command:
             - /bin/sh
             - -lc
@@ -41,7 +49,7 @@ spec:
             - |
               set -e
               python -m pip install --no-cache-dir /workspace/backend/services/router-service
-              python -m uvicorn router_service.api.app:app --host 0.0.0.0 --port 8000
+              python -m uvicorn router_service.api.app:app --host 0.0.0.0 --port 8000 --no-access-log --log-level warning
           ports:
             - containerPort: 8000
               name: http

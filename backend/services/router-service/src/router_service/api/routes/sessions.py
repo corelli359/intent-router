@@ -124,6 +124,17 @@ class ActionRequest(BaseModel):
         return self
 
 
+def _session_or_snapshot(orchestrator: GraphRouterOrchestrator, session_id: str, fallback: object | None = None) -> object:
+    """Return the live in-memory session when available, otherwise fall back to snapshot APIs."""
+    session_store = getattr(orchestrator, "session_store", None)
+    getter = getattr(session_store, "get", None)
+    if getter is not None:
+        return getter(session_id)
+    if fallback is not None:
+        return fallback
+    return orchestrator.snapshot(session_id)
+
+
 def _resolve_action_cust_id(
     orchestrator: GraphRouterOrchestrator,
     session_id: str,
@@ -133,7 +144,7 @@ def _resolve_action_cust_id(
     if request.cust_id:
         return request.cust_id
     try:
-        return orchestrator.snapshot(session_id).cust_id
+        return _session_or_snapshot(orchestrator, session_id).cust_id
     except KeyError:
         return "cust_demo"
 
@@ -147,9 +158,148 @@ def _resolve_message_cust_id(
     if request.cust_id:
         return request.cust_id
     try:
-        return orchestrator.snapshot(session_id).cust_id
+        return _session_or_snapshot(orchestrator, session_id).cust_id
     except KeyError:
         return "cust_demo"
+
+
+def _serialize_match(match: IntentMatch) -> dict[str, object]:
+    """Serialize one intent match without copying the surrounding graph/session tree."""
+    return {
+        "intent_code": match.intent_code,
+        "confidence": match.confidence,
+        "reason": match.reason,
+    }
+
+
+def _serialize_diagnostic(diagnostic: RouterDiagnostic) -> dict[str, object]:
+    """Serialize one router diagnostic."""
+    return {
+        "code": diagnostic.code,
+        "source": diagnostic.source,
+        "message": diagnostic.message,
+        "details": dict(diagnostic.details),
+    }
+
+
+def _serialize_graph(graph: ExecutionGraphState | None) -> dict[str, object] | None:
+    """Serialize one graph directly from the live runtime object."""
+    if graph is None:
+        return None
+    return {
+        "graph_id": graph.graph_id,
+        "source_message": graph.source_message,
+        "summary": graph.summary,
+        "version": graph.version,
+        "status": graph.status.value,
+        "confirm_token": graph.confirm_token,
+        "nodes": [_serialize_node(node) for node in graph.nodes],
+        "edges": [_serialize_edge(edge) for edge in graph.edges],
+        "actions": [_serialize_action(action) for action in graph.actions],
+        "diagnostics": [_serialize_diagnostic(item) for item in graph.diagnostics],
+        "created_at": graph.created_at.isoformat(),
+        "updated_at": graph.updated_at.isoformat(),
+    }
+
+
+def _serialize_action(action: object) -> dict[str, object]:
+    """Serialize one graph action."""
+    return {
+        "code": action.code,
+        "label": action.label,
+    }
+
+
+def _serialize_edge(edge: GraphEdge) -> dict[str, object]:
+    """Serialize one graph edge."""
+    return {
+        "edge_id": edge.edge_id,
+        "source_node_id": edge.source_node_id,
+        "target_node_id": edge.target_node_id,
+        "relation_type": edge.relation_type.value,
+        "label": edge.label,
+        "condition": _serialize_condition(edge.condition),
+    }
+
+
+def _serialize_condition(condition: object | None) -> dict[str, object] | None:
+    """Serialize one edge condition."""
+    if condition is None:
+        return None
+    return {
+        "source_node_id": condition.source_node_id,
+        "expected_statuses": list(condition.expected_statuses),
+        "left_key": condition.left_key,
+        "operator": condition.operator,
+        "right_value": condition.right_value,
+    }
+
+
+def _serialize_node(node: GraphNodeState) -> dict[str, object]:
+    """Serialize one graph node."""
+    return {
+        "node_id": node.node_id,
+        "intent_code": node.intent_code,
+        "title": node.title,
+        "confidence": node.confidence,
+        "position": node.position,
+        "source_fragment": node.source_fragment,
+        "status": node.status.value,
+        "task_id": node.task_id,
+        "depends_on": list(node.depends_on),
+        "blocking_reason": node.blocking_reason,
+        "skip_reason_code": node.skip_reason_code,
+        "relation_reason": node.relation_reason,
+        "slot_memory": dict(node.slot_memory),
+        "slot_bindings": [_serialize_slot_binding(binding) for binding in node.slot_bindings],
+        "history_slot_keys": list(node.history_slot_keys),
+        "diagnostics": [_serialize_diagnostic(item) for item in node.diagnostics],
+        "output_payload": dict(node.output_payload),
+        "created_at": node.created_at.isoformat(),
+        "updated_at": node.updated_at.isoformat(),
+    }
+
+
+def _serialize_slot_binding(binding: object) -> dict[str, object]:
+    """Serialize one slot binding."""
+    return {
+        "slot_key": binding.slot_key,
+        "value": binding.value,
+        "source": binding.source.value,
+        "source_text": binding.source_text,
+        "confidence": binding.confidence,
+        "is_modified": binding.is_modified,
+    }
+
+
+def _serialize_message(message: object) -> dict[str, object]:
+    """Serialize one chat message."""
+    return {
+        "role": message.role,
+        "content": message.content,
+        "created_at": message.created_at.isoformat(),
+    }
+
+
+def _serialize_session_payload(
+    orchestrator: GraphRouterOrchestrator,
+    session_id: str,
+    *,
+    fallback: object | None = None,
+) -> dict[str, object]:
+    """Serialize the current session state directly from live in-memory objects."""
+    session = _session_or_snapshot(orchestrator, session_id, fallback=fallback)
+    return {
+        "session_id": session.session_id,
+        "cust_id": session.cust_id,
+        "messages": [_serialize_message(item) for item in session.messages],
+        "candidate_intents": [_serialize_match(item) for item in session.candidate_intents],
+        "last_diagnostics": [_serialize_diagnostic(item) for item in session.last_diagnostics],
+        "current_graph": _serialize_graph(session.current_graph),
+        "pending_graph": _serialize_graph(session.pending_graph),
+        "active_node_id": session.active_node_id,
+        "expires_at": session.expires_at.isoformat(),
+    }
 
 
 def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
@@ -160,7 +310,9 @@ def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
 
 def _build_message_analysis_payload(result: MessageAnalysisResult) -> MessageAnalysisPayload:
     """Convert orchestrator analysis output into an API response model."""
-    graph = result.graph.model_copy(deep=True) if result.graph is not None else None
+    # Analyze-only graphs are assembled for the response and are not stored back into
+    # session state, so they can be serialized directly without another deep copy.
+    graph = result.graph
     return MessageAnalysisPayload(
         session_id=result.session_id,
         cust_id=result.cust_id,
@@ -195,7 +347,7 @@ async def get_session_snapshot(
 ):
     """Return the current router snapshot for one session."""
     try:
-        return orchestrator.snapshot(session_id)
+        return _serialize_session_payload(orchestrator, session_id)
     except KeyError as exc:
         raise RouterApiException(
             status_code=404,
@@ -236,6 +388,7 @@ async def post_message(
             guided_selection=request.guided_selection,
             recommendation_context=request.recommendation_context,
             proactive_recommendation=request.proactive_recommendation,
+            return_snapshot=False,
         )
     except ValueError as exc:
         raise RouterApiException(
@@ -243,7 +396,7 @@ async def post_message(
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
-    return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
+    return {"ok": True, "snapshot": _serialize_session_payload(orchestrator, session_id, fallback=snapshot)}
 
 
 @router.post("/sessions/{session_id}/messages/analyze")
@@ -293,6 +446,7 @@ async def post_action(
             task_id=request.task_id,
             confirm_token=request.confirm_token,
             payload=request.payload,
+            return_snapshot=False,
         )
     except ValueError as exc:
         raise RouterApiException(
@@ -300,7 +454,7 @@ async def post_action(
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
-    return {"ok": True, "snapshot": snapshot.model_dump(mode="json")}
+    return {"ok": True, "snapshot": _serialize_session_payload(orchestrator, session_id, fallback=snapshot)}
 
 
 @router.post("/sessions/{session_id}/actions/stream")
@@ -328,6 +482,7 @@ async def post_action_stream(
                 task_id=request.task_id,
                 confirm_token=request.confirm_token,
                 payload=request.payload,
+                return_snapshot=False,
             )
         )
         try:
@@ -392,6 +547,7 @@ async def post_message_stream(
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
                 proactive_recommendation=request.proactive_recommendation,
+                return_snapshot=False,
             )
         )
         try:
