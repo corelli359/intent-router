@@ -227,18 +227,23 @@ class AgentStreamEvent(BaseModel):
         node_title: str,
         output: dict[str, Any] | str,
         exception: str | None = None,
+        headers: dict[str, Any] | None = None,
     ) -> "AgentStreamEvent":
         """Create a stream event from a node's output."""
-        output_str = json.dumps(output, ensure_ascii=False) if isinstance(output, dict) else output
+        # Use indented JSON format (with \n and proper escaping) for output
+        output_str = json.dumps(output, ensure_ascii=False, indent=2) if isinstance(output, dict) else output
+        node_output: dict[str, Any] = {
+            "output": output_str,
+            "exception": exception,
+        }
+        if headers is not None:
+            node_output["headers"] = headers
         return cls(
             content="",
             additional_kwargs={
                 "node_id": node_id,
                 "node_title": node_title,
-                "node_output": {
-                    "output": output_str,
-                    "exception": exception,
-                },
+                "node_output": node_output,
                 "timestamp": _utc_timestamp(),
             },
         )

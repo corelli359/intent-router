@@ -206,21 +206,43 @@ class TransferMoneyAgentService:
         """Handle the request and yield SSE formatted events."""
         response = await self.handle(request)
 
-        # Build the final output payload
-        output_payload = {
-            "event": response.event,
-            "content": response.content,
-            "ishandover": response.ishandover,
-            "status": response.status,
-            "slot_memory": response.slot_memory,
-            "payload": response.payload,
+        # Build handover result matching the expected format
+        is_handover = response.status == "completed"
+        handover_reason = ""
+        if is_handover:
+            handover_reason = "已提供收款人和金额交易对象"
+        elif response.status == "failed":
+            handover_reason = response.content
+        else:
+            handover_reason = response.content
+
+        # Build answer string format: ||amount|payee_phone,payer_phone||
+        amount = response.slot_memory.get("amount", "")
+        payee_phone = response.slot_memory.get("payee_phone", "")
+        payer_phone = ""
+        answer = f"||{amount}|{payee_phone},{payer_phone}||" if amount or payee_phone else ""
+
+        # Build data array
+        data_entries = []
+        if is_handover or response.status == "failed":
+            data_entries.append({
+                "isSubAgent": "True",
+                "typIntent": "mbpTransfer",
+                "answer": answer,
+            })
+
+        # Build final output in strict format
+        output = {
+            "isHandOver": is_handover,
+            "handOverReason": handover_reason,
+            "data": data_entries,
         }
 
         # Yield the "结束" (end) node with the final result
         end_event = AgentStreamEvent.from_node_output(
             node_id="end",
             node_title="结束",
-            output=output_payload,
+            output=output,
         )
         yield end_event.to_sse(event="message")
 

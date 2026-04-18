@@ -6,6 +6,7 @@ from json import JSONDecodeError
 import os
 from pathlib import Path
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 from typing import Any, Literal, Protocol
 from collections.abc import AsyncIterator
@@ -129,6 +130,8 @@ class ConfigVariablesRequest(BaseModel):
             return json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             return {}
+
+
 class AgentConversationContext(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -203,8 +206,6 @@ class AgentExecutionResponse(BaseModel):
         )
 
 
-
-
 class AgentStreamEvent(BaseModel):
     """SSE event payload matching the downstream agent streaming format."""
 
@@ -226,25 +227,31 @@ class AgentStreamEvent(BaseModel):
         node_title: str,
         output: dict[str, Any] | str,
         exception: str | None = None,
+        headers: dict[str, Any] | None = None,
     ) -> "AgentStreamEvent":
         """Create a stream event from a node's output."""
-        output_str = json.dumps(output, ensure_ascii=False) if isinstance(output, dict) else output
+        # Use indented JSON format (with \n and proper escaping) for output
+        output_str = json.dumps(output, ensure_ascii=False, indent=2) if isinstance(output, dict) else output
+        node_output: dict[str, Any] = {
+            "output": output_str,
+            "exception": exception,
+        }
+        if headers is not None:
+            node_output["headers"] = headers
         return cls(
             content="",
             additional_kwargs={
                 "node_id": node_id,
                 "node_title": node_title,
-                "node_output": {
-                    "output": output_str,
-                    "exception": exception,
-                },
+                "node_output": node_output,
                 "timestamp": _utc_timestamp(),
             },
         )
 
     def to_sse(self, event: str = "message") -> str:
-        """Format as SSE text: 'event:xxx\ndata:...\n\n'."""
+        """Format as SSE text: 'event:xxx\\ndata:...\\n\\n'."""
         data = self.model_dump(mode="json")
+        # Use compact JSON format (no spaces after separators)
         return f"event:{event}\ndata:{json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
