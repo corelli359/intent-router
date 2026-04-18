@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from collections.abc import AsyncIterator
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import StreamingResponse
 
 from .support import (
     AgentCancelRequest,
@@ -11,23 +13,17 @@ from .support import (
     AgentLLMSettings,
     LangChainJsonObjectRunner,
 )
-from .service import (
-    CreditCardRepaymentAgentRequest,
-    CreditCardRepaymentAgentService,
-)
+from .service import CreditCardRepaymentAgentRequest, CreditCardRepaymentAgentService
 
 
 @lru_cache
-def get_credit_card_repayment_settings() -> AgentLLMSettings:
-    return AgentLLMSettings.from_env(
-        prefix="CREDIT_CARD_REPAYMENT_AGENT",
-        service_name="credit-card-repayment-agent",
-    )
+def get_settings() -> AgentLLMSettings:
+    return AgentLLMSettings.from_env(prefix="CREDIT_CARD_REPAYMENT_AGENT", service_name="credit-card-repayment-agent")
 
 
 @lru_cache
-def get_credit_card_repayment_service() -> CreditCardRepaymentAgentService:
-    settings = get_credit_card_repayment_settings()
+def get_service() -> CreditCardRepaymentAgentService:
+    settings = get_settings()
     resolver = LangChainJsonObjectRunner(settings) if settings.connection_ready else None
     return CreditCardRepaymentAgentService(resolver=resolver)
 
@@ -37,23 +33,26 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, object]:
-        settings = get_credit_card_repayment_settings()
+        settings = get_settings()
         return {
             "status": "ok",
             "service": settings.service_name,
             "llm_ready": settings.connection_ready,
         }
 
-    @app.post("/api/agent/run", response_model=AgentExecutionResponse)
+    @app.post("/api/agent/run")
     async def run_agent(
         request: CreditCardRepaymentAgentRequest,
-        service: CreditCardRepaymentAgentService = Depends(get_credit_card_repayment_service),
-    ) -> AgentExecutionResponse:
-        return await service.handle(request)
+        service: CreditCardRepaymentAgentService = Depends(get_service),
+    ) -> StreamingResponse:
+        """Run the agent and return SSE stream."""
+        return StreamingResponse(
+            service.handle_stream(request),
+            media_type="text/event-stream",
+        )
 
     @app.post("/api/agent/cancel", response_model=AgentCancelResponse)
     async def cancel_agent(request: AgentCancelRequest) -> AgentCancelResponse:
-        del request
         return AgentCancelResponse(status="cancelled")
 
     return app

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from collections.abc import AsyncIterator
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from .slot_utils import SlotDefinition, SlotValueType, slot_value_grounded
 from .support import (
     AgentExecutionResponse,
+    AgentStreamEvent,
     ConfigVariablesRequest,
     JsonObjectRunner,
     dump_json,
@@ -199,6 +201,31 @@ class TransferMoneyAgentService:
             slot_memory=slot_memory,
             payload={**payload, "business_status": "success"},
         )
+
+    async def handle_stream(self, request: TransferMoneyAgentRequest) -> AsyncIterator[str]:
+        """Handle the request and yield SSE formatted events."""
+        response = await self.handle(request)
+
+        # Build the final output payload
+        output_payload = {
+            "event": response.event,
+            "content": response.content,
+            "ishandover": response.ishandover,
+            "status": response.status,
+            "slot_memory": response.slot_memory,
+            "payload": response.payload,
+        }
+
+        # Yield the "结束" (end) node with the final result
+        end_event = AgentStreamEvent.from_node_output(
+            node_id="end",
+            node_title="结束",
+            output=output_payload,
+        )
+        yield end_event.to_sse(event="message")
+
+        # Yield the done event
+        yield "event:done\ndata:[DONE]\n\n"
 
     async def _resolve(
         self,

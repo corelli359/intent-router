@@ -8,6 +8,7 @@ from pathlib import Path
 from dataclasses import dataclass
 import logging
 from typing import Any, Literal, Protocol
+from collections.abc import AsyncIterator
 
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
@@ -200,6 +201,57 @@ class AgentExecutionResponse(BaseModel):
             status="failed",
             payload=payload or {},
         )
+
+
+
+
+class AgentStreamEvent(BaseModel):
+    """SSE event payload matching the downstream agent streaming format."""
+
+    content: str = ""
+    additional_kwargs: dict[str, Any] = Field(default_factory=dict)
+    response_metadata: dict[str, Any] = Field(default_factory=dict)
+    type: str = "ai"
+    name: str | None = None
+    id: str | None = None
+    example: bool = False
+    tool_calls: list[Any] = Field(default_factory=list)
+    invalid_tool_calls: list[Any] = Field(default_factory=list)
+    usage_metadata: dict[str, Any] | None = None
+
+    @classmethod
+    def from_node_output(
+        cls,
+        node_id: str,
+        node_title: str,
+        output: dict[str, Any] | str,
+        exception: str | None = None,
+    ) -> "AgentStreamEvent":
+        """Create a stream event from a node's output."""
+        output_str = json.dumps(output, ensure_ascii=False) if isinstance(output, dict) else output
+        return cls(
+            content="",
+            additional_kwargs={
+                "node_id": node_id,
+                "node_title": node_title,
+                "node_output": {
+                    "output": output_str,
+                    "exception": exception,
+                },
+                "timestamp": _utc_timestamp(),
+            },
+        )
+
+    def to_sse(self, event: str = "message") -> str:
+        """Format as SSE text: 'event:xxx\ndata:...\n\n'."""
+        data = self.model_dump(mode="json")
+        return f"event:{event}\ndata:{json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
+
+
+def _utc_timestamp() -> str:
+    """Return current UTC timestamp in the expected format."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 class AgentCancelRequest(BaseModel):
