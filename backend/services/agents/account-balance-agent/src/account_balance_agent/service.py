@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from typing import Any
 from collections.abc import AsyncIterator
 
@@ -117,10 +119,10 @@ class AccountBalanceAgentService:
         )
 
     async def handle_stream(self, request: AccountBalanceAgentRequest) -> AsyncIterator[str]:
-        """Handle the request and yield SSE formatted events."""
+        """Handle the request and yield SSE formatted events matching Router expectations."""
         response = await self.handle(request)
 
-        output_payload = {
+        output = {
             "event": response.event,
             "content": response.content,
             "ishandover": response.ishandover,
@@ -129,13 +131,7 @@ class AccountBalanceAgentService:
             "payload": response.payload,
         }
 
-        end_event = AgentStreamEvent.from_node_output(
-            node_id="end",
-            node_title="结束",
-            output=output_payload,
-        )
-        yield end_event.to_sse(event="message")
-
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
         yield "event:done\ndata:[DONE]\n\n"
 
     async def _resolve(

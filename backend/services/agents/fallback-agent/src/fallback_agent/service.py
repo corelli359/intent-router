@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
+
 from .support import AgentExecutionResponse, ConfigVariablesRequest
 
 
@@ -17,12 +20,12 @@ class FallbackAgentService:
                 "last_user_input": request.txt,
             },
         )
-    async def handle_stream(self, request: FallbackAgentRequest) -> "AsyncIterator[str]":
-        """Handle the request and yield SSE formatted events."""
+
+    async def handle_stream(self, request: FallbackAgentRequest) -> AsyncIterator[str]:
+        """Handle the request and yield SSE formatted events matching Router expectations."""
         response = await self.handle(request)
 
-        # Build the final output payload
-        output_payload = {
+        output = {
             "event": response.event,
             "content": response.content,
             "ishandover": response.ishandover,
@@ -31,14 +34,6 @@ class FallbackAgentService:
             "payload": response.payload,
         }
 
-        # Yield the "结束" (end) node with the final result
-        end_event = AgentStreamEvent.from_node_output(
-            node_id="end",
-            node_title="结束",
-            output=output_payload,
-        )
-        yield end_event.to_sse(event="message")
-
-        # Yield the done event
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
         yield "event:done\ndata:[DONE]\n\n"
 

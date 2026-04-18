@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import Any
@@ -149,12 +151,11 @@ class ForexExchangeAgentService:
                 "business_status": "success",
             },
         )
-    async def handle_stream(self, request: ForexExchangeAgentRequest) -> "AsyncIterator[str]":
-        """Handle the request and yield SSE formatted events."""
+    async def handle_stream(self, request: ForexExchangeAgentRequest) -> AsyncIterator[str]:
+        """Handle the request and yield SSE formatted events matching Router expectations."""
         response = await self.handle(request)
 
-        # Build the final output payload
-        output_payload = {
+        output = {
             "event": response.event,
             "content": response.content,
             "ishandover": response.ishandover,
@@ -163,17 +164,8 @@ class ForexExchangeAgentService:
             "payload": response.payload,
         }
 
-        # Yield the "结束" (end) node with the final result
-        end_event = AgentStreamEvent.from_node_output(
-            node_id="end",
-            node_title="结束",
-            output=output_payload,
-        )
-        yield end_event.to_sse(event="message")
-
-        # Yield the done event
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
         yield "event:done\ndata:[DONE]\n\n"
-
 
     async def _resolve(
         self,
@@ -182,16 +174,7 @@ class ForexExchangeAgentService:
     ) -> ForexExchangeResolution:
         heuristic = self._extract_from_input(request.txt)
         if self.resolver is None:
-            return self._finalize_resolution(
-                seeded,
-                ForexExchangeResolution(
-                    card_number=heuristic.card_number if not seeded.card_number else None,
-                    phone_last4=heuristic.phone_last4 if not seeded.phone_last4 else None,
-                    source_currency=heuristic.source_currency if not seeded.source_currency else None,
-                    target_currency=heuristic.target_currency if not seeded.target_currency else None,
-                    amount=heuristic.amount if not seeded.amount else None,
-                ),
-            )
+            return self._finalize_resolution(seeded, heuristic)
 
         try:
             slots = request.get_slots_data()
@@ -200,15 +183,13 @@ class ForexExchangeAgentService:
                 variables={
                     "intent_json": request.get_config_value("intent", "{}"),
                     "input_text": request.txt,
-                    "current_slots_json": dump_json(
-                        {
-                            "card_number": slots.get("card_number"),
-                            "phone_last4": slots.get("phone_last4"),
-                            "source_currency": slots.get("source_currency"),
-                            "target_currency": slots.get("target_currency"),
-                            "amount": slots.get("amount"),
-                        }
-                    ),
+                    "current_slots_json": dump_json({
+                        "card_number": slots.get("card_number"),
+                        "phone_last4": slots.get("phone_last4"),
+                        "source_currency": slots.get("source_currency"),
+                        "target_currency": slots.get("target_currency"),
+                        "amount": slots.get("amount"),
+                    }),
                     "recent_messages_json": request.get_config_value("recent_messages", "[]"),
                     "long_term_memory_json": request.get_config_value("long_term_memory", "[]"),
                 },

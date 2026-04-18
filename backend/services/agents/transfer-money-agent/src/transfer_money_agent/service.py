@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from collections.abc import AsyncIterator
@@ -203,50 +204,21 @@ class TransferMoneyAgentService:
         )
 
     async def handle_stream(self, request: TransferMoneyAgentRequest) -> AsyncIterator[str]:
-        """Handle the request and yield SSE formatted events."""
+        """Handle the request and yield SSE formatted events matching Router expectations."""
         response = await self.handle(request)
 
-        # Build handover result matching the expected format
-        is_handover = response.status == "completed"
-        handover_reason = ""
-        if is_handover:
-            handover_reason = "已提供收款人和金额交易对象"
-        elif response.status == "failed":
-            handover_reason = response.content
-        else:
-            handover_reason = response.content
-
-        # Build answer string format: ||amount|payee_phone,payer_phone||
-        amount = response.slot_memory.get("amount", "")
-        payee_phone = response.slot_memory.get("payee_phone", "")
-        payer_phone = ""
-        answer = f"||{amount}|{payee_phone},{payer_phone}||" if amount or payee_phone else ""
-
-        # Build data array
-        data_entries = []
-        if is_handover or response.status == "failed":
-            data_entries.append({
-                "isSubAgent": "True",
-                "typIntent": "mbpTransfer",
-                "answer": answer,
-            })
-
-        # Build final output in strict format
+        # Yield the response directly in the format Router expects
         output = {
-            "isHandOver": is_handover,
-            "handOverReason": handover_reason,
-            "data": data_entries,
+            "event": response.event,
+            "content": response.content,
+            "ishandover": response.ishandover,
+            "status": response.status,
+            "slot_memory": response.slot_memory,
+            "payload": response.payload,
         }
 
-        # Yield the "结束" (end) node with the final result
-        end_event = AgentStreamEvent.from_node_output(
-            node_id="end",
-            node_title="结束",
-            output=output,
-        )
-        yield end_event.to_sse(event="message")
-
-        # Yield the done event
+        # SSE format: data:{json}\n\n
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
         yield "event:done\ndata:[DONE]\n\n"
 
     async def _resolve(

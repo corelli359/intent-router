@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import re
 from decimal import Decimal
 from typing import Any
@@ -105,12 +107,11 @@ class GasBillPaymentAgentService:
                 "business_status": "completed",
             },
         )
-    async def handle_stream(self, request: GasBillPaymentAgentRequest) -> "AsyncIterator[str]":
-        """Handle the request and yield SSE formatted events."""
+    async def handle_stream(self, request: GasBillPaymentAgentRequest) -> AsyncIterator[str]:
+        """Handle the request and yield SSE formatted events matching Router expectations."""
         response = await self.handle(request)
 
-        # Build the final output payload
-        output_payload = {
+        output = {
             "event": response.event,
             "content": response.content,
             "ishandover": response.ishandover,
@@ -119,17 +120,8 @@ class GasBillPaymentAgentService:
             "payload": response.payload,
         }
 
-        # Yield the "结束" (end) node with the final result
-        end_event = AgentStreamEvent.from_node_output(
-            node_id="end",
-            node_title="结束",
-            output=output_payload,
-        )
-        yield end_event.to_sse(event="message")
-
-        # Yield the done event
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
         yield "event:done\ndata:[DONE]\n\n"
-
 
     async def _resolve(
         self,
@@ -147,12 +139,10 @@ class GasBillPaymentAgentService:
                 variables={
                     "intent_json": request.get_config_value("intent", "{}"),
                     "input_text": request.txt,
-                    "current_slots_json": dump_json(
-                        {
-                            "gas_account_number": slots.get("gas_account_number"),
-                            "amount": slots.get("amount"),
-                        }
-                    ),
+                    "current_slots_json": dump_json({
+                        "gas_account_number": slots.get("gas_account_number"),
+                        "amount": slots.get("amount"),
+                    }),
                     "recent_messages_json": request.get_config_value("recent_messages", "[]"),
                     "long_term_memory_json": request.get_config_value("long_term_memory", "[]"),
                 },
