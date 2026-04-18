@@ -676,6 +676,8 @@ class GraphRouterOrchestrator:
         user_input: str,
     ) -> None:
         """Dispatch one node to its backing intent agent and consume streamed chunks."""
+        logger.debug("Executing node: node_id=%s intent=%s status=%s", node.node_id, node.intent_code, node.status)
+
         task = self._get_task(session, node.task_id)
         created_new_task = task is None
         node_was_waiting = node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
@@ -725,13 +727,8 @@ class GraphRouterOrchestrator:
             async with asyncio.timeout(self.config.agent_timeout_seconds):
                 async for chunk in self.agent_client.stream(task, effective_user_input):
                     await self._handle_agent_chunk(session, graph, node, task, chunk)
-                    if chunk.status in {
-                        TaskStatus.WAITING_USER_INPUT,
-                        TaskStatus.WAITING_CONFIRMATION,
-                        TaskStatus.COMPLETED,
-                        TaskStatus.FAILED,
-                    }:
-                        break
+                    # 不再在收到终态时立即 break，继续消费完整个 SSE 流
+                    # 因为子智能体可能发送多个事件，每个事件都带有 isHandOver: true
         except TimeoutError:
             await self._fail_node(
                 session,
@@ -754,10 +751,14 @@ class GraphRouterOrchestrator:
         dispatch_input: str,
     ) -> Task | None:
         """Validate slot readiness and create the agent task for a ready node."""
+        logger.debug("Creating task for node: intent=%s", node.intent_code)
+
         active_intents = dict(self.intent_catalog.active_intents_by_code())
         intent = active_intents.get(node.intent_code)
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
+
+        logger.debug("Found intent: %s agent_url=%s", intent.intent_code, intent.agent_url)
 
         validation = await self._validate_node_understanding(
             session,
@@ -766,9 +767,12 @@ class GraphRouterOrchestrator:
             intent=intent,
             current_message=dispatch_input,
         )
+
+        logger.debug("Slot validation: can_dispatch=%s missing=%s ambiguous=%s",
+                     validation.can_dispatch, validation.missing_required_slots, validation.ambiguous_slot_keys)
+
         if not validation.can_dispatch:
-            # Slot fill stays in the router layer. The downstream agent only does
-            # defensive slot checking and business execution.
+            logger.warning("Node waiting for slots: %s", validation.prompt_message)
             await self._mark_node_waiting_for_slots(session, graph, node, validation)
             return None
         session.last_diagnostics = list(validation.diagnostics or [])
@@ -838,6 +842,9 @@ class GraphRouterOrchestrator:
         chunk: Any,
     ) -> None:
         """Project each streamed agent chunk back into node/session/graph state."""
+        logger.debug("Agent chunk: status=%s ishandover=%s content=%s",
+                     chunk.status, chunk.ishandover, (chunk.content or "")[:200])
+
         task.touch(chunk.status)
         node.slot_memory = dict(task.slot_memory)
         node.output_payload = dict(chunk.payload)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -9,6 +10,7 @@ import httpx
 from router_service.core.shared.domain import AgentStreamChunk, Task, TaskStatus
 
 MISSING = object()
+logger = logging.getLogger(__name__)
 
 
 class AgentClient(Protocol):
@@ -202,25 +204,58 @@ class StreamingAgentClient:
             yield self._failure_chunk(task, str(exc))
             return
 
+        # DEBUG: 打印请求信息
+        print("=" * 60, flush=True)
+        print(f"[AGENT_CLIENT] 准备调用子智能体", flush=True)
+        print(f"[AGENT_CLIENT] agent_url: {task.agent_url}", flush=True)
+        print(f"[AGENT_CLIENT] intent_code: {task.intent_code}", flush=True)
+        print(f"[AGENT_CLIENT] slot_memory: {task.slot_memory}", flush=True)
+        print(f"[AGENT_CLIENT] request_payload:", flush=True)
+        print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+        print("=" * 60, flush=True)
+
         emitted_chunk = False
         try:
+            logger.debug("Agent request: POST %s payload=%s", task.agent_url, json.dumps(payload, ensure_ascii=False)[:1000])
+
             async with self.http_client.stream(
                 "POST",
                 task.agent_url,
                 json=payload,
-                headers={"Accept": "text/event-stream, application/x-ndjson, application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream, application/x-ndjson, application/json"
+                },
             ) as response:
+                logger.debug("Agent response: status=%s content-type=%s", response.status_code, response.headers.get("content-type", ""))
+
                 if response.status_code >= 400:
+                    error_body = await response.aread()
+                    logger.error("Agent HTTP error %s: %s", response.status_code, error_body.decode("utf-8")[:2000])
                     yield self._failure_chunk(
                         task,
-                        f"Agent HTTP request failed with status {response.status_code}: {await response.aread()}",
+                        f"Agent HTTP request failed with status {response.status_code}: {error_body}",
                     )
                     return
 
                 content_type = response.headers.get("content-type", "")
+
                 if "application/json" in content_type and "stream" not in content_type:
                     raw_body = await response.aread()
-                    parsed = json.loads(raw_body.decode("utf-8"))
+                    logger.debug("Agent JSON response: %d bytes", len(raw_body))
+
+                    if not raw_body:
+                        logger.warning("Agent returned empty JSON response")
+                        yield self._failure_chunk(task, "Agent returned empty response")
+                        return
+
+                    try:
+                        parsed = json.loads(raw_body.decode("utf-8"))
+                    except json.JSONDecodeError as e:
+                        logger.error("Agent returned invalid JSON: %s", e)
+                        yield self._failure_chunk(task, f"Agent returned invalid JSON: {e}")
+                        return
+
                     for chunk in self._payloads_to_chunks(task, parsed):
                         emitted_chunk = True
                         yield chunk
@@ -229,6 +264,8 @@ class StreamingAgentClient:
                 sse_buffer: list[str] = []
                 async for raw_line in response.aiter_lines():
                     line = raw_line.strip()
+                    if line:
+                        logger.debug("SSE line: %s", line[:200])
                     if not line:
                         if sse_buffer:
                             for chunk in self._data_text_to_chunks(task, "\n".join(sse_buffer)):
@@ -252,10 +289,12 @@ class StreamingAgentClient:
                         emitted_chunk = True
                         yield chunk
         except Exception as exc:
+            logger.exception(f"[AGENT_CLIENT] HTTP请求异常: {exc}")
             yield self._failure_chunk(task, f"Agent HTTP request failed: {exc}")
             return
 
         if not emitted_chunk:
+            logger.warning("[AGENT_CLIENT] Agent未返回任何chunk")
             yield self._failure_chunk(task, "Agent returned no stream events")
 
     async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
@@ -300,9 +339,12 @@ class StreamingAgentClient:
 
     def _payload_to_chunk(self, task: Task, payload: dict[str, Any]) -> AgentStreamChunk:
         """Normalize one downstream payload dict into an `AgentStreamChunk`."""
+        logger.debug("Parsing agent payload: %s", json.dumps(payload, ensure_ascii=False)[:500])
+
         # Handle nested format: additional_kwargs.node_output.output
         nested_output = self._extract_nested_output(payload)
         if nested_output:
+            logger.debug("Extracted nested output: %s", json.dumps(nested_output, ensure_ascii=False)[:300])
             payload = nested_output
 
         slot_memory = payload.get("slot_memory")
