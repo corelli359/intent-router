@@ -21,6 +21,48 @@
 3. 旅程步骤
 4. 当前能力判断与风险点
 
+### 2.1 旅程全景图
+
+```mermaid
+flowchart LR
+    start["用户输入 / 推荐输入"] --> a["A 单意图直达"]
+    start --> b["B 单意图补槽"]
+    start --> c["C 多意图待确认"]
+    c --> d["D Pending Graph 改口重规划"]
+    b --> e["E Waiting Node 取消"]
+    b --> f["F 插入新业务并恢复旧业务"]
+    start --> g["G Router-Only 验证"]
+    start --> h["H 主动推荐事项处理"]
+    start --> i["I 异常与失败感知"]
+    start --> j["J 无匹配 / fallback"]
+```
+
+### 2.2 旅程状态视图
+
+```mermaid
+stateDiagram-v2
+    [*] --> free_dialog
+    free_dialog --> pending_graph
+    free_dialog --> waiting_node
+    free_dialog --> ready_for_dispatch
+    free_dialog --> completed
+    free_dialog --> no_match
+    pending_graph --> running : confirm
+    pending_graph --> free_dialog : replan
+    pending_graph --> cancelled : cancel
+    waiting_node --> running : resume_current
+    waiting_node --> free_dialog : replan
+    waiting_node --> cancelled : cancel_current
+    running --> completed
+    running --> waiting_node
+    running --> failed
+    ready_for_dispatch --> [*]
+    completed --> [*]
+    cancelled --> [*]
+    failed --> [*]
+    no_match --> [*]
+```
+
 ## 3. 旅程 A：单意图单轮直接完成
 
 ### 场景目标
@@ -53,6 +95,32 @@
 1. 若模型识别不稳，可能误入 no-match。
 2. 若意图设置了强制确认，旅程会切换到旅程 C。
 
+### 3.1 旅程 A 泳道图
+
+```mermaid
+flowchart LR
+    subgraph userLane["用户"]
+        u1["发送一句请求"]
+        u2["等待处理结果"]
+        u3["看到完成回复"]
+    end
+
+    subgraph routerLane["Router"]
+        r1["创建/获取 session"]
+        r2["识别 + 编图"]
+        r3["提槽 + 校验"]
+        r4["调用 Agent"]
+        r5["映射 graph completed"]
+    end
+
+    subgraph agentLane["Agent"]
+        a1["执行业务并返回结果"]
+    end
+
+    u1 --> r1 --> r2 --> r3 --> r4 --> a1 --> r5 --> u3
+    u2 -.等待中.-> r4
+```
+
 ## 4. 旅程 B：单意图多轮补槽
 
 ### 场景目标
@@ -83,6 +151,24 @@
 
 1. waiting turn 解释较依赖 LLM。
 2. 若用户表达模糊，可能继续停留 waiting 状态。
+
+### 4.1 旅程 B 时序图
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Router as Router
+    participant Agent as Agent
+
+    User->>Router: 帮我转账
+    Router->>Router: 识别 + 提槽 + 校验
+    Router-->>User: 缺少金额/收款人，请补充
+    User->>Router: 给王芳转 300
+    Router->>Router: interpret waiting turn + re-validate
+    Router->>Agent: dispatch
+    Agent-->>Router: completed
+    Router-->>User: 返回成功结果
+```
 
 ## 5. 旅程 C：多意图识别与图确认
 
@@ -115,6 +201,28 @@
 1. pending graph 的用户确认表达仍有解释复杂度。
 2. 多意图真实链路成本较高。
 
+### 5.1 旅程 C 泳道图
+
+```mermaid
+flowchart LR
+    subgraph userLane["用户 / 前端"]
+        u1["输入多个事项"]
+        u2["查看待确认图"]
+        u3["确认或取消"]
+        u4["观看执行推进"]
+    end
+
+    subgraph routerLane["Router"]
+        r1["识别多个主意图"]
+        r2["编译多节点 graph"]
+        r3["挂上 pending_graph"]
+        r4["interpret pending turn"]
+        r5["confirm 后 activate + drain"]
+    end
+
+    u1 --> r1 --> r2 --> r3 --> u2 --> u3 --> r4 --> r5 --> u4
+```
+
 ## 6. 旅程 D：Pending Graph 阶段改口重规划
 
 ### 场景目标
@@ -142,6 +250,22 @@
 ### 风险点
 
 1. 何时算“改口新事项”，当前仍高度依赖 LLM 决策。
+
+### 6.1 旅程 D 时序图
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Router as Router
+
+    User->>Router: 首轮消息，形成 pending_graph
+    Router-->>User: 请确认执行图
+    User->>Router: 我先办另一个事
+    Router->>Router: interpret_pending_graph_turn = replan
+    Router->>Router: suspend pending business
+    Router->>Router: compile new message
+    Router-->>User: 返回新事项状态
+```
 
 ## 7. 旅程 E：Waiting Node 阶段取消当前事项
 
@@ -202,6 +326,31 @@
 1. 同意图场景的目标变化、覆盖策略、恢复语义仍不稳定。
 2. 真实业务链路下，恢复点是否准确仍需进一步收紧。
 
+### 8.1 旅程 F 恢复泳道图
+
+```mermaid
+flowchart LR
+    subgraph current["当前业务"]
+        c1["focus business 运行中"]
+        c2["进入 waiting / running"]
+    end
+
+    subgraph router["Router"]
+        r1["识别新输入为 replan"]
+        r2["suspend 当前 business"]
+        r3["新 business 成为 focus"]
+        r4["handover 新 business"]
+        r5["restore latest suspended business"]
+    end
+
+    subgraph newbiz["新业务"]
+        n1["新 graph 运行"]
+        n2["完成或 compact"]
+    end
+
+    c1 --> c2 --> r1 --> r2 --> r3 --> n1 --> n2 --> r4 --> r5
+```
+
 ## 9. 旅程 G：Router-Only 集成验证
 
 ### 场景目标
@@ -229,6 +378,17 @@
 
 1. 业务方不能把 `router_only` 误认为“业务已完成”。
 2. 它代表的是“已具备执行条件”，不是“已真正执行”。
+
+### 9.1 旅程 G 边界图
+
+```mermaid
+flowchart LR
+    caller["调用方"] --> router["Router"]
+    router --> understand["识别 / 编图 / 提槽 / 校验"]
+    understand --> boundary["READY_FOR_DISPATCH"]
+    boundary -. stop .-> noagent["不调用 Agent"]
+    boundary --> snapshot["返回稳定快照"]
+```
 
 ## 10. 旅程 H：主动推荐事项处理
 
@@ -258,6 +418,17 @@
 1. 推荐默认值与历史值、当前输入之间可能冲突。
 2. recommendation route decision 当前仍较依赖 LLM。
 
+### 10.1 旅程 H 分流图
+
+```mermaid
+flowchart TD
+    rec["proactiveRecommendation"] --> decide["recommendation_router.decide"]
+    decide --> n1["no_selection"]
+    decide --> n2["direct_execute"]
+    decide --> n3["interactive_graph"]
+    decide --> n4["switch_to_free_dialog"]
+```
+
 ## 11. 旅程 I：异常与失败感知
 
 ### 场景目标
@@ -285,6 +456,19 @@
 ### 风险点
 
 1. 仍需继续提升 diagnostics 的可解释性和产品化表达。
+
+### 11.1 旅程 I 异常处理图
+
+```mermaid
+flowchart TD
+    err["异常"] --> llm["LLM 429 / 不可用"]
+    err --> graph["drain 超限"]
+    err --> agent["Agent HTTP 失败"]
+
+    llm --> r1["返回 retryable 提示"]
+    graph --> r2["graph.failed + session.idle"]
+    agent --> r3["node.failed / graph.failed"]
+```
 
 ## 12. 旅程 J：无匹配与 fallback
 
@@ -315,6 +499,17 @@
 1. fallback 文案和产品化表达还可以继续收紧。
 2. recommendation context、历史上下文与 no-match 的冲突处理仍需继续打磨。
 
+### 12.1 旅程 J 无匹配流程图
+
+```mermaid
+flowchart LR
+    input["用户输入"] --> rec["recognition"]
+    rec --> hit{"稳定命中?"}
+    hit -->|yes| graph["进入 graph 编译"]
+    hit -->|no| fallback["fallback / no-match"]
+    fallback --> reply["返回明确提示，不乱猜"]
+```
+
 ## 13. 用户旅程总结
 
 从旅程视角看，Router 当前最重要的价值点是：
@@ -332,3 +527,11 @@
 1. 同意图穿插/恢复
 2. waiting decision 的可解释规则化
 3. recommendation / history / current input 冲突时的更稳定决策
+
+### 13.1 旅程风险热区图
+
+```mermaid
+flowchart LR
+    stable["较稳定旅程\nA 单意图直达\nB 单意图补槽\nG router_only"] --> medium["中等风险旅程\nC 多意图确认\nD pending replan\nH 主动推荐"]
+    medium --> high["高风险旅程\nF 同意图穿插/恢复\nI 复杂失败表达\nJ no-match 与上下文冲突"]
+```

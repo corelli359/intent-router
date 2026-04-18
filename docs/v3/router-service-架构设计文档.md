@@ -32,7 +32,39 @@ Router API -> Intent Agents
 Router API -> LLM provider / fake LLM
 ```
 
-### 3.2 服务边界
+### 3.2 部署架构图
+
+```mermaid
+flowchart LR
+    subgraph client["Client / Upstream"]
+        chat["Chat Web / App"]
+        rec["Recommendation Upstream"]
+        adminweb["Admin Web"]
+    end
+
+    subgraph control["Intent Control Plane"]
+        adminapi["Admin API"]
+        router["router-service"]
+    end
+
+    subgraph runtime["Runtime Dependencies"]
+        catalog["Intent Catalog Repo / DB"]
+        llm["LLM Provider / fake-llm-service"]
+        agenta["Intent Agent A"]
+        agentn["Intent Agent N"]
+    end
+
+    adminweb --> adminapi
+    adminapi --> catalog
+    chat --> router
+    rec --> router
+    router -. refresh intent catalog .-> catalog
+    router --> llm
+    router --> agenta
+    router --> agentn
+```
+
+### 3.3 服务边界
 
 1. `admin-service`
    - 目录治理和配置管理
@@ -205,6 +237,38 @@ Graph 是 Router 的主运行时对象，负责表达：
 2. 真正的一等运行时主体已经转向 `business_objects + workflow`。
 3. 当前 message/action/state sync 仍有不少代码直接读写兼容视图，这也是演进中的现实债务。
 
+### 5.5 运行时对象关系图
+
+```mermaid
+flowchart TB
+    session["GraphSessionState"]
+    workflow["SessionWorkflowState"]
+    meta["messages / candidate_intents / shared_slot_memory"]
+    business["business_objects"]
+    digest["business_memory_digests"]
+    aliases["current_graph / pending_graph\ncompat aliases"]
+    bo["BusinessObjectState"]
+    graph["Execution Graph"]
+    nodes["Graph Nodes"]
+    tasks["Tasks"]
+    ltm["LongTermMemoryStore"]
+
+    session --> workflow
+    session --> meta
+    session --> business
+    session --> digest
+    session --> aliases
+    session --> tasks
+    session --> ltm
+
+    workflow --> bo
+    business --> bo
+    bo --> graph
+    graph --> nodes
+    tasks --> graph
+    aliases -. compatibility view .-> graph
+```
+
 ## 6. 运行时装配设计
 
 ### 6.1 装配中心
@@ -233,6 +297,40 @@ Graph 是 Router 的主运行时对象，负责表达：
 4. hierarchical / flat 理解模式在装配阶段决定。
 
 这使得 Router 在架构上更像“一个通过配置裁剪能力的运行时容器”，而不是一套固定的单路径服务。
+
+### 6.3 运行时装配关系图
+
+```mermaid
+flowchart LR
+    settings["settings"]
+    deps["build_router_runtime()"]
+    store["GraphSessionStore"]
+    memory["LongTermMemoryStore"]
+    broker["EventBroker"]
+    catalog["RepositoryIntentCatalog"]
+    llm["LangChainLLMClient"]
+    recog["Recognizer / UnderstandingService"]
+    slots["SlotExtractor / SlotValidator / UnderstandingValidator"]
+    planner["Planner / TurnInterpreter / RecommendationRouter"]
+    agent["StreamingAgentClient"]
+    orchestrator["GraphRouterOrchestrator"]
+    flow["MessageFlow / ActionFlow / StateSync"]
+    runtime["GraphRuntimeEngine"]
+
+    settings --> deps
+    deps --> store
+    deps --> memory
+    deps --> broker
+    deps --> catalog
+    deps --> llm
+    deps --> recog
+    deps --> slots
+    deps --> planner
+    deps --> agent
+    deps --> orchestrator
+    orchestrator --> flow
+    orchestrator --> runtime
+```
 
 ## 7. 消息处理架构
 
@@ -277,6 +375,53 @@ Graph 是 Router 的主运行时对象，负责表达：
 
 这降低了 orchestrator 直接操纵展示层和事件层的复杂度。
 
+### 7.5 首轮消息主时序图
+
+```mermaid
+sequenceDiagram
+    actor User as Caller / Frontend
+    participant API as sessions.py
+    participant Orch as GraphRouterOrchestrator
+    participant Store as GraphSessionStore(lock)
+    participant Flow as GraphMessageFlow
+    participant Comp as GraphCompiler
+    participant Ctx as ContextBuilder
+    participant U as IntentUnderstandingService
+    participant Plan as Planner / Builder
+    participant Sync as GraphStateSync
+    participant Valid as UnderstandingValidator
+    participant Agent as StreamingAgentClient
+
+    User->>API: POST /sessions/{id}/messages
+    API->>Orch: handle_user_message(_serialized)
+    Orch->>Store: acquire session lock
+    Orch->>Flow: handle_user_message()
+    Flow->>Flow: 判断 proactive / guided / pending / waiting / free
+    Flow->>Comp: compile_message()
+    Comp->>Ctx: build_session_context()
+    Comp->>U: recognize_message() / build_graph_from_message()
+    U-->>Comp: primary + candidates + diagnostics
+    Comp->>Plan: plan_graph() / build_graph()
+    Plan-->>Comp: graph
+    Comp-->>Flow: graph + diagnostics
+    Flow->>Orch: activate_graph() + drain_graph()
+    Orch->>Sync: refresh_graph_state()
+    Orch->>Valid: validate_node_understanding()
+
+    alt slots ready and executionMode=execute
+        Orch->>Agent: stream(request)
+        Agent-->>Orch: chunk / final result
+        Orch->>Sync: update task/node/graph/session
+    else slots ready and executionMode=router_only
+        Orch->>Sync: mark READY_FOR_DISPATCH
+    else slots missing / ambiguous / invalid
+        Orch->>Sync: mark waiting_user_input
+    end
+
+    Orch-->>API: snapshot / SSE events
+    API-->>User: response
+```
+
 ## 8. 理解链路架构
 
 ### 8.1 Recognition
@@ -306,6 +451,55 @@ waiting / pending 状态下不是直接复用普通 compile，而是走 turn int
 
 1. waiting decision 仍较依赖 LLM。
 2. 还没有一个完全独立、可治理的续轮决策策略模块。
+
+### 8.4 阻塞续轮时序图
+
+```mermaid
+sequenceDiagram
+    actor User as Caller / Frontend
+    participant API as sessions.py
+    participant Orch as GraphRouterOrchestrator
+    participant Flow as GraphMessageFlow
+    participant U as IntentUnderstandingService
+    participant TI as TurnInterpreter
+    participant Action as GraphActionFlow
+    participant Comp as GraphCompiler
+
+    User->>API: POST next message
+    API->>Orch: handle_user_message()
+    Orch->>Flow: handle_user_message()
+
+    alt pending_graph exists
+        Flow->>U: interpret_pending_graph_turn()
+        U->>TI: interpret_pending_graph()
+        TI-->>Flow: confirm / cancel / replan / keep_waiting
+
+        alt confirm
+            Flow->>Action: confirm_pending_graph()
+        else cancel
+            Flow->>Action: cancel_graph()
+        else replan
+            Flow->>Comp: suspend pending business + compile new message
+        else keep_waiting
+            Flow-->>Orch: stay pending
+        end
+
+    else waiting_node exists
+        Flow->>U: interpret_waiting_node_turn()
+        U->>TI: interpret_waiting_node()
+        TI-->>Flow: resume_current / cancel_current / replan / keep_waiting
+
+        alt resume_current
+            Flow->>Orch: re-validate current node
+        else cancel_current
+            Flow->>Action: cancel_node()
+        else replan
+            Flow->>Comp: suspend current business + compile new message
+        else keep_waiting
+            Flow-->>Orch: stay waiting
+        end
+    end
+```
 
 ## 9. 槽位架构
 
@@ -385,6 +579,40 @@ waiting / pending 状态下不是直接复用普通 compile，而是走 turn int
 2. graph compiler 仍含部分策略判断和正则信号。
 3. 条件治理尚未独立成专项层。
 4. 当前 runtime 仍是串行 drain，一个时刻只推进一个 ready node。
+
+### 10.5 节点执行与 Router-Only 边界时序图
+
+```mermaid
+sequenceDiagram
+    participant Orch as GraphRouterOrchestrator
+    participant Runtime as GraphRuntimeEngine
+    participant Valid as UnderstandingValidator
+    participant Extract as SlotExtractor
+    participant Check as SlotValidator
+    participant Agent as StreamingAgentClient
+    participant Sync as GraphStateSync
+
+    Orch->>Runtime: next_ready_node()
+    Runtime-->>Orch: node
+    Orch->>Valid: validate_node(node)
+    Valid->>Extract: extract()
+    Extract-->>Valid: slot bindings
+    Valid->>Check: validate()
+    Check-->>Valid: can_dispatch / missing / ambiguous / invalid
+    Valid-->>Orch: validation result
+
+    alt cannot dispatch
+        Orch->>Sync: mark node waiting_user_input
+    else execute mode
+        Orch->>Sync: create task + dispatching
+        Orch->>Agent: stream(request)
+        Agent-->>Orch: chunks / completion
+        Orch->>Sync: update task/node/graph/session
+    else router_only mode
+        Orch->>Sync: mark node READY_FOR_DISPATCH
+        Orch->>Sync: mark graph READY_FOR_DISPATCH
+    end
+```
 
 ## 11. Agent 集成架构
 

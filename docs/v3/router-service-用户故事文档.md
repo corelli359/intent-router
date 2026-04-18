@@ -53,6 +53,18 @@
 1. 负责定义 request schema、field mapping、slot schema。
 2. 关心 Router 和 Agent 之间的责任边界是否稳定。
 
+### 2.7 角色画像图
+
+```mermaid
+flowchart LR
+    ops["平台运营方"] --> epic1["目录治理"]
+    caller["前端 / 集成方"] --> epic2["接口 / 事件 / 动作"]
+    user["终端用户"] --> epic3["理解 / 补槽 / 恢复"]
+    sre["架构 / 运维 / 测试方"] --> epic4["可测 / 可观测 / 可压测"]
+    rec["上游推荐提供方"] --> epic5["推荐接入"]
+    owner["意图 / Agent 维护方"] --> epic6["契约边界稳定"]
+```
+
 ## 3. 史诗一：意图目录治理
 
 ### 用户故事 3.1
@@ -73,6 +85,24 @@
 
 1. inactive intent 不进入 recognition active list。
 2. Router 只消费 active intent。
+
+### 3.3 故事地图总览
+
+```mermaid
+flowchart TB
+    root["Router 用户故事地图"]
+
+    root --> e1["史诗一\n目录治理"]
+    root --> e2["史诗二\n单轮单意图"]
+    root --> e3["史诗三\n多意图与图确认"]
+    root --> e4["史诗四\nRouter 侧补槽"]
+    root --> e5["史诗五\n多轮续轮与恢复"]
+    root --> e6["史诗六\n动作控制"]
+    root --> e7["史诗七\nRecommendation / Guided"]
+    root --> e8["史诗八\nRouter-Only"]
+    root --> e9["史诗九\n观测与错误治理"]
+    root --> e10["史诗十\n运行安全"]
+```
 
 ## 4. 史诗二：单轮单意图理解
 
@@ -181,6 +211,30 @@
 1. 运行时结构已支持 suspend / restore。
 2. 真实业务场景下的“同意图穿插/恢复”仍是待优化能力。
 
+### 7.4 多轮恢复故事泳道图
+
+```mermaid
+flowchart LR
+    subgraph userLane["终端用户"]
+        u1["提出当前事项"]
+        u2["补槽 / 改口 / 插入新事项"]
+        u3["希望恢复旧事项"]
+    end
+
+    subgraph routerLane["Router"]
+        r1["识别 current business"]
+        r2["进入 waiting / pending"]
+        r3["resume_current / cancel_current / replan"]
+        r4["suspend current business"]
+        r5["restore latest suspended business"]
+    end
+
+    u1 --> r1 --> r2
+    u2 --> r3
+    r3 --> r4
+    u3 --> r5
+```
+
 ## 8. 史诗六：动作控制
 
 ### 用户故事 8.1
@@ -238,6 +292,19 @@
 1. `recommendationContext` 作为 routing 辅助信息进入上下文。
 2. `guidedSelection` 与 `proactiveRecommendation` 才能直接形成确定性 graph。
 3. recommendation 默认值注入必须受 schema 配置控制，而不是无条件覆盖用户输入。
+
+### 9.5 推荐相关故事图
+
+```mermaid
+flowchart TD
+    rec["推荐相关故事"] --> c1["recommendationContext\n辅助理解"]
+    rec --> c2["guidedSelection\n直接建图"]
+    rec --> c3["proactiveRecommendation\n推荐路由决策"]
+    c3 --> m1["no_selection"]
+    c3 --> m2["direct_execute"]
+    c3 --> m3["interactive_graph"]
+    c3 --> m4["switch_to_free_dialog"]
+```
 
 ## 10. 史诗八：Router-Only 与调试
 
@@ -314,6 +381,51 @@
 8. 统一动作接口
 9. diagnostics 和统一错误包装
 10. session cleanup 和 drain guard
+
+### 13.1 故事实现状态图
+
+```mermaid
+flowchart LR
+    subgraph done["已基本实现"]
+        d1["目录读取"]
+        d2["单意图识别与执行"]
+        d3["多意图 pending graph"]
+        d4["Router 侧补槽 / waiting node"]
+        d5["guided selection / proactive recommendation"]
+        d6["router_only / 统一动作接口"]
+    end
+
+    subgraph partial["部分实现 / 待收紧"]
+        p1["同意图穿插/恢复"]
+        p2["waiting decision 规则化"]
+        p3["structured output 严格化"]
+        p4["长期记忆结构化"]
+    end
+
+    subgraph gap["当前真实缺口"]
+        g1["同意图新业务与旧业务恢复稳定性"]
+        g2["推荐 / 历史 / 当前输入冲突治理"]
+        g3["多副本一致性与跨副本恢复"]
+    end
+```
+
+### 13.2 角色-史诗映射图
+
+```mermaid
+flowchart TB
+    ops["平台运营方"] --> e1["目录治理"]
+    caller["前端 / 集成方"] --> e3["多意图与图确认"]
+    caller --> e6["动作控制"]
+    caller --> e8["Router-Only"]
+    user["终端用户"] --> e2["单轮单意图"]
+    user --> e4["补槽与追问"]
+    user --> e5["续轮与恢复"]
+    rec["上游推荐方"] --> e7["Recommendation / Guided"]
+    owner["意图 / Agent 维护方"] --> e4
+    owner --> e7
+    sre["架构 / 运维 / 测试方"] --> e9["观测与错误治理"]
+    sre --> e10["运行安全"]
+```
 
 ### 已有基础但待加强
 

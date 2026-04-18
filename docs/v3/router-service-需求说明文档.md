@@ -28,6 +28,20 @@
 
 > Router 不是业务执行器，而是负责“理解、编排、补槽、调度、续轮控制”的运行时中枢。
 
+### 2.1 服务定位图
+
+```mermaid
+flowchart LR
+    user["终端用户 / 前端"] --> router["router-service\n意图总控"]
+    admin["Admin / Catalog"] --> router
+    router --> agent["Intent Agents"]
+    router --> llm["LLM / fake LLM"]
+
+    router --- duties["识别 / 编图 / 补槽 / 续轮控制 / 调度"]
+    agent --- domain["业务语义执行 / 业务校验 / 结果返回"]
+    admin --- config["intent / schema / field / hint 治理"]
+```
+
 ## 3. 背景与问题
 
 在多意图、多轮对话系统中，用户输入并不天然等于“一个意图 + 一次执行”。当前业务场景至少存在以下复杂性：
@@ -98,6 +112,36 @@
 2. 管理意图启停和目录事实来源。
 3. 不直接承担运行时消息理解和会话编排。
 
+### 5.5 责任边界泳道图
+
+```mermaid
+flowchart LR
+    subgraph adminLane["Admin"]
+        a1["注册/启停 intent"]
+        a2["维护 field / slot schema / graph hints"]
+    end
+
+    subgraph routerLane["Router"]
+        r1["读取 active intents"]
+        r2["识别 primary/candidates"]
+        r3["编译 graph / pending / waiting"]
+        r4["Router 侧提槽与校验"]
+        r5["组装 agent 请求"]
+        r6["输出 snapshot / SSE / diagnostics"]
+    end
+
+    subgraph agentLane["Agent"]
+        g1["业务语义最终校验"]
+        g2["执行业务"]
+        g3["返回 completed / waiting / failed"]
+    end
+
+    a1 --> r1
+    a2 --> r4
+    r1 --> r2 --> r3 --> r4 --> r5
+    r5 --> g1 --> g2 --> g3 --> r6
+```
+
 ## 6. 需求范围
 
 ### 6.1 本期纳入范围
@@ -120,6 +164,31 @@
 5. 完整的长期记忆结构化治理。
 6. 完整的同意图内目标变更语义识别。
 7. 真正的并行执行引擎。
+
+### 6.3 范围边界图
+
+```mermaid
+flowchart TB
+    subgraph inScope["本期纳入范围"]
+        i1["单意图 / 多意图识别"]
+        i2["pending graph / waiting node"]
+        i3["guidedSelection / recommendationContext / proactiveRecommendation"]
+        i4["router_only"]
+        i5["Router 侧槽位提取与校验"]
+        i6["SSE / diagnostics / 错误包装"]
+        i7["business object 基础挂起/恢复"]
+    end
+
+    subgraph outScope["本期不纳入范围"]
+        o1["Router 内执行业务逻辑"]
+        o2["训练型分类器 / 模型微调"]
+        o3["条件治理完整专项"]
+        o4["跨服务持久化状态机"]
+        o5["长期记忆完整结构化治理"]
+        o6["同意图内目标变更完整语义"]
+        o7["真并行执行引擎"]
+    end
+```
 
 ## 7. 角色与使用方
 
@@ -155,6 +224,20 @@
 1. 运行时边界是否清晰。
 2. 是否容易测试、压测、定位问题。
 3. 服务是否可扩展、可治理、可演进。
+
+### 7.5 角色诉求图
+
+```mermaid
+flowchart LR
+    ops["平台运营方"] --> need1["可治理的 intent / schema 注册"]
+    caller["前端 / 集成方"] --> need2["稳定接口 / snapshot / SSE"]
+    enduser["终端用户"] --> need3["少误解 / 少打断 / 可恢复"]
+    sre["研发 / 架构 / SRE"] --> need4["可测 / 可观测 / 可压测"]
+    all["router-service"] --> need1
+    all --> need2
+    all --> need3
+    all --> need4
+```
 
 ## 8. 核心概念
 
@@ -212,6 +295,23 @@
 一种到“具备执行条件”即返回的运行模式。它仍然走 Router 的真实识别、编图、补槽和校验链路，只是不调用下游 Agent。
 
 ## 9. 需求清单
+
+### 9.0 需求能力分解图
+
+```mermaid
+flowchart TD
+    root["Router 需求能力"]
+    root --> c1["目录治理"]
+    root --> c2["会话与消息入口"]
+    root --> c3["意图识别"]
+    root --> c4["Graph 编译"]
+    root --> c5["Router 侧槽位提取"]
+    root --> c6["续轮解释"]
+    root --> c7["Agent 调度"]
+    root --> c8["事件与快照"]
+    root --> c9["router_only"]
+    root --> c10["运行治理"]
+```
 
 ### 9.1 意图目录治理需求
 
@@ -308,6 +408,22 @@
 3. 需要可控的 fake LLM / agent barrier 组合以支撑压测。
 4. 性能口径需要至少拆分为 `router_only`、`LLM only`、`LLM + Agent` 三档。
 
+### 10.5 非功能需求图
+
+```mermaid
+flowchart LR
+    nfr["非功能需求"]
+    nfr --> g1["可治理"]
+    nfr --> g2["可观测"]
+    nfr --> g3["可测试"]
+    nfr --> g4["性能"]
+
+    g1 --> g1a["动态目录事实来源收敛到 Admin"]
+    g2 --> g2a["snapshot / events / diagnostics 一致"]
+    g3 --> g3a["LLM / fake LLM / router_only 分层验证"]
+    g4 --> g4a["router_only / LLM only / 全链路分档验收"]
+```
+
 ## 11. 成功标准
 
 ### 11.1 功能成功标准
@@ -376,6 +492,28 @@
 1. 条件治理专项设计。
 2. 层级意图路由进一步产品化。
 3. 更细粒度的业务摘要和共享上下文策略。
+
+### 13.1 优先级路线图
+
+```mermaid
+flowchart LR
+    p0["P0\n规则先对齐"] --> p1["P1\n基础能力收紧"]
+    p1 --> p2["P2\n专项深化"]
+
+    p0 --> p0a["waiting / pending / replan 产品规则"]
+    p0 --> p0b["Router vs Agent 提槽边界"]
+    p0 --> p0c["router_only 正式定位"]
+    p0 --> p0d["business object 恢复期望行为"]
+
+    p1 --> p1a["structured output 收紧"]
+    p1 --> p1b["复杂规划信号配置化"]
+    p1 --> p1c["同意图穿插/恢复完善"]
+    p1 --> p1d["长期记忆结构化推进"]
+
+    p2 --> p2a["条件治理专项"]
+    p2 --> p2b["层级路由产品化"]
+    p2 --> p2c["更细粒度共享上下文"]
+```
 
 ## 14. 结论
 

@@ -96,6 +96,27 @@ Router 当前可归纳为 9 组功能：
 1. 独立订阅 session 级事件流
 2. 初始会发送 heartbeat
 
+### 3.6 对外功能接口图
+
+```mermaid
+flowchart LR
+    caller["Frontend / Caller"]
+    create["POST /sessions"]
+    snapshot["GET /sessions/{id}"]
+    message["POST /sessions/{id}/messages"]
+    stream["POST /sessions/{id}/messages/stream"]
+    action["POST /sessions/{id}/actions"]
+    events["GET /sessions/{id}/events"]
+    router["router-service runtime"]
+
+    caller --> create --> router
+    caller --> snapshot --> router
+    caller --> message --> router
+    caller --> stream --> router
+    caller --> action --> router
+    caller --> events --> router
+```
+
 ## 4. 关键配置开关
 
 ### 4.1 识别与建图
@@ -196,6 +217,42 @@ POST /sessions/{id}/messages/stream
 4. `router_only_mode` 会先落到 session/business 运行态，再影响后续 drain 策略。
 5. 若输入是 guided selection，Router 会先写入合成展示文案，保证 transcript 与后续诊断一致。
 
+### 6.4 消息主链调用关系图
+
+```mermaid
+flowchart TD
+    api["POST /sessions/{id}/messages"] --> route["sessions.py::post_message"]
+    route --> orch["GraphRouterOrchestrator.handle_user_message_serialized"]
+    orch --> flow["GraphMessageFlow.handle_user_message"]
+    flow --> branch{"message type?"}
+
+    branch -->|free dialog| compiler["GraphCompiler.compile_message"]
+    branch -->|pending_graph| pending["interpret_pending_graph_turn"]
+    branch -->|waiting_node| waiting["interpret_waiting_node_turn"]
+    branch -->|guided_selection| guided["build_guided_selection_graph"]
+    branch -->|proactive| proactive["RecommendationRouter.decide"]
+
+    compiler --> understand["IntentUnderstandingService / Recognizer"]
+    compiler --> planner["Planner / Builder"]
+    planner --> drain["activate_graph + drain_graph"]
+    guided --> drain
+    proactive --> drain
+    pending --> drain
+    waiting --> drain
+
+    drain --> validate["UnderstandingValidator -> SlotExtractor -> SlotValidator"]
+    validate --> dispatch{"can dispatch?"}
+
+    dispatch -->|execute| agent["StreamingAgentClient.stream"]
+    dispatch -->|router_only| ready["READY_FOR_DISPATCH"]
+    dispatch -->|no| wait["WAITING_USER_INPUT"]
+
+    agent --> state["GraphStateSync / EventPublisher"]
+    ready --> state
+    wait --> state
+    state --> resp["session snapshot / SSE"]
+```
+
 ## 7. 消息处理详细分支
 
 ### 7.1 总入口判断
@@ -294,6 +351,27 @@ route_new_message()
   -> drain_graph()
 ```
 
+### 7.7 分支决策图
+
+```mermaid
+flowchart TD
+    start["receive message"] --> proactive{"has proactiveRecommendation?"}
+    proactive -->|yes| proactiveFlow["handle_proactive_recommendation_turn"]
+    proactive -->|no| guided{"has guidedSelection?"}
+    guided -->|yes| guidedFlow["handle_guided_selection_turn"]
+    guided -->|no| pending{"pending_graph exists?"}
+    pending -->|yes| pendingFlow["handle_pending_graph_turn"]
+    pending -->|no| waiting{"waiting_node exists?"}
+    waiting -->|yes| waitingFlow["handle_waiting_node_turn"]
+    waiting -->|no| free["route_new_message"]
+
+    proactiveFlow --> drain["activate / drain / return snapshot or SSE"]
+    guidedFlow --> drain
+    pendingFlow --> drain
+    waitingFlow --> drain
+    free --> drain
+```
+
 ## 8. 自由输入编译链路
 
 `GraphCompiler.compile_message()` 的主流程如下：
@@ -344,6 +422,48 @@ Router 当前已经把“是否建图”和“是否调用重型规划”拆开�
 1. Graph 仍然总会创建。
 2. 简单单意图可以通过 fallback planner 走轻量图编译。
 3. 只有复杂消息才进入高成本规划。
+
+### 8.4 自由输入编译时序图
+
+```mermaid
+sequenceDiagram
+    actor User as Caller / Frontend
+    participant API as sessions.py
+    participant Orch as GraphRouterOrchestrator
+    participant Flow as GraphMessageFlow
+    participant Comp as GraphCompiler
+    participant Ctx as ContextBuilder
+    participant U as IntentUnderstandingService
+    participant Plan as Planner / Builder
+    participant SlotRes as SlotResolutionService
+
+    User->>API: POST message
+    API->>Orch: handle_user_message()
+    Orch->>Flow: route_new_message()
+    Flow->>Comp: compile_message()
+    Comp->>Ctx: build_session_context()
+    Comp->>Comp: remove current turn duplicate
+    Comp->>Comp: filter planning-safe recent messages
+
+    alt unified builder enabled
+        Comp->>U: build_graph_from_message()
+        U-->>Comp: graph + diagnostics
+    else recognizer path
+        Comp->>U: recognize_message()
+        U-->>Comp: primary/candidates/diagnostics
+        Comp->>Plan: plan_graph()
+        Plan-->>Comp: graph
+    end
+
+    Comp->>SlotRes: proactive defaults + history prefill
+    SlotRes-->>Comp: enriched graph
+
+    alt no match
+        Comp-->>Flow: no_match / fallback
+    else graph ready
+        Comp-->>Flow: graph + diagnostics
+    end
+```
 
 ## 9. 识别功能说明
 
@@ -434,6 +554,31 @@ _create_task_for_node() / _prepare_node_router_only()
 2. Agent 仍负责防守性校验和业务执行。
 3. 如果 Router 判定槽位还不够，节点不会进入下游 Agent。
 
+### 10.7 Router 提槽校验时序图
+
+```mermaid
+sequenceDiagram
+    participant Orch as GraphRouterOrchestrator
+    participant Valid as UnderstandingValidator
+    participant Extract as SlotExtractor
+    participant LLM as LLMClient
+    participant Check as SlotValidator
+
+    Orch->>Valid: validate_node(node)
+    Valid->>Extract: extract(node, session, memory)
+    Extract->>Extract: reuse slot_memory / slot_bindings / history
+
+    alt required slots still missing or no effective slots
+        Extract->>LLM: extract slots from message/context
+        LLM-->>Extract: extracted slot candidates
+    end
+
+    Extract-->>Valid: slot_bindings + ambiguous/history keys
+    Valid->>Check: validate(schema, bindings)
+    Check-->>Valid: can_dispatch / missing / ambiguous / invalid / prompt
+    Valid-->>Orch: validation result
+```
+
 ## 11. Graph 执行功能说明
 
 ### 11.1 activate_graph
@@ -497,6 +642,27 @@ while True:
 2. 再把 live graph/task 压缩进 `shared_slot_memory` 和 `business_memory_digests`。
 3. 最后从 session live runtime 中移除对应 graph/task，仅保留 digest 和 workflow 关系。
 
+### 11.6 drain 执行决策图
+
+```mermaid
+flowchart TD
+    start["drain_graph()"] --> refresh["refresh_graph_state"]
+    refresh --> hasWaiting{"has waiting node?"}
+    hasWaiting -->|yes| publishWaiting["publish waiting state and return"]
+    hasWaiting -->|no| next["next_ready_node()"]
+    next --> none{"ready node exists?"}
+    none -->|no| idle["publish idle and return"]
+    none -->|yes| validate["validate_node_understanding"]
+    validate --> canDispatch{"can dispatch?"}
+    canDispatch -->|no| markWait["mark WAITING_USER_INPUT and return"]
+    canDispatch -->|yes execute| runAgent["create task and call Agent"]
+    canDispatch -->|yes router_only| ready["mark READY_FOR_DISPATCH and return"]
+    runAgent --> terminal{"terminal / waiting / continue?"}
+    terminal -->|continue| refresh
+    terminal -->|waiting| publishWaiting
+    terminal -->|done| idle
+```
+
 ## 12. Agent 调度功能说明
 
 ### 12.1 task 创建
@@ -541,6 +707,29 @@ Agent chunk 会被映射为：
 4. node runtime event
 5. graph/session state refresh
 
+### 12.5 Agent 调度时序图
+
+```mermaid
+sequenceDiagram
+    participant Orch as GraphRouterOrchestrator
+    participant Builder as RequestPayloadBuilder
+    participant Agent as StreamingAgentClient
+    participant Sync as GraphStateSync
+
+    Orch->>Builder: build(task, graph, session, memory)
+    Builder-->>Orch: HTTP payload
+    Orch->>Sync: mark task/node dispatching
+    Orch->>Agent: stream(payload)
+
+    loop each chunk
+        Agent-->>Orch: json / sse / ndjson chunk
+        Orch->>Sync: map chunk to task/node/graph/session
+    end
+
+    Agent-->>Orch: completed / failed
+    Orch->>Sync: finalize statuses
+```
+
 ## 13. 动作处理功能说明
 
 动作入口由 `GraphActionFlow` 统一处理。
@@ -575,6 +764,34 @@ Agent chunk 会被映射为：
 1. 取消当前 waiting node
 2. 如存在 waiting task，则尝试调用 Agent cancel
 3. 刷新 graph 进度
+
+### 13.4 动作处理时序图
+
+```mermaid
+sequenceDiagram
+    actor User as Caller / Frontend
+    participant API as sessions.py
+    participant Orch as GraphRouterOrchestrator
+    participant Action as GraphActionFlow
+    participant Sync as GraphStateSync
+    participant Agent as StreamingAgentClient
+
+    User->>API: POST /actions
+    API->>Orch: handle_action()
+    Orch->>Action: dispatch action
+
+    alt confirm_graph
+        Action->>Sync: promote pending business + activate graph
+        Action->>Orch: drain_graph()
+    else cancel_graph
+        Action->>Sync: mark pending graph cancelled
+    else cancel_node
+        Action->>Agent: cancel() if waiting task exists
+        Action->>Sync: mark node cancelled / refresh graph
+    end
+
+    Orch-->>API: snapshot / SSE
+```
 
 ## 14. Business Object 功能说明
 
@@ -639,6 +856,46 @@ Agent chunk 会被映射为：
 10. `node.completed`
 11. `session.idle`
 12. `session.waiting_user_input`
+
+### 15.4 graph 状态流转图
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> waiting_confirmation : multi-intent / confirm required
+    draft --> running : activate_graph
+    waiting_confirmation --> running : confirm_graph
+    waiting_confirmation --> cancelled : cancel_graph
+    running --> waiting_user_input : slot missing / ambiguous / invalid
+    running --> waiting_confirmation_node : node confirmation required
+    running --> ready_for_dispatch : router_only boundary
+    running --> partially_completed : partial progress
+    partially_completed --> running : continue drain
+    waiting_user_input --> running : resume_current
+    waiting_confirmation_node --> running : confirm node
+    running --> completed : all nodes completed
+    running --> failed : drain/agent failure
+    running --> cancelled : cancel current graph
+```
+
+### 15.5 node 状态流转图
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> blocked
+    blocked --> ready : dependencies satisfied
+    ready --> running : execute mode
+    ready --> ready_for_dispatch : router_only
+    ready --> waiting_user_input : slot missing / invalid
+    ready --> waiting_confirmation : node confirmation required
+    waiting_user_input --> ready : user supplies slots
+    waiting_confirmation --> ready : confirm node
+    running --> completed
+    running --> failed
+    running --> cancelled
+    blocked --> skipped : condition false
+```
 
 ## 16. 当前已实现与待优化
 
