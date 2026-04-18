@@ -300,6 +300,11 @@ class StreamingAgentClient:
 
     def _payload_to_chunk(self, task: Task, payload: dict[str, Any]) -> AgentStreamChunk:
         """Normalize one downstream payload dict into an `AgentStreamChunk`."""
+        # Handle nested format: additional_kwargs.node_output.output
+        nested_output = self._extract_nested_output(payload)
+        if nested_output:
+            payload = nested_output
+
         slot_memory = payload.get("slot_memory")
         if isinstance(slot_memory, dict):
             task.slot_memory.update(slot_memory)
@@ -309,21 +314,65 @@ class StreamingAgentClient:
         if isinstance(slot_memory, dict):
             normalized_payload.setdefault("slot_memory", dict(task.slot_memory))
 
-        ishandover = payload.get("ishandover")
+        # Support both ishandover and isHandOver
+        ishandover = payload.get("ishandover") or payload.get("isHandOver")
+        # Support handOverReason for logging/debugging
+        hand_over_reason = payload.get("handOverReason")
         status = self._resolve_status(payload.get("status"), ishandover)
         if not isinstance(ishandover, bool):
             ishandover = status in {TaskStatus.COMPLETED, TaskStatus.FAILED}
         if status == TaskStatus.WAITING_USER_INPUT:
             ishandover = False
 
+        # Extract content from payload or data array
+        content = self._extract_content(payload)
+
         return AgentStreamChunk(
             task_id=task.task_id,
             event=str(payload.get("event") or ("final" if ishandover else "message")),
-            content=str(payload.get("content") or payload.get("message") or ""),
+            content=content,
             ishandover=ishandover,
             status=status,
             payload=normalized_payload,
         )
+
+    def _extract_nested_output(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Extract output from nested additional_kwargs.node_output.output format."""
+        additional_kwargs = payload.get("additional_kwargs")
+        if not isinstance(additional_kwargs, dict):
+            return None
+
+        node_output = additional_kwargs.get("node_output")
+        if not isinstance(node_output, dict):
+            return None
+
+        output = node_output.get("output")
+        if not isinstance(output, str):
+            return None
+
+        try:
+            parsed = json.loads(output)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return None
+
+    def _extract_content(self, payload: dict[str, Any]) -> str:
+        """Extract content from payload, supporting data array format."""
+        content = payload.get("content") or payload.get("message") or ""
+        if content:
+            return str(content)
+
+        # Try to extract from data array (old format)
+        data = payload.get("data")
+        if isinstance(data, list) and data:
+            first_item = data[0] if isinstance(data[0], dict) else {}
+            answer = first_item.get("answer", "")
+            if answer:
+                return str(answer)
+
+        return ""
 
     def _resolve_status(self, raw_status: Any, ishandover: Any) -> TaskStatus:
         """Resolve agent-provided status fields into the canonical task status enum."""
