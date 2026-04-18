@@ -36,43 +36,53 @@ class RequestPayloadBuilder:
             payload = self._default_payload(task, user_input)
         else:
             payload: dict[str, Any] = {}
+            slots_data: dict[str, Any] = {}
+            config_variables: list[dict[str, str]] = []
+
             for target_path, source_path in task.field_mapping.items():
                 value = self._resolve_source(source_path, task, user_input)
                 if value is MISSING:
                     continue
-                self._set_nested_value(payload, target_path, value)
 
-        payload.setdefault(
-            "intent",
-            {
-                "code": task.intent_code,
-                "name": task.intent_name,
-                "description": task.intent_description,
-                "examples": list(task.intent_examples),
-            },
-        )
+                if target_path.startswith("config_variables.slots_data."):
+                    slot_key = target_path.removeprefix("config_variables.slots_data.")
+                    slots_data[slot_key] = value
+                elif target_path.startswith("config_variables."):
+                    var_name = target_path.removeprefix("config_variables.")
+                    str_value = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
+                    config_variables.append({"name": var_name, "value": str_value})
+                else:
+                    self._set_nested_value(payload, target_path, value)
+
+            if slots_data:
+                config_variables.append({
+                    "name": "slots_data",
+                    "value": json.dumps(slots_data, ensure_ascii=False),
+                })
+            if config_variables:
+                payload["config_variables"] = config_variables
 
         self._validate_required_fields(payload, task.request_schema)
         return payload
 
     def _default_payload(self, task: Task, user_input: str) -> dict[str, Any]:
-        """Build the default payload shape used when no explicit field mapping exists."""
+        """Build the config-variables payload shape used when no explicit field mapping exists."""
+        config_variables: list[dict[str, str]] = [
+            {"name": "custID", "value": str(task.input_context.get("cust_id", ""))},
+            {"name": "sessionID", "value": task.session_id},
+            {"name": "currentDisplay", "value": ""},
+            {"name": "agentSessionID", "value": task.session_id},
+        ]
+        if task.slot_memory:
+            config_variables.append({
+                "name": "slots_data",
+                "value": json.dumps(dict(task.slot_memory), ensure_ascii=False),
+            })
         return {
-            "sessionId": task.session_id,
-            "taskId": task.task_id,
-            "intentCode": task.intent_code,
-            "input": user_input,
-            "intent": {
-                "code": task.intent_code,
-                "name": task.intent_name,
-                "description": task.intent_description,
-                "examples": list(task.intent_examples),
-            },
-            "context": {
-                "recentMessages": task.input_context.get("recent_messages", []),
-                "longTermMemory": task.input_context.get("long_term_memory", []),
-            },
-            "slots": dict(task.slot_memory),
+            "session_id": task.session_id,
+            "txt": user_input,
+            "stream": True,
+            "config_variables": config_variables,
         }
 
     def _validate_required_fields(self, payload: dict[str, Any], request_schema: dict[str, Any]) -> None:

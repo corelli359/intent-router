@@ -106,6 +106,30 @@ class AgentCustomer(BaseModel):
     cust_id: str | None = Field(default=None, alias="custId")
 
 
+class ConfigVariablesRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(alias="session_id")
+    txt: str = ""
+    stream: bool = True
+    config_variables: list[dict[str, str]] = Field(default_factory=list)
+
+    def get_config_value(self, name: str, default: str = "") -> str:
+        for item in self.config_variables:
+            if item.get("name") == name:
+                return item.get("value", default)
+        return default
+
+    def get_slots_data(self) -> dict[str, Any]:
+        raw = self.get_config_value("slots_data")
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+
 class AgentConversationContext(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
