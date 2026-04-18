@@ -192,8 +192,10 @@ def test_graph_orchestrator_serialized_message_response_preserves_handover_graph
             recommendation_context=None,
             proactive_recommendation=None,
             return_snapshot: bool,
+            emit_events: bool,
         ) -> None:
             del content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
+            assert emit_events is False
             session = orchestrator.session_store.get_or_create(session_id, cust_id)
             session.attach_business(graph, router_only_mode=router_only, pending=False)
             session.touch()
@@ -231,5 +233,43 @@ def test_graph_orchestrator_serialized_message_response_preserves_handover_graph
             "payee_name": "王芳",
         }
         assert session.business_memory_digests[-1].status == "ready_for_dispatch"
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        captured: dict[str, object] = {}
+
+        async def handle_user_message(
+            session_id: str,
+            cust_id: str,
+            content: str,
+            *,
+            router_only: bool,
+            guided_selection=None,
+            recommendation_context=None,
+            proactive_recommendation=None,
+            return_snapshot: bool,
+            emit_events: bool,
+        ) -> None:
+            del content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
+            captured["emit_events"] = emit_events
+            session = orchestrator.session_store.get_or_create(session_id, cust_id)
+            session.router_only_mode = router_only
+            session.touch()
+
+        orchestrator.message_flow.handle_user_message = AsyncMock(side_effect=handle_user_message)
+
+        payload = await orchestrator.handle_user_message(
+            session_id="session_stream_like",
+            cust_id="cust_stream_like",
+            content="给王芳转 100 元",
+            router_only=True,
+        )
+
+        assert payload is not None
+        assert captured["emit_events"] is True
 
     asyncio.run(run())

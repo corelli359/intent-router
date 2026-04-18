@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-import json
 from dataclasses import dataclass, field
-from json import JSONDecodeError
 import logging
 import time
 from typing import Any, Awaitable, Callable, Literal, Protocol
@@ -12,9 +10,14 @@ from uuid import uuid4
 
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, model_validator
-from router_service.core.support.llm_barrier import build_llm_barrier_error
+from router_service.core.support.json_codec import (
+    JSONDecodeError,
+    extract_first_json_value,
+    json_dumpb,
+    json_dumps,
+    json_loads,
+)
 from router_service.core.support.jwt_utils import AuthHTTPClient
 from router_service.core.support.trace_logging import current_trace_id
 
@@ -22,27 +25,18 @@ AsyncDeltaCallback = Callable[[str], Awaitable[None]]
 logger = logging.getLogger(__name__)
 
 
+class LLMHTTPStatusError(RuntimeError):
+    """HTTP-layer LLM failure with provider status metadata for retry logic."""
+
+    def __init__(self, status_code: int, body: Any = None) -> None:
+        super().__init__(f"LLM HTTP request failed with status {status_code}")
+        self.status_code = status_code
+        self.body = body
+
+
 def extract_json_value(raw_text: str) -> Any:
     """Extract the first valid JSON object or array from raw LLM output text."""
-    text = raw_text.strip()
-    if not text:
-        raise ValueError("LLM response is empty")
-
-    try:
-        return json.loads(text)
-    except JSONDecodeError:
-        pass
-
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char not in "{[":
-            continue
-        try:
-            value, _ = decoder.raw_decode(text[index:])
-            return value
-        except JSONDecodeError:
-            continue
-    raise ValueError(f"Could not find JSON payload in LLM response: {raw_text[:200]}")
+    return extract_first_json_value(raw_text)
 
 
 class IntentRecognitionMatchPayload(BaseModel):
@@ -111,7 +105,7 @@ def llm_exception_is_retryable(exc: Exception) -> bool:
 
 @dataclass(slots=True)
 class LangChainLLMClient:
-    """LangChain-based JSON LLM client with rate-limit aware retry handling."""
+    """OpenAI-compatible JSON LLM client with rate-limit aware retry handling."""
 
     base_url: str
     default_model: str
@@ -122,7 +116,14 @@ class LangChainLLMClient:
     extra_headers: dict[str, str] = field(default_factory=dict)
     structured_output_method: Literal["function_calling", "json_mode", "json_schema"] = "json_mode"
     http_async_client: httpx.AsyncClient | None = None
-    barrier_enabled: bool = False
+
+    def __post_init__(self) -> None:
+        """Create a reusable async HTTP pool when the caller did not provide one."""
+        if self.http_async_client is None:
+            self.http_async_client = httpx.AsyncClient(
+                timeout=self.timeout_seconds,
+                limits=httpx.Limits(max_connections=None, max_keepalive_connections=256, keepalive_expiry=30.0),
+            )
 
     async def run_json(
         self,
@@ -137,32 +138,19 @@ class LangChainLLMClient:
         call_id = uuid4().hex[:8]
         trace_id = current_trace_id()
         prompt_name = prompt.__class__.__name__
-        if self.barrier_enabled:
-            logger.error(
-                "LLM barrier blocked call (trace_id=%s, call_id=%s, model=%s, base_url=%s, prompt=%s)",
+        variable_keys = ",".join(sorted(str(key) for key in variables.keys()))
+        started_at = time.perf_counter()
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "LLM call request (trace_id=%s, call_id=%s, model=%s, base_url=%s, prompt=%s, variable_keys=%s, messages=%s)",
                 trace_id,
                 call_id,
                 effective_model,
                 self.base_url,
                 prompt_name,
+                variable_keys,
+                self._render_prompt_messages(prompt, variables),
             )
-            raise build_llm_barrier_error(
-                model=effective_model,
-                prompt_name=prompt_name,
-                base_url=self.base_url,
-            )
-        variable_keys = ",".join(sorted(str(key) for key in variables.keys()))
-        started_at = time.perf_counter()
-        logger.debug(
-            "LLM call request (trace_id=%s, call_id=%s, model=%s, base_url=%s, prompt=%s, variable_keys=%s, messages=%s)",
-            trace_id,
-            call_id,
-            effective_model,
-            self.base_url,
-            prompt_name,
-            variable_keys,
-            self._render_prompt_messages(prompt, variables),
-        )
         try:
             response_text = await self._stream_prompt(prompt, variables, model=model, on_delta=on_delta)
             parsed_payload = extract_json_value(response_text)
@@ -200,26 +188,6 @@ class LangChainLLMClient:
             len(response_text),
         )
         return parsed_payload
-
-    def _create_model(self, model: str | None = None) -> ChatOpenAI:
-        """Create the configured ChatOpenAI client instance for one request."""
-        return ChatOpenAI(
-            model_name=model or self.default_model,
-            temperature=0,
-            openai_api_key=self._effective_api_key(),
-            openai_api_base=self.base_url,
-            request_timeout=self.timeout_seconds,
-            default_headers=self.extra_headers or None,
-            http_async_client=self.http_async_client,
-        )
-
-    def _effective_api_key(self) -> str | None:
-        """Return the API key expected by ChatOpenAI, using a placeholder for custom auth clients."""
-        if self.api_key is not None:
-            return self.api_key
-        if isinstance(self.http_async_client, AuthHTTPClient):
-            return "jwt-auth-placeholder"
-        return ""
 
     async def aclose(self) -> None:
         """Close the owned async HTTP client when present."""
@@ -267,15 +235,35 @@ class LangChainLLMClient:
         on_delta: AsyncDeltaCallback | None = None,
     ) -> str:
         """Execute one non-retried streaming prompt call."""
-        chain = prompt | self._create_model(model)
+        rendered_messages = self._render_chat_messages(prompt, variables)
+        request = self._request_payload(
+            messages=rendered_messages,
+            model=model,
+            stream=True,
+        )
         chunks: list[str] = []
-        async for chunk in chain.astream(variables):
-            text = self._chunk_text(chunk.content)
-            if not text:
-                continue
-            chunks.append(text)
-            if on_delta is not None:
-                await on_delta(text)
+        assert self.http_async_client is not None
+        async with self.http_async_client.stream(
+            "POST",
+            self._chat_completions_url(),
+            headers=self._request_headers(),
+            content=json_dumpb(request),
+        ) as response:
+            await self._raise_for_status(response)
+            async for line in response.aiter_lines():
+                raw_line = line.strip()
+                if not raw_line or not raw_line.startswith("data:"):
+                    continue
+                data = raw_line[5:].strip()
+                if data == "[DONE]":
+                    break
+                chunk_payload = json_loads(data)
+                text = self._chunk_text(self._stream_chunk_content(chunk_payload))
+                if not text:
+                    continue
+                chunks.append(text)
+                if on_delta is not None:
+                    await on_delta(text)
         return "".join(chunks)
 
     async def _invoke_once(
@@ -286,9 +274,21 @@ class LangChainLLMClient:
         model: str | None = None,
     ) -> str:
         """Execute one non-retried non-streaming prompt call."""
-        chain = prompt | self._create_model(model)
-        result = await chain.ainvoke(variables)
-        return self._chunk_text(result.content)
+        rendered_messages = self._render_chat_messages(prompt, variables)
+        request = self._request_payload(
+            messages=rendered_messages,
+            model=model,
+            stream=False,
+        )
+        assert self.http_async_client is not None
+        response = await self.http_async_client.post(
+            self._chat_completions_url(),
+            headers=self._request_headers(),
+            content=json_dumpb(request),
+        )
+        await self._raise_for_status(response)
+        payload = json_loads(response.content)
+        return self._chunk_text(self._completion_content(payload))
 
     def _should_retry_rate_limit(self, exc: Exception, *, attempt: int) -> bool:
         """Return whether one failed attempt should be retried as a rate-limit error."""
@@ -335,20 +335,115 @@ class LangChainLLMClient:
             return "".join(texts)
         return str(content or "")
 
-    def _render_prompt_messages(self, prompt: ChatPromptTemplate, variables: dict[str, Any]) -> str:
-        """Render the final prompt messages into a JSON log payload."""
-        try:
-            rendered_messages = prompt.format_messages(**variables)
-        except Exception as exc:
-            return json.dumps(
-                [{"role": "render_error", "content": f"prompt render failed: {exc}"}],
-                ensure_ascii=False,
-            )
-        serialized_messages = [
+    def _chat_completions_url(self) -> str:
+        """Return the full OpenAI-compatible chat completions endpoint."""
+        base_url = self.base_url.rstrip("/")
+        if base_url.endswith("/chat/completions"):
+            return base_url
+        return f"{base_url}/chat/completions"
+
+    def _request_headers(self) -> dict[str, str]:
+        """Build outbound HTTP headers for OpenAI-compatible requests."""
+        headers = {
+            "content-type": "application/json",
+            **self.extra_headers,
+        }
+        if self.api_key and not isinstance(self.http_async_client, AuthHTTPClient):
+            headers.setdefault("Authorization", f"Bearer {self.api_key}")
+        return headers
+
+    def _request_payload(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        model: str | None,
+        stream: bool,
+    ) -> dict[str, Any]:
+        """Build the OpenAI-compatible request payload."""
+        return {
+            "model": model or self.default_model,
+            "messages": messages,
+            "stream": stream,
+            "temperature": 0,
+        }
+
+    def _render_chat_messages(
+        self,
+        prompt: ChatPromptTemplate,
+        variables: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Render one prompt template into OpenAI-compatible chat messages."""
+        rendered_messages = prompt.format_messages(**variables)
+        return [
             {
-                "role": getattr(message, "type", message.__class__.__name__),
-                "content": self._chunk_text(getattr(message, "content", "")),
+                "role": self._message_role(message),
+                "content": self._message_content(getattr(message, "content", "")),
             }
             for message in rendered_messages
         ]
-        return json.dumps(serialized_messages, ensure_ascii=False)
+
+    def _message_role(self, message: Any) -> str:
+        """Normalize LangChain message roles to OpenAI-compatible roles."""
+        role = str(getattr(message, "type", message.__class__.__name__)).lower()
+        if role in {"human", "user"}:
+            return "user"
+        if role in {"ai", "assistant"}:
+            return "assistant"
+        if role == "system":
+            return "system"
+        if role == "tool":
+            return "tool"
+        return role
+
+    def _message_content(self, content: Any) -> Any:
+        """Preserve request content shapes accepted by OpenAI-compatible chat APIs."""
+        if isinstance(content, (str, list)):
+            return content
+        return str(content or "")
+
+    async def _raise_for_status(self, response: httpx.Response) -> None:
+        """Raise one retry-aware status error for non-2xx provider responses."""
+        if not response.is_error:
+            return
+        body_bytes = await response.aread()
+        try:
+            body = json_loads(body_bytes)
+        except Exception:
+            body = body_bytes.decode("utf-8", errors="replace")
+        raise LLMHTTPStatusError(response.status_code, body=body)
+
+    def _completion_content(self, payload: Any) -> Any:
+        """Extract assistant content from one non-streaming OpenAI-compatible response."""
+        if not isinstance(payload, dict):
+            raise ValueError("LLM response payload must be a JSON object")
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("LLM response payload does not contain choices")
+        first_choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            raise ValueError("LLM response payload does not contain message content")
+        return message.get("content", "")
+
+    def _stream_chunk_content(self, payload: Any) -> Any:
+        """Extract assistant delta content from one streaming OpenAI-compatible chunk."""
+        if not isinstance(payload, dict):
+            return ""
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+        first_choice = choices[0] if isinstance(choices[0], dict) else {}
+        delta = first_choice.get("delta")
+        if not isinstance(delta, dict):
+            return ""
+        return delta.get("content", "")
+
+    def _render_prompt_messages(self, prompt: ChatPromptTemplate, variables: dict[str, Any]) -> str:
+        """Render the final prompt messages into a JSON log payload."""
+        try:
+            rendered_messages = self._render_chat_messages(prompt, variables)
+        except Exception as exc:
+            return json_dumps(
+                [{"role": "render_error", "content": f"prompt render failed: {exc}"}],
+            )
+        return json_dumps(rendered_messages)

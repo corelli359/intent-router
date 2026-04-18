@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
+from fastapi.responses import ORJSONResponse
 
 from router_service.api.errors import (
     RouterApiError,
@@ -25,7 +25,6 @@ from router_service.api.dependencies import (
 )
 from router_service.api.routes.sessions import router as graph_session_router
 from router_service.core.support.agent_barrier import AgentBarrierTriggeredError
-from router_service.core.support.llm_barrier import LLMBarrierTriggeredError
 from router_service.logging_utils import (
     bind_router_logger_to_runtime_handlers,
     stop_router_logging_listener,
@@ -108,7 +107,12 @@ def create_router_app() -> FastAPI:
             app_logger.info("Router shutdown complete")
             stop_router_logging_listener(app_logger)
 
-    app = FastAPI(title="Intent Router API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Intent Router API",
+        version="0.1.0",
+        lifespan=lifespan,
+        default_response_class=ORJSONResponse,
+    )
     app.state.router_runtime = runtime
     app.add_middleware(
         CORSMiddleware,
@@ -136,7 +140,7 @@ def create_router_app() -> FastAPI:
     @app.exception_handler(RouterApiException)
     async def handle_router_api_exception(_, exc: RouterApiException) -> JSONResponse:
         """Render application-level router exceptions into a stable JSON envelope."""
-        return JSONResponse(
+        return ORJSONResponse(
             status_code=exc.status_code,
             content=exc.to_response().model_dump(mode="json"),
         )
@@ -151,7 +155,7 @@ def create_router_app() -> FastAPI:
                 details={"errors": jsonable_encoder(exc.errors())},
             )
         )
-        return JSONResponse(status_code=422, content=payload.model_dump(mode="json"))
+        return ORJSONResponse(status_code=422, content=payload.model_dump(mode="json"))
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(_, exc: HTTPException) -> JSONResponse:
@@ -164,18 +168,7 @@ def create_router_app() -> FastAPI:
                 details=details,
             )
         )
-        return JSONResponse(status_code=exc.status_code, content=payload.model_dump(mode="json"))
-
-    @app.exception_handler(LLMBarrierTriggeredError)
-    async def handle_llm_barrier_exception(_, exc: LLMBarrierTriggeredError) -> JSONResponse:
-        """Expose perf barrier failures as explicit client-visible errors."""
-        payload = RouterApiErrorResponse(
-            error=RouterApiError(
-                code=RouterErrorCode.ROUTER_LLM_BARRIER_TRIGGERED,
-                message=str(exc),
-            )
-        )
-        return JSONResponse(status_code=503, content=payload.model_dump(mode="json"))
+        return ORJSONResponse(status_code=exc.status_code, content=payload.model_dump(mode="json"))
 
     @app.exception_handler(AgentBarrierTriggeredError)
     async def handle_agent_barrier_exception(_, exc: AgentBarrierTriggeredError) -> JSONResponse:
@@ -186,7 +179,7 @@ def create_router_app() -> FastAPI:
                 message=str(exc),
             )
         )
-        return JSONResponse(status_code=503, content=payload.model_dump(mode="json"))
+        return ORJSONResponse(status_code=503, content=payload.model_dump(mode="json"))
 
     @app.exception_handler(Exception)
     async def handle_unexpected_exception(_, _exc: Exception) -> JSONResponse:
@@ -198,7 +191,7 @@ def create_router_app() -> FastAPI:
                 message="internal server error",
             )
         )
-        return JSONResponse(status_code=500, content=payload.model_dump(mode="json"))
+        return ORJSONResponse(status_code=500, content=payload.model_dump(mode="json"))
 
     app.include_router(graph_session_router, prefix="/api/router")
     app.include_router(graph_session_router, prefix="/api/router/v2")

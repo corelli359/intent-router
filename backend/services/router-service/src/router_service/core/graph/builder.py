@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import logging
 from typing import Any, Iterable, Literal, Protocol
 
@@ -15,14 +14,19 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
-from router_service.core.support.llm_barrier import llm_barrier_triggered
+from router_service.core.support.json_codec import json_dumps
 from router_service.core.support.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
     DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
     build_unified_graph_builder_prompt,
 )
-from router_service.core.recognition.recognizer import IntentRecognizer, NullIntentRecognizer, RecognitionResult, recognition_intent_payload
+from router_service.core.recognition.recognizer import (
+    IntentRecognizer,
+    NullIntentRecognizer,
+    RecognitionResult,
+    recognition_intents_json,
+)
 from router_service.core.slots.grounding import normalize_slot_memory
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
@@ -429,6 +433,42 @@ class LLMIntentGraphBuilder:
             human_prompt=human_prompt_template,
         )
 
+    async def _build_via_legacy_chain_with_diagnostic(
+        self,
+        *,
+        message: str,
+        intents: list[IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        recognition: RecognitionResult | None,
+        on_delta: AsyncDeltaCallback | None,
+        diagnostic_message: str,
+        diagnostic_details: dict[str, Any],
+    ) -> GraphBuildResult:
+        """Build through the legacy recognize+plan chain and append one diagnostic."""
+        result = await self._build_via_legacy_chain(
+            message=message,
+            intents=intents,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+            recognition=recognition,
+            on_delta=on_delta,
+        )
+        diagnostics = merge_diagnostics(
+            result.diagnostics,
+            [
+                diagnostic(
+                    RouterDiagnosticCode.GRAPH_BUILDER_LLM_FAILED_LEGACY_CHAIN,
+                    source="graph_builder",
+                    message=diagnostic_message,
+                    details=diagnostic_details,
+                )
+            ],
+        )
+        result.graph.diagnostics = merge_diagnostics(result.graph.diagnostics, diagnostics)
+        result.diagnostics = diagnostics
+        return result
+
     async def build(
         self,
         *,
@@ -454,51 +494,37 @@ class LLMIntentGraphBuilder:
                 prompt=self.prompt,
                 variables={
                     "message": message,
-                    "recent_messages_json": json.dumps(recent_messages, ensure_ascii=False),
-                    "long_term_memory_json": json.dumps(long_term_memory, ensure_ascii=False),
-                    "recognition_hint_json": json.dumps(
+                    "recent_messages_json": json_dumps(recent_messages),
+                    "long_term_memory_json": json_dumps(long_term_memory),
+                    "recognition_hint_json": json_dumps(
                         {
                             "primary": [match.model_dump(mode="json") for match in (recognition.primary if recognition else [])],
                             "candidates": [
                                 match.model_dump(mode="json") for match in (recognition.candidates if recognition else [])
                             ],
-                        },
-                        ensure_ascii=False,
+                        }
                     ),
-                    "intents_json": json.dumps(
-                        [recognition_intent_payload(intent) for intent in active_intents],
-                        ensure_ascii=False,
-                    ),
+                    "intents_json": recognition_intents_json(active_intents),
                 },
                 model=self.model,
                 on_delta=on_delta,
             )
         except Exception as exc:
-            if llm_exception_is_retryable(exc) or llm_barrier_triggered(exc):
+            if llm_exception_is_retryable(exc):
                 raise
             logger.debug("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
-            result = await self._build_via_legacy_chain(
+            return await self._build_via_legacy_chain_with_diagnostic(
                 message=message,
                 intents=active_intents,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
                 recognition=recognition,
                 on_delta=on_delta,
+                diagnostic_message="统一编图 LLM 失败，已降级到识别+规划链路",
+                diagnostic_details={
+                    "error_type": type(exc).__name__,
+                },
             )
-            diagnostics = merge_diagnostics(
-                result.diagnostics,
-                [
-                    diagnostic(
-                        RouterDiagnosticCode.GRAPH_BUILDER_LLM_FAILED_LEGACY_CHAIN,
-                        source="graph_builder",
-                        message="统一编图 LLM 失败，已降级到识别+规划链路",
-                        details={"error_type": type(exc).__name__},
-                    )
-                ],
-            )
-            result.graph.diagnostics = merge_diagnostics(result.graph.diagnostics, diagnostics)
-            result.diagnostics = diagnostics
-            return result
 
         try:
             payload = UnifiedGraphDraftPayload.model_validate(raw_payload)

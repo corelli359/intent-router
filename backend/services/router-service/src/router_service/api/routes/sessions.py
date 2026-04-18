@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from enum import StrEnum
-import json
 from contextlib import suppress
 
 from fastapi import APIRouter, Depends, Request, status
@@ -23,6 +22,7 @@ from router_service.core.shared.graph_domain import (
     RecommendationContextPayload,
 )
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator
+from router_service.core.support.json_codec import json_dumps
 
 
 router = APIRouter(tags=["router"])
@@ -280,7 +280,7 @@ def _serialize_session(session: object) -> dict[str, object]:
 
 def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
     """Encode one router event as an SSE frame."""
-    body = json.dumps(payload, ensure_ascii=False)
+    body = json_dumps(payload)
     return f"event: {event_name}\ndata: {body}\n\n"
 
 
@@ -333,6 +333,7 @@ async def post_message(
             guided_selection=request.guided_selection,
             recommendation_context=request.recommendation_context,
             proactive_recommendation=request.proactive_recommendation,
+            emit_events=False,
         )
     except ValueError as exc:
         raise RouterApiException(
@@ -459,6 +460,7 @@ async def post_message_stream(
                 recommendation_context=request.recommendation_context,
                 proactive_recommendation=request.proactive_recommendation,
                 return_snapshot=False,
+                emit_events=True,
             )
         )
         try:

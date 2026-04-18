@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from router_service.core.shared.diagnostics import (
     RouterDiagnostic,
@@ -10,11 +9,9 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
-from router_service.core.support.llm_barrier import llm_barrier_triggered
 from router_service.core.support.llm_client import llm_exception_is_retryable
 from router_service.core.support.trace_logging import current_trace_id, router_stage
 from router_service.core.recognition.recognizer import (
-    HeuristicIntentRecognizer,
     IntentRecognizer,
     NullIntentRecognizer,
     RecognitionResult,
@@ -232,15 +229,8 @@ class IntentUnderstandingService:
             )
 
     def _resolve_fast_recognizer(self) -> IntentRecognizer | None:
-        """Resolve the cheapest local recognizer available in the fallback chain."""
-        candidate: Any | None = self.recognizer
-        seen: set[int] = set()
-        while candidate is not None and id(candidate) not in seen:
-            seen.add(id(candidate))
-            if isinstance(candidate, (HeuristicIntentRecognizer, NullIntentRecognizer)):
-                return candidate
-            candidate = getattr(candidate, "fallback", None)
-        return None
+        """Use a local fast path only when semantic recognition is fully unavailable."""
+        return self.recognizer if isinstance(self.recognizer, NullIntentRecognizer) else None
 
     def _turn_recognition_unavailable(
         self,
@@ -309,7 +299,7 @@ class IntentUnderstandingService:
                 emit_events=False,
             )
         except Exception as exc:
-            if not (llm_exception_is_retryable(exc) or llm_barrier_triggered(exc)):
+            if not llm_exception_is_retryable(exc):
                 raise
             logger.debug(
                 "Turn recognition unavailable, falling back to conservative empty result",

@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -13,6 +11,7 @@ from router_service.catalog.intent_repository import (
     IntentRepositoryError,
     IntentRepositoryReadOnlyError,
 )
+from router_service.core.support.json_codec import JSONDecodeError, json_loads
 from router_service.models.intent import IntentPayload, IntentRecord, IntentStatus
 
 
@@ -133,8 +132,8 @@ class FileIntentRepository(IntentRepository):
                 f"Failed to read intent catalog file: {path}"
             ) from exc
         try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError as exc:
+            return json_loads(raw_text)
+        except JSONDecodeError as exc:
             raise IntentRepositoryError(
                 f"Intent catalog file must contain valid JSON: {path}"
             ) from exc

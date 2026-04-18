@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +20,7 @@ from router_service.catalog.intent_repository import (
     IntentNotFoundError,
     IntentRepository,
 )
+from router_service.core.support.json_codec import json_dumps, json_loads
 
 
 def utcnow() -> datetime:
@@ -259,18 +258,18 @@ class DatabaseIntentRepository(IntentRepository):
 
     def _dump_json(self, value: object) -> str:
         """Serialize a Python value into stable UTF-8 JSON text."""
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        return json_dumps(value, sort_keys=True)
 
     def _load_json_object(self, raw_value: str) -> dict[str, object]:
         """Load a JSON object column defensively, falling back to an empty dict."""
-        loaded = json.loads(raw_value or "{}")
+        loaded = json_loads(raw_value or "{}")
         if isinstance(loaded, dict):
             return loaded
         return {}
 
     def _load_json_list(self, raw_value: str) -> list[str]:
         """Load a JSON array column as a list of strings."""
-        loaded = json.loads(raw_value or "[]")
+        loaded = json_loads(raw_value or "[]")
         if isinstance(loaded, list):
             return [str(item) for item in loaded]
         return []
@@ -282,7 +281,7 @@ class DatabaseIntentRepository(IntentRepository):
 
     def _load_field_catalog(self, raw_value: str) -> list[IntentFieldDefinition]:
         """Parse field catalog JSON into validated field definitions."""
-        loaded = json.loads(raw_value or "[]")
+        loaded = json_loads(raw_value or "[]")
         if not isinstance(loaded, list):
             return []
         fields: list[IntentFieldDefinition] = []
@@ -295,7 +294,7 @@ class DatabaseIntentRepository(IntentRepository):
 
     def _load_slot_schema(self, raw_value: str) -> list[IntentSlotDefinition]:
         """Parse slot schema JSON into validated slot definitions."""
-        loaded = json.loads(raw_value or "[]")
+        loaded = json_loads(raw_value or "[]")
         if not isinstance(loaded, list):
             return []
         slots: list[IntentSlotDefinition] = []

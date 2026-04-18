@@ -91,5 +91,6 @@ Reason:
 - `scripts/minikube_deploy_intent.sh` still deploys the default manifests one file at a time. It does not apply overlays.
 - The perf-only deployment lives at `k8s/intent/overlays/perf` and should be applied separately with `kubectl apply -k k8s/intent/overlays/perf`.
 - The perf overlay is intended to be applied on top of the normal `intent` namespace deployment. It adds `router-api-test`, points `intent-admin-api` at `http://router-api-test.intent.svc.cluster.local:8000`, and scales all agent deployments in that namespace to `0`.
-- `router-api-test` enables `ROUTER_LLM_BARRIER_ENABLED=true` and mounts the intent catalog from an overlay-generated ConfigMap, so it does not depend on `.env.local` for the perf target itself.
+- The perf overlay also adds `intent-fake-llm`, and `router-api-test` calls it through `ROUTER_LLM_API_BASE_URL=http://intent-fake-llm.intent.svc.cluster.local:8000/v1`.
+- `router-api-test` still mounts the intent catalog from an overlay-generated ConfigMap, so it does not depend on `.env.local` for the perf target itself.
 - The normal deployment path stays unchanged until you explicitly apply the perf overlay. A practical sequence is: deploy the base stack first, then apply the overlay before running ladder tests.

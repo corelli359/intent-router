@@ -251,6 +251,7 @@ class GraphRouterOrchestrator:
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         return_snapshot: bool = True,
+        emit_events: bool = True,
     ) -> GraphRouterSnapshot | None:
         """Delegate one user message turn into the message-flow state machine."""
         trace_details = {
@@ -258,6 +259,7 @@ class GraphRouterOrchestrator:
             "has_guided_selection": guided_selection is not None,
             "has_recommendation_context": recommendation_context is not None,
             "has_proactive_recommendation": proactive_recommendation is not None,
+            "emit_events": emit_events,
         }
         with router_trace(
             logger,
@@ -278,6 +280,7 @@ class GraphRouterOrchestrator:
                         recommendation_context=recommendation_context,
                         proactive_recommendation=proactive_recommendation,
                         return_snapshot=False,
+                        emit_events=emit_events,
                     )
                 session = self.session_store.get(session_id)
                 snapshot = self._finalize_handover_business(session)
@@ -305,6 +308,7 @@ class GraphRouterOrchestrator:
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
+        emit_events: bool = False,
     ) -> SerializedResponseT:
         """Process one user message and serialize the response while the session is still locked."""
         trace_details = {
@@ -312,6 +316,7 @@ class GraphRouterOrchestrator:
             "has_guided_selection": guided_selection is not None,
             "has_recommendation_context": recommendation_context is not None,
             "has_proactive_recommendation": proactive_recommendation is not None,
+            "emit_events": emit_events,
         }
         with router_trace(
             logger,
@@ -332,6 +337,7 @@ class GraphRouterOrchestrator:
                         recommendation_context=recommendation_context,
                         proactive_recommendation=proactive_recommendation,
                         return_snapshot=False,
+                        emit_events=emit_events,
                     )
                 session = self.session_store.get(session_id)
                 serialized = self._finalize_handover_business_with(session, serializer)

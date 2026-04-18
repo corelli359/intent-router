@@ -458,6 +458,7 @@ class GraphCompiler:
         selected_items: list[ProactiveRecommendationItem],
         build_session_context: SessionContextBuilder,
         sanitize_recent_messages_for_planning: RecentMessageSanitizer,
+        emit_events: bool = False,
     ) -> GraphCompilationResult:
         """Compile a graph from proactive selections while preserving recommendation context."""
         context = build_session_context(session)
@@ -477,6 +478,7 @@ class GraphCompiler:
             proactive_recommendation=proactive_recommendation,
             skip_history_prefill=True,
             exclude_current_turn_from_context=True,
+            emit_events=emit_events,
         )
 
     def guided_selection_display_content(self, guided_selection: GuidedSelectionPayload | None) -> str:

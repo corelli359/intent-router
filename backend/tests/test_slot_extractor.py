@@ -16,6 +16,30 @@ class _RetryableLLMClient:
         raise _RetryableLLMError("rate limited")
 
 
+class _SuccessfulLLMClient:
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, variables, model, on_delta
+        return {
+            "slots": [
+                {
+                    "slot_key": "gas_account_number",
+                    "value": "88001234",
+                    "source": "user_message",
+                    "source_text": "燃气户号88001234",
+                    "confidence": 0.96,
+                },
+                {
+                    "slot_key": "amount",
+                    "value": "88",
+                    "source": "user_message",
+                    "source_text": "交88元",
+                    "confidence": 0.94,
+                },
+            ],
+            "ambiguousSlotKeys": [],
+        }
+
+
 def _gas_intent() -> IntentDefinition:
     return IntentDefinition(
         intent_code="pay_gas_bill",
@@ -44,9 +68,9 @@ def _gas_intent() -> IntentDefinition:
     )
 
 
-def test_slot_extractor_returns_structured_slots_from_heuristics() -> None:
+def test_slot_extractor_returns_structured_slots_from_llm() -> None:
     async def run() -> None:
-        extractor = SlotExtractor()
+        extractor = SlotExtractor(llm_client=_SuccessfulLLMClient())
         result = await extractor.extract(
             intent=_gas_intent(),
             node=GraphNodeState(
@@ -94,7 +118,7 @@ def test_slot_extractor_preserves_history_bound_seed_slots() -> None:
     asyncio.run(run())
 
 
-def test_slot_extractor_keeps_heuristic_slots_when_llm_is_rate_limited() -> None:
+def test_slot_extractor_keeps_empty_result_when_llm_is_rate_limited() -> None:
     async def run() -> None:
         extractor = SlotExtractor(llm_client=_RetryableLLMClient())
         result = await extractor.extract(
@@ -110,7 +134,9 @@ def test_slot_extractor_keeps_heuristic_slots_when_llm_is_rate_limited() -> None
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {"gas_account_number": "88001234"}
+        assert result.slot_memory == {}
         assert result.ambiguous_slot_keys == []
+        assert result.diagnostics
+        assert result.diagnostics[0].code == "SLOT_EXTRACTOR_LLM_RETRYABLE_UNAVAILABLE"
 
     asyncio.run(run())

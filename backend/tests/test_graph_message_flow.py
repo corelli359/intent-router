@@ -36,6 +36,25 @@ class DummyGraphCompiler:
         return graph
 
 
+class RecordingGraphCompiler(DummyGraphCompiler):
+    def __init__(self) -> None:
+        self.last_compile_kwargs: dict[str, Any] | None = None
+
+    async def compile_message(self, session, content: str, **kwargs):
+        del session, content
+        self.last_compile_kwargs = kwargs
+        return type(
+            "GraphCompilationResult",
+            (),
+            {
+                "recognition": RecognitionResult(primary=[], candidates=[]),
+                "diagnostics": [],
+                "graph": None,
+                "no_match": True,
+            },
+        )()
+
+
 class DummyRecommendationRouter:
     async def decide(self, *args, **kwargs) -> Any:  # pragma: no cover
         raise AssertionError("proactive routing is not part of these tests")
@@ -103,7 +122,7 @@ class CallbackTracker:
         self.actions.append(("cancel_current_node", reason))
 
     async def route_new_message(self, session, content: str, **kwargs) -> None:
-        self.actions.append(("route_new_message", content, kwargs.get("recognition")))
+        self.actions.append(("route_new_message", content, kwargs))
 
 
 def snapshot_builder(session_store: GraphSessionStore) -> Callable[[str], GraphRouterSnapshot]:
@@ -196,6 +215,19 @@ def test_pending_graph_replan_routes_new_message() -> None:
     assert any(call[0] == "route_new_message" for call in callbacks.actions)
 
 
+def test_pending_graph_replan_preserves_emit_events_flag() -> None:
+    decision = TurnDecisionPayload(action="replan")
+    flow, store, callbacks, _ = build_message_flow(StubUnderstandingService(pending=decision))
+    session = store.create(cust_id="cust", session_id="session-id")
+    session.pending_graph = make_graph(GraphStatus.WAITING_CONFIRMATION)
+
+    asyncio.run(flow.handle_pending_graph_turn(session, "reroute", emit_events=True))
+
+    route_calls = [call for call in callbacks.actions if call[0] == "route_new_message"]
+    assert route_calls
+    assert route_calls[-1][2]["emit_events"] is True
+
+
 def test_pending_graph_cancel_triggers_cancel_callback() -> None:
     decision = TurnDecisionPayload(action="cancel_pending_graph")
     flow, store, callbacks, _ = build_message_flow(StubUnderstandingService(pending=decision))
@@ -265,3 +297,55 @@ def test_waiting_node_replan_suspends_and_rebuilds() -> None:
     assert session.current_graph is None
     assert session.workflow.suspended_business_ids
     assert any(call[0] == "route_new_message" for call in callbacks.actions)
+
+
+def test_waiting_node_replan_preserves_emit_events_flag() -> None:
+    decision = TurnDecisionPayload(action="replan")
+    flow, store, callbacks, _ = build_message_flow(StubUnderstandingService(waiting=decision))
+    session = store.create(cust_id="cust", session_id="session-id")
+    graph = make_graph(GraphStatus.RUNNING)
+    node = GraphNodeState(
+        intent_code="intent",
+        title="wait",
+        confidence=0.5,
+        status=GraphNodeStatus.WAITING_USER_INPUT,
+    )
+    graph.nodes.append(node)
+    session.current_graph = graph
+
+    asyncio.run(flow.handle_waiting_node_turn(session, node, "replan", emit_events=True))
+
+    route_calls = [call for call in callbacks.actions if call[0] == "route_new_message"]
+    assert route_calls
+    assert route_calls[-1][2]["emit_events"] is True
+
+
+def test_route_new_message_forwards_emit_events_to_graph_compiler() -> None:
+    compiler = RecordingGraphCompiler()
+    understanding_service = StubUnderstandingService()
+    session_store = GraphSessionStore()
+    state_sync = DummyStateSync()
+    callbacks = CallbackTracker()
+    flow = GraphMessageFlow(
+        session_store=session_store,
+        graph_compiler=compiler,
+        understanding_service=understanding_service,
+        recommendation_router=DummyRecommendationRouter(),
+        state_sync=state_sync,
+        snapshot_session=snapshot_builder(session_store),
+        get_waiting_node=waiting_node_selector,
+        build_session_context=lambda _: {"recent_messages": [], "long_term_memory": []},
+        activate_graph=callbacks.activate_graph,
+        drain_graph=callbacks.drain_graph,
+        cancel_pending_graph=callbacks.cancel_pending_graph,
+        cancel_current_graph=callbacks.cancel_current_graph,
+        confirm_pending_graph=callbacks.confirm_pending_graph,
+        resume_waiting_node=callbacks.resume_waiting_node,
+        cancel_current_node=callbacks.cancel_current_node,
+    )
+    session = session_store.create(cust_id="cust", session_id="session-id")
+
+    asyncio.run(flow.route_new_message(session, "给王芳转 100 元", emit_events=True))
+
+    assert compiler.last_compile_kwargs is not None
+    assert compiler.last_compile_kwargs["emit_events"] is True

@@ -102,6 +102,7 @@ class GraphMessageFlow:
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         return_snapshot: bool = True,
+        emit_events: bool = False,
     ) -> GraphRouterSnapshot | None:
         """Entry point for all message-driven routing."""
         with router_stage(
@@ -111,6 +112,7 @@ class GraphMessageFlow:
             has_guided_selection=guided_selection is not None,
             has_recommendation_context=recommendation_context is not None,
             has_proactive_recommendation=proactive_recommendation is not None,
+            emit_events=emit_events,
         ):
             session = self.session_store.get_or_create(session_id, cust_id)
             session.last_diagnostics = []
@@ -129,6 +131,7 @@ class GraphMessageFlow:
                         session,
                         content=message_content,
                         proactive_recommendation=proactive_recommendation,
+                        emit_events=emit_events,
                     )
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
@@ -141,18 +144,24 @@ class GraphMessageFlow:
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
-                    await self.handle_pending_graph_turn(session, message_content)
+                    await self.handle_pending_graph_turn(session, message_content, emit_events=emit_events)
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 waiting_node = self.get_waiting_node(session)
                 if waiting_node is not None:
-                    await self.handle_waiting_node_turn(session, waiting_node, message_content)
+                    await self.handle_waiting_node_turn(
+                        session,
+                        waiting_node,
+                        message_content,
+                        emit_events=emit_events,
+                    )
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 await self.route_new_message(
                     session,
                     message_content,
                     recommendation_context=recommendation_context,
+                    emit_events=emit_events,
                 )
             except Exception as exc:
                 if not llm_exception_is_retryable(exc):
@@ -182,6 +191,7 @@ class GraphMessageFlow:
         *,
         content: str,
         proactive_recommendation: ProactiveRecommendationPayload,
+        emit_events: bool = False,
     ) -> None:
         """Handle one proactive recommendation turn from the upstream recommender."""
         with router_stage(
@@ -215,7 +225,7 @@ class GraphMessageFlow:
                 return
 
             if decision.route_mode == ProactiveRecommendationRouteMode.SWITCH_TO_FREE_DIALOG:
-                await self.route_new_message(session, content)
+                await self.route_new_message(session, content, emit_events=emit_events)
                 return
 
             if not selected_items:
@@ -238,6 +248,7 @@ class GraphMessageFlow:
                 content=content,
                 proactive_recommendation=proactive_recommendation,
                 selected_items=selected_items,
+                emit_events=emit_events,
             )
 
     async def handle_guided_selection_turn(
@@ -273,6 +284,7 @@ class GraphMessageFlow:
         proactive_defaults: list[ProactiveRecommendationItem] | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         skip_history_prefill: bool = False,
+        emit_events: bool = False,
     ) -> None:
         """Compile and route a normal free-form user message."""
         with router_stage(
@@ -296,6 +308,7 @@ class GraphMessageFlow:
                 proactive_recommendation=proactive_recommendation,
                 skip_history_prefill=skip_history_prefill,
                 exclude_current_turn_from_context=True,
+                emit_events=emit_events,
             )
             session.candidate_intents = compile_result.recognition.candidates
             session.last_diagnostics = list(compile_result.diagnostics or [])
@@ -357,6 +370,7 @@ class GraphMessageFlow:
         content: str,
         proactive_recommendation: ProactiveRecommendationPayload,
         selected_items: list[ProactiveRecommendationItem],
+        emit_events: bool = False,
     ) -> None:
         """Compile a graph from proactive items while preserving recommendation defaults."""
         with router_stage(
@@ -371,6 +385,7 @@ class GraphMessageFlow:
                 selected_items=selected_items,
                 build_session_context=self.build_session_context,
                 sanitize_recent_messages_for_planning=self.sanitize_recent_messages_for_planning,
+                emit_events=emit_events,
             )
             session.candidate_intents = compile_result.recognition.candidates
             session.last_diagnostics = list(compile_result.diagnostics or [])
@@ -397,7 +412,13 @@ class GraphMessageFlow:
             await self.state_sync.publish_graph_state(session, "graph.created", "已创建执行图")
             await self.drain_graph(session, graph.source_message)
 
-    async def handle_pending_graph_turn(self, session: GraphSessionState, content: str) -> None:
+    async def handle_pending_graph_turn(
+        self,
+        session: GraphSessionState,
+        content: str,
+        *,
+        emit_events: bool = False,
+    ) -> None:
         """Interpret a turn while a proposed graph is waiting for confirmation."""
         with router_stage(logger, "message_flow.handle_pending_graph_turn"):
             pending_graph = session.pending_graph
@@ -431,6 +452,7 @@ class GraphMessageFlow:
                     recognition=turn_result.recognition,
                     recent_messages=[],
                     long_term_memory=[],
+                    emit_events=emit_events,
                 )
                 return
             await self.state_sync.publish_graph_waiting_hint(session)
@@ -440,6 +462,8 @@ class GraphMessageFlow:
         session: GraphSessionState,
         waiting_node: GraphNodeState,
         content: str,
+        *,
+        emit_events: bool = False,
     ) -> None:
         """Interpret a turn while the current node is blocked on user input."""
         with router_stage(
@@ -482,6 +506,7 @@ class GraphMessageFlow:
                     recognition=turn_result.recognition,
                     recent_messages=[],
                     long_term_memory=[],
+                    emit_events=emit_events,
                 )
                 return
             await self.state_sync.publish_session_state(session, "session.waiting_user_input")

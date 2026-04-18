@@ -203,7 +203,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-seconds", type=float, default=5.0, help="Duration per step.")
     parser.add_argument("--timeout-seconds", type=float, default=30.0, help="HTTP timeout per flow.")
     parser.add_argument("--execution-mode", default="router_only", help="Message executionMode.")
-    parser.add_argument("--content", default="给小红转200", help="Test message content.")
+    parser.add_argument("--content", default="转5000元给朋友", help="Test message content.")
     parser.add_argument("--target-pid", type=int, default=None, help="Optional router PID for ps sampling.")
     parser.add_argument("--monitor-interval-seconds", type=float, default=0.5, help="Process stat sample interval.")
     args = parser.parse_args()

@@ -1,12 +1,11 @@
 from __future__ import annotations
-
-import json
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 import httpx
 
 from router_service.core.shared.domain import AgentStreamChunk, Task, TaskStatus
+from router_service.core.support.json_codec import json_loads
 
 MISSING = object()
 
@@ -210,7 +209,7 @@ class StreamingAgentClient:
                 content_type = response.headers.get("content-type", "")
                 if "application/json" in content_type and "stream" not in content_type:
                     raw_body = await response.aread()
-                    parsed = json.loads(raw_body.decode("utf-8"))
+                    parsed = json_loads(raw_body)
                     for chunk in self._payloads_to_chunks(task, parsed):
                         emitted_chunk = True
                         yield chunk
@@ -271,7 +270,7 @@ class StreamingAgentClient:
         """Parse one textual stream frame into normalized agent chunks."""
         if not text or text == "[DONE]":
             return []
-        parsed = json.loads(text)
+        parsed = json_loads(text)
         return self._payloads_to_chunks(task, parsed)
 
     def _payloads_to_chunks(self, task: Task, payload: Any) -> list[AgentStreamChunk]:

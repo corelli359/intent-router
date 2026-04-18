@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, model_validator
@@ -11,7 +9,7 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
-from router_service.core.support.llm_barrier import llm_barrier_triggered
+from router_service.core.support.json_codec import json_dumps
 from router_service.core.support.llm_client import JsonLLMClient
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
@@ -31,6 +29,29 @@ from router_service.core.shared.graph_domain import (
     GraphNodeState,
     GraphStatus,
 )
+
+
+_PLANNER_INTENT_DEFINITION_CACHE_LIMIT = 2048
+_planner_intent_definition_cache: dict[int, tuple[IntentDefinition, dict[str, Any]]] = {}
+
+
+def planner_intent_definition_payload(intent: IntentDefinition) -> dict[str, Any]:
+    """Build and cache the planner-side static definition payload for one intent."""
+    cached = _planner_intent_definition_cache.get(id(intent))
+    if cached is not None and cached[0] is intent:
+        return cached[1]
+    payload = {
+        "name": intent.name,
+        "description": intent.description,
+        "examples": intent.examples,
+        "field_catalog": [field.model_dump(mode="json") for field in intent.field_catalog],
+        "slot_schema": [slot.model_dump(mode="json") for slot in intent.slot_schema],
+        "graph_build_hints": intent.graph_build_hints.model_dump(mode="json"),
+    }
+    if len(_planner_intent_definition_cache) >= _PLANNER_INTENT_DEFINITION_CACHE_LIMIT:
+        _planner_intent_definition_cache.clear()
+    _planner_intent_definition_cache[id(intent)] = (intent, payload)
+    return payload
 
 
 class GraphPlanConditionPayload(BaseModel):
@@ -342,6 +363,38 @@ class LLMIntentGraphPlanner:
             human_prompt=human_prompt_template,
         )
 
+    async def _fallback_plan(
+        self,
+        *,
+        message: str,
+        matches: list[IntentMatch],
+        intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str] | None,
+        long_term_memory: list[str] | None,
+        diagnostic_message: str,
+        diagnostic_details: dict[str, Any],
+    ) -> ExecutionGraphState:
+        """Run the fallback planner and attach one planner diagnostic."""
+        graph = await self.fallback.plan(
+            message=message,
+            matches=matches,
+            intents_by_code=intents_by_code,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+        )
+        graph.diagnostics = merge_diagnostics(
+            graph.diagnostics,
+            [
+                diagnostic(
+                    RouterDiagnosticCode.GRAPH_PLANNER_LLM_FAILED_FALLBACK,
+                    source="planner",
+                    message=diagnostic_message,
+                    details=diagnostic_details,
+                )
+            ],
+        )
+        return graph
+
     async def plan(
         self,
         *,
@@ -366,65 +419,37 @@ class LLMIntentGraphPlanner:
                 prompt=self.prompt,
                 variables={
                     "message": message,
-                    "recent_messages_json": json.dumps(recent_messages or [], ensure_ascii=False),
-                    "long_term_memory_json": json.dumps(long_term_memory or [], ensure_ascii=False),
-                    "matched_intents_json": json.dumps(
+                    "recent_messages_json": json_dumps(recent_messages or []),
+                    "long_term_memory_json": json_dumps(long_term_memory or []),
+                    "matched_intents_json": json_dumps(
                         [
                             {
                                 "intent_code": match.intent_code,
                                 "confidence": match.confidence,
                                 "reason": match.reason,
-                                "definition": {
-                                    "name": intents_by_code[match.intent_code].name,
-                                    "description": intents_by_code[match.intent_code].description,
-                                    "examples": intents_by_code[match.intent_code].examples,
-                                    "field_catalog": [
-                                        field.model_dump(mode="json")
-                                        for field in intents_by_code[match.intent_code].field_catalog
-                                    ],
-                                    "slot_schema": [
-                                        slot.model_dump(mode="json")
-                                        for slot in intents_by_code[match.intent_code].slot_schema
-                                    ],
-                                    "graph_build_hints": intents_by_code[match.intent_code].graph_build_hints.model_dump(
-                                        mode="json"
-                                    ),
-                                },
+                                "definition": planner_intent_definition_payload(intents_by_code[match.intent_code]),
                             }
                             for match in matches
                             if match.intent_code in intents_by_code
-                        ],
-                        ensure_ascii=False,
+                        ]
                     ),
                 },
                 model=self.model,
             )
             payload = GraphPlanningPayload.model_validate(raw_payload)
         except Exception as exc:
-            if llm_barrier_triggered(exc):
-                raise
-            graph = await self.fallback.plan(
+            return await self._fallback_plan(
                 message=message,
                 matches=matches,
                 intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
+                diagnostic_message="图规划 LLM 失败，已降级到顺序规划器",
+                diagnostic_details={
+                    "fallback": type(self.fallback).__name__,
+                    "error_type": type(exc).__name__,
+                },
             )
-            graph.diagnostics = merge_diagnostics(
-                graph.diagnostics,
-                [
-                    diagnostic(
-                        RouterDiagnosticCode.GRAPH_PLANNER_LLM_FAILED_FALLBACK,
-                        source="planner",
-                        message="图规划 LLM 失败，已降级到顺序规划器",
-                        details={
-                            "fallback": type(self.fallback).__name__,
-                            "error_type": type(exc).__name__,
-                        },
-                    )
-                ],
-            )
-            return graph
 
         graph = self.normalizer.normalize(
             payload=payload,
@@ -488,7 +513,7 @@ class LLMGraphTurnInterpreter:
             message=message,
             waiting_node_json="null",
             current_graph_json="null",
-            pending_graph_json=json.dumps(pending_graph.model_dump(mode="json"), ensure_ascii=False),
+            pending_graph_json=json_dumps(pending_graph.model_dump(mode="json")),
             recognition=recognition,
             fallback=lambda: self.fallback.interpret_pending_graph(
                 message=message,
@@ -509,8 +534,8 @@ class LLMGraphTurnInterpreter:
         return await self._interpret(
             mode="waiting_node",
             message=message,
-            waiting_node_json=json.dumps(waiting_node.model_dump(mode="json"), ensure_ascii=False),
-            current_graph_json=json.dumps(current_graph.model_dump(mode="json"), ensure_ascii=False),
+            waiting_node_json=json_dumps(waiting_node.model_dump(mode="json")),
+            current_graph_json=json_dumps(current_graph.model_dump(mode="json")),
             pending_graph_json="null",
             recognition=recognition,
             fallback=lambda: self.fallback.interpret_waiting_node(
@@ -542,19 +567,13 @@ class LLMGraphTurnInterpreter:
                     "waiting_node_json": waiting_node_json,
                     "current_graph_json": current_graph_json,
                     "pending_graph_json": pending_graph_json,
-                    "primary_intents_json": json.dumps(
-                        [match.model_dump(mode="json") for match in recognition.primary],
-                        ensure_ascii=False,
-                    ),
-                    "candidate_intents_json": json.dumps(
-                        [match.model_dump(mode="json") for match in recognition.candidates],
-                        ensure_ascii=False,
+                    "primary_intents_json": json_dumps([match.model_dump(mode="json") for match in recognition.primary]),
+                    "candidate_intents_json": json_dumps(
+                        [match.model_dump(mode="json") for match in recognition.candidates]
                     ),
                 },
                 model=self.model,
             )
             return TurnDecisionPayload.model_validate(raw_payload)
-        except Exception as exc:
-            if llm_barrier_triggered(exc):
-                raise
+        except Exception:
             return await fallback()

@@ -8,8 +8,10 @@ import pytest
 
 
 from router_service.core.shared.domain import IntentDefinition  # noqa: E402
+from router_service.core.shared.diagnostics import RouterDiagnosticCode  # noqa: E402
 from router_service.core.shared.graph_domain import GraphStatus, SlotBindingSource  # noqa: E402
 from router_service.core.graph.builder import GraphDraftNormalizer, LLMIntentGraphBuilder, UnifiedGraphDraftPayload  # noqa: E402
+from router_service.core.recognition.recognizer import RecognitionResult  # noqa: E402
 
 
 class _StaticLLMClient:
@@ -276,6 +278,41 @@ def test_unified_graph_builder_propagates_retryable_llm_errors() -> None:
                 recent_messages=[],
                 long_term_memory=[],
             )
+
+    asyncio.run(run())
+
+
+def test_unified_graph_builder_falls_back_to_legacy_chain_when_llm_fails() -> None:
+    class _FailingLLMClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, variables, model, on_delta
+            raise RuntimeError("llm unavailable")
+
+    class _FallbackRecognizer:
+        async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+            del message, intents, recent_messages, long_term_memory, on_delta
+            return RecognitionResult(
+                primary=[],
+                candidates=[],
+                diagnostics=[],
+            )
+
+    builder = LLMIntentGraphBuilder(
+        _FailingLLMClient(),
+        fallback_recognizer=_FallbackRecognizer(),
+    )
+
+    async def run() -> None:
+        result = await builder.build(
+            message="帮我查一下余额",
+            intents=[_balance_intent()],
+            recent_messages=[],
+            long_term_memory=[],
+        )
+
+        assert result.graph.summary == "未识别到明确事项"
+        assert any(item.code == RouterDiagnosticCode.GRAPH_BUILDER_LLM_FAILED_LEGACY_CHAIN for item in result.diagnostics or [])
+        assert any(item.details.get("error_type") == "RuntimeError" for item in result.diagnostics or [])
 
     asyncio.run(run())
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from router_service.core.graph.planner import TurnDecisionPayload
-from router_service.core.recognition.recognizer import HeuristicIntentRecognizer, RecognitionResult
+from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.recognition.understanding_service import IntentUnderstandingService
-from router_service.core.shared.domain import IntentDefinition
+from router_service.core.shared.domain import IntentDefinition, IntentMatch
 from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
 
 
@@ -18,11 +18,23 @@ class _Catalog:
 
 
 class _FullRecognizerShouldNotRun:
-    def __init__(self, fallback) -> None:
-        self.fallback = fallback
+    def __init__(self) -> None:
+        self.calls = 0
 
     async def recognize(self, *args, **kwargs):
-        raise AssertionError("full recognizer should not run on fast-path")
+        del args, kwargs
+        self.calls += 1
+        return RecognitionResult(
+            primary=[
+                IntentMatch(
+                    intent_code="transfer_money",
+                    confidence=0.96,
+                    reason="llm recognized transfer intent",
+                )
+            ],
+            candidates=[],
+            diagnostics=[],
+        )
 
 
 class _TurnInterpreter:
@@ -55,7 +67,7 @@ class _EventPublisher:
         del session, result
 
 
-def test_waiting_node_turn_uses_fast_recognizer_fallback() -> None:
+def test_waiting_node_turn_uses_full_recognizer_when_no_local_fast_path_exists() -> None:
     async def run() -> None:
         intents = [
             IntentDefinition(
@@ -70,9 +82,10 @@ def test_waiting_node_turn_uses_fast_recognizer_fallback() -> None:
                 candidate_threshold=0.5,
             )
         ]
+        recognizer = _FullRecognizerShouldNotRun()
         service = IntentUnderstandingService(
             intent_catalog=_Catalog(intents),
-            recognizer=_FullRecognizerShouldNotRun(HeuristicIntentRecognizer()),
+            recognizer=recognizer,
             graph_builder=None,
             turn_interpreter=_TurnInterpreter(),
             event_publisher=_EventPublisher(),
@@ -95,5 +108,6 @@ def test_waiting_node_turn_uses_fast_recognizer_fallback() -> None:
         )
 
         assert [match.intent_code for match in result.recognition.primary] == ["transfer_money"]
+        assert recognizer.calls == 1
 
     asyncio.run(run())

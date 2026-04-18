@@ -28,7 +28,6 @@ from router_service.core.prompts.prompt_templates import (
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
 )
 from router_service.core.recognition.recognizer import (
-    HeuristicIntentRecognizer,
     LLMIntentRecognizer,
     NullIntentRecognizer,
 )
@@ -132,16 +131,10 @@ def build_router_runtime() -> RouterRuntime:
     )
     llm_client = _build_llm_client()
     intent_catalog = RepositoryIntentCatalog(get_intent_repository())
-    recognizer_fallback = (
-        HeuristicIntentRecognizer()
-        if getattr(settings, "router_llm_barrier_enabled", False)
-        else NullIntentRecognizer()
-    )
     baseline_recognizer = (
         LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=recognizer_fallback,
             system_prompt_template=settings.llm_recognizer_system_prompt_template or DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
             human_prompt_template=settings.llm_recognizer_human_prompt_template or DEFAULT_RECOGNIZER_HUMAN_PROMPT,
         )
@@ -156,14 +149,12 @@ def build_router_runtime() -> RouterRuntime:
         domain_recognizer = LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=recognizer_fallback,
             system_prompt_template=DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
             human_prompt_template=DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
         )
         leaf_recognizer = LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=recognizer_fallback,
             system_prompt_template=DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
             human_prompt_template=DEFAULT_LEAF_ROUTER_HUMAN_PROMPT,
         )
@@ -254,24 +245,6 @@ def build_router_runtime() -> RouterRuntime:
 def _build_llm_client() -> LangChainLLMClient | None:
     """Create the shared LLM client when the required connection settings are present."""
     settings = get_settings()
-    if getattr(settings, "router_llm_barrier_enabled", False):
-        logger.info(
-            "Router LLM barrier enabled (base_url=%s, model=%s, structured_output_method=%s)",
-            settings.llm_api_base_url,
-            settings.default_llm_model or "router-llm-barrier",
-            settings.llm_structured_output_method,
-        )
-        return LangChainLLMClient(
-            base_url=settings.llm_api_base_url or "barrier://router-llm-disabled",
-            api_key=settings.llm_api_key,
-            default_model=settings.default_llm_model or "router-llm-barrier",
-            timeout_seconds=settings.llm_timeout_seconds,
-            rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),
-            rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),
-            extra_headers=settings.llm_headers,
-            structured_output_method=settings.llm_structured_output_method,
-            barrier_enabled=True,
-        )
     if not settings.llm_connection_ready or settings.default_llm_model is None:
         logger.info(
             "Router LLM client disabled (base_url=%s, model=%s)",
@@ -286,10 +259,11 @@ def _build_llm_client() -> LangChainLLMClient | None:
         settings.llm_structured_output_method,
         settings.llm_auth_http_client_enabled,
     )
+    limits = httpx.Limits(max_connections=None, max_keepalive_connections=256, keepalive_expiry=30.0)
     http_async_client = (
-        AuthHTTPClient(timeout=settings.llm_timeout_seconds)
+        AuthHTTPClient(timeout=settings.llm_timeout_seconds, limits=limits)
         if settings.llm_auth_http_client_enabled
-        else httpx.AsyncClient(timeout=settings.llm_timeout_seconds)
+        else httpx.AsyncClient(timeout=settings.llm_timeout_seconds, limits=limits)
     )
     return LangChainLLMClient(
         base_url=settings.llm_api_base_url or "",

@@ -10,6 +10,7 @@ resources:
   - ../../gas-bill-agent.yaml
   - ../../forex-agent.yaml
   - ../../fallback-agent.yaml
+  - fake-llm.yaml
   - router-api-test.yaml
 generatorOptions:
   disableNameSuffixHash: true

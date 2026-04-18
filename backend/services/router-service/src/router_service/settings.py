@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field
 
 from router_service.core.support.agent_barrier import ROUTER_AGENT_BARRIER_ENABLED_ENV
-from router_service.core.support.llm_barrier import ROUTER_LLM_BARRIER_ENABLED_ENV
+from router_service.core.support.json_codec import json_loads
 
 
 ROUTER_ENV_FILE_ENV = "ROUTER_ENV_FILE"
@@ -50,7 +49,7 @@ def _env_headers(name: str) -> dict[str, str]:
     raw_value = os.getenv(name)
     if not raw_value:
         return {}
-    parsed = json.loads(raw_value)
+    parsed = json_loads(raw_value)
     if not isinstance(parsed, dict):
         raise RuntimeError(f"{name} must be a JSON object")
     return {str(key): str(value) for key, value in parsed.items()}
@@ -132,7 +131,6 @@ class Settings(BaseModel):
     llm_rate_limit_retry_delay_seconds: float = Field(default=2.0, gt=0)
     agent_http_timeout_seconds: float = Field(default=60.0, gt=0)
     llm_headers: dict[str, str] = Field(default_factory=dict)
-    router_llm_barrier_enabled: bool = Field(default=False)
     router_agent_barrier_enabled: bool = Field(default=False)
 
     @property
@@ -208,6 +206,5 @@ class Settings(BaseModel):
             ),
             agent_http_timeout_seconds=float(os.getenv("ROUTER_AGENT_HTTP_TIMEOUT_SECONDS", "60")),
             llm_headers=_env_headers("ROUTER_LLM_HEADERS_JSON"),
-            router_llm_barrier_enabled=_parse_bool_env(ROUTER_LLM_BARRIER_ENABLED_ENV, False),
             router_agent_barrier_enabled=_parse_bool_env(ROUTER_AGENT_BARRIER_ENABLED_ENV, False),
         )
