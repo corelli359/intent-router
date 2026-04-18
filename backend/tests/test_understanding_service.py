@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import asyncio
+
+from router_service.core.graph.planner import TurnDecisionPayload
+from router_service.core.recognition.recognizer import HeuristicIntentRecognizer, RecognitionResult
+from router_service.core.recognition.understanding_service import IntentUnderstandingService
+from router_service.core.shared.domain import IntentDefinition
+from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
+
+
+class _Catalog:
+    def __init__(self, intents: list[IntentDefinition]) -> None:
+        self._intents = intents
+
+    def active_intents_by_code(self):
+        return {intent.intent_code: intent for intent in self._intents}
+
+
+class _FullRecognizerShouldNotRun:
+    def __init__(self, fallback) -> None:
+        self.fallback = fallback
+
+    async def recognize(self, *args, **kwargs):
+        raise AssertionError("full recognizer should not run on fast-path")
+
+
+class _TurnInterpreter:
+    async def interpret_pending_graph(self, *, message, pending_graph, recognition):
+        del message, pending_graph, recognition
+        return TurnDecisionPayload(action="wait")
+
+    async def interpret_waiting_node(self, *, message, waiting_node, current_graph, recognition):
+        del message, waiting_node, current_graph, recognition
+        return TurnDecisionPayload(action="wait")
+
+
+class _EventPublisher:
+    async def publish_recognition_started(self, session):
+        del session
+
+    async def publish_recognition_delta(self, session, *, delta: str):
+        del session, delta
+
+    async def publish_recognition_completed(self, session, *, recognition):
+        del session, recognition
+
+    async def publish_graph_builder_started(self, session):
+        del session
+
+    async def publish_graph_builder_delta(self, session, *, delta: str):
+        del session, delta
+
+    async def publish_graph_builder_completed(self, session, *, result):
+        del session, result
+
+
+def test_waiting_node_turn_uses_fast_recognizer_fallback() -> None:
+    async def run() -> None:
+        intents = [
+            IntentDefinition(
+                intent_code="transfer_money",
+                name="转账",
+                description="执行转账",
+                examples=["给张三转 200 元"],
+                keywords=["转账", "汇款"],
+                agent_url="https://agent.example.com/transfer",
+                dispatch_priority=100,
+                primary_threshold=0.7,
+                candidate_threshold=0.5,
+            )
+        ]
+        service = IntentUnderstandingService(
+            intent_catalog=_Catalog(intents),
+            recognizer=_FullRecognizerShouldNotRun(HeuristicIntentRecognizer()),
+            graph_builder=None,
+            turn_interpreter=_TurnInterpreter(),
+            event_publisher=_EventPublisher(),
+        )
+        session = GraphSessionState(session_id="session-fast", cust_id="cust-fast")
+        graph = ExecutionGraphState(source_message="帮我转账")
+        node = GraphNodeState(
+            intent_code="transfer_money",
+            title="转账",
+            confidence=0.9,
+            position=0,
+            source_fragment="帮我转账",
+        )
+
+        result = await service.interpret_waiting_node_turn(
+            session,
+            waiting_node=node,
+            current_graph=graph,
+            content="给张三转200",
+        )
+
+        assert [match.intent_code for match in result.recognition.primary] == ["transfer_money"]
+
+    asyncio.run(run())

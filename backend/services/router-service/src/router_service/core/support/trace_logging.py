@@ -116,7 +116,7 @@ def router_stage(
     trace_id = context.trace_id if context is not None else None
     session_id = context.session_id if context is not None else None
     started_at = time.perf_counter()
-    logger.info(
+    logger.debug(
         "Router stage started (trace_id=%s, session_id=%s, stage=%s, details=%s)",
         trace_id,
         session_id,
@@ -138,7 +138,7 @@ def router_stage(
         raise
     else:
         elapsed_ms = (time.perf_counter() - started_at) * 1000
-        logger.info(
+        logger.debug(
             "Router stage completed (trace_id=%s, session_id=%s, stage=%s, elapsed_ms=%.2f, details=%s)",
             trace_id,
             session_id,

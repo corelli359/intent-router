@@ -157,7 +157,7 @@ class GraphMessageFlow:
             except Exception as exc:
                 if not llm_exception_is_retryable(exc):
                     raise
-                logger.warning("Graph router LLM is temporarily unavailable", exc_info=True)
+                logger.debug("Graph router LLM is temporarily unavailable", exc_info=True)
                 session.messages.append(
                     ChatMessage(
                         role="assistant",
@@ -166,7 +166,7 @@ class GraphMessageFlow:
                     )
                 )
                 session.touch()
-            logger.info(
+            logger.debug(
                 "Message flow result (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -410,7 +410,7 @@ class GraphMessageFlow:
             )
             session.last_diagnostics = list(turn_result.diagnostics or [])
             decision = turn_result.decision
-            logger.info(
+            logger.debug(
                 "Pending graph turn decision (trace_id=%s, session_id=%s, action=%s, reason=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -459,7 +459,7 @@ class GraphMessageFlow:
             )
             session.last_diagnostics = list(turn_result.diagnostics or [])
             decision = turn_result.decision
-            logger.info(
+            logger.debug(
                 "Waiting node turn decision (trace_id=%s, session_id=%s, node_id=%s, action=%s, reason=%s)",
                 current_trace_id(),
                 session.session_id,

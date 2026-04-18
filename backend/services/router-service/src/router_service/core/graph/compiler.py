@@ -180,7 +180,7 @@ class GraphCompiler:
                             )
                         ],
                     )
-                    logger.info(
+                    logger.debug(
                         "Compiler result (trace_id=%s, session_id=%s, no_match=%s, primary_intents=%s, candidate_intents=%s)",
                         current_trace_id(),
                         session.session_id,
@@ -226,7 +226,7 @@ class GraphCompiler:
                     long_term_memory=long_term_memory,
                 )
 
-            logger.info(
+            logger.debug(
                 "Compiler result (trace_id=%s, session_id=%s, primary_intents=%s, candidate_intents=%s, graph_nodes=%s, graph_status=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -292,7 +292,7 @@ class GraphCompiler:
                 long_term_memory=context["long_term_memory"],
                 emit_events=emit_events,
             )
-            logger.info(
+            logger.debug(
                 "Recognize-only result (trace_id=%s, session_id=%s, primary_intents=%s, candidate_intents=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -329,7 +329,7 @@ class GraphCompiler:
             )
             if planner is self.fallback_planner:
                 self._apply_single_node_confirmation_policy(graph=graph, intents_by_code=intents_by_code)
-            logger.info(
+            logger.debug(
                 "Planner result (trace_id=%s, planner=%s, graph_id=%s, graph_nodes=%s, graph_status=%s)",
                 current_trace_id(),
                 planner.__class__.__name__,

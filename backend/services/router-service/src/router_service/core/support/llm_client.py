@@ -153,7 +153,7 @@ class LangChainLLMClient:
             )
         variable_keys = ",".join(sorted(str(key) for key in variables.keys()))
         started_at = time.perf_counter()
-        logger.info(
+        logger.debug(
             "LLM call request (trace_id=%s, call_id=%s, model=%s, base_url=%s, prompt=%s, variable_keys=%s, messages=%s)",
             trace_id,
             call_id,
@@ -179,7 +179,7 @@ class LangChainLLMClient:
                 exc_info=True,
             )
             raise
-        logger.info(
+        logger.debug(
             "LLM call response (trace_id=%s, call_id=%s, model=%s, base_url=%s, response_text=%s)",
             trace_id,
             call_id,
@@ -188,7 +188,7 @@ class LangChainLLMClient:
             response_text,
         )
         elapsed_ms = (time.perf_counter() - started_at) * 1000
-        logger.info(
+        logger.debug(
             "LLM call completed (trace_id=%s, call_id=%s, model=%s, base_url=%s, elapsed_ms=%.2f, prompt=%s, variable_keys=%s, response_chars=%s)",
             trace_id,
             call_id,
@@ -238,13 +238,15 @@ class LangChainLLMClient:
         last_error: Exception | None = None
         for attempt in range(self.rate_limit_max_retries + 1):
             try:
-                return await self._stream_once(prompt, variables, model=model, on_delta=on_delta)
+                if on_delta is not None:
+                    return await self._stream_once(prompt, variables, model=model, on_delta=on_delta)
+                return await self._invoke_once(prompt, variables, model=model)
             except Exception as exc:
                 if not self._should_retry_rate_limit(exc, attempt=attempt):
                     raise
                 last_error = exc
                 delay = self._rate_limit_retry_delay(exc, attempt=attempt)
-                logger.warning(
+                logger.debug(
                     "Retrying LLM call after transient rate limit (%s/%s) in %.2fs",
                     attempt + 1,
                     self.rate_limit_max_retries,
@@ -275,6 +277,18 @@ class LangChainLLMClient:
             if on_delta is not None:
                 await on_delta(text)
         return "".join(chunks)
+
+    async def _invoke_once(
+        self,
+        prompt: ChatPromptTemplate,
+        variables: dict[str, Any],
+        *,
+        model: str | None = None,
+    ) -> str:
+        """Execute one non-retried non-streaming prompt call."""
+        chain = prompt | self._create_model(model)
+        result = await chain.ainvoke(variables)
+        return self._chunk_text(result.content)
 
     def _should_retry_rate_limit(self, exc: Exception, *, attempt: int) -> bool:
         """Return whether one failed attempt should be retried as a rate-limit error."""

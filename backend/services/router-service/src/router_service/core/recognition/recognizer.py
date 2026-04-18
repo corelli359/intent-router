@@ -338,12 +338,11 @@ class LLMIntentRecognizer:
                 prompt=self.prompt,
                 variables={
                     "message": message,
-                    "recent_messages_json": json.dumps(recent_messages, ensure_ascii=False, indent=2),
-                    "long_term_memory_json": json.dumps(long_term_memory, ensure_ascii=False, indent=2),
+                    "recent_messages_json": json.dumps(recent_messages, ensure_ascii=False),
+                    "long_term_memory_json": json.dumps(long_term_memory, ensure_ascii=False),
                     "intents_json": json.dumps(
                         [recognition_intent_payload(intent) for intent in active_intents],
                         ensure_ascii=False,
-                        indent=2,
                     ),
                 },
                 model=self.model,
@@ -353,7 +352,7 @@ class LLMIntentRecognizer:
         except Exception as exc:
             if llm_exception_is_retryable(exc) or llm_barrier_triggered(exc):
                 raise
-            logger.warning(
+            logger.debug(
                 "LLM intent recognition failed, degrading to fallback recognizer (%s)",
                 type(self.fallback).__name__,
                 exc_info=True,

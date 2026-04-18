@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from router_service.core.shared.domain import TaskStatus
 from router_service.core.shared.graph_domain import (
@@ -44,10 +45,14 @@ class GraphRuntimeEngine:
         - `SKIPPED`: upstream reached a terminal state but the dependency/condition
           means this node should never execute
         """
+        node_by_id = {node.node_id: node for node in graph.nodes}
+        incoming_edges_by_target: dict[str, list[Any]] = {}
+        for edge in graph.edges:
+            incoming_edges_by_target.setdefault(edge.target_node_id, []).append(edge)
         for node in graph.nodes:
             if node.status in TERMINAL_NODE_STATUSES | ACTIVE_NODE_STATUSES:
                 continue
-            incoming_edges = graph.incoming_edges(node.node_id)
+            incoming_edges = incoming_edges_by_target.get(node.node_id)
             if not incoming_edges:
                 node.touch(GraphNodeStatus.READY)
                 continue
@@ -57,7 +62,12 @@ class GraphRuntimeEngine:
             blocking_reason = "等待上游节点完成"
             skip_reason_code: str | None = None
             for edge in incoming_edges:
-                source = graph.node_by_id(edge.source_node_id)
+                source = node_by_id.get(edge.source_node_id)
+                if source is None:
+                    should_skip = True
+                    blocking_reason = edge.label or "上游节点未满足依赖"
+                    skip_reason_code = GraphNodeSkipReason.CONDITION_NOT_MET.value
+                    break
                 # Hard terminal upstream failures/cancellations propagate as skip,
                 # because the downstream node is no longer executable in this graph.
                 if source.status == GraphNodeStatus.FAILED:
@@ -149,54 +159,75 @@ class GraphRuntimeEngine:
 
     def graph_status(self, graph: ExecutionGraphState) -> GraphStatus:
         """Collapse all node states into one graph-level status visible to clients."""
-        statuses = [node.status for node in graph.nodes]
-        if not statuses:
+        if not graph.nodes:
             return GraphStatus.COMPLETED
-        if any(status == GraphNodeStatus.WAITING_CONFIRMATION for status in statuses):
-            return GraphStatus.WAITING_CONFIRMATION_NODE
-        if any(status == GraphNodeStatus.WAITING_USER_INPUT for status in statuses):
-            return GraphStatus.WAITING_USER_INPUT
-        if all(status in {GraphNodeStatus.READY_FOR_DISPATCH, GraphNodeStatus.SKIPPED} for status in statuses):
+        all_ready_for_dispatch = True
+        all_cancelled = True
+        all_completed = True
+        all_skipped_condition_unmet = True
+        has_active_runtime = False
+        has_completed = False
+        has_failed = False
+        has_cancelled = False
+
+        for node in graph.nodes:
+            status = node.status
+            if status == GraphNodeStatus.WAITING_CONFIRMATION:
+                return GraphStatus.WAITING_CONFIRMATION_NODE
+            if status == GraphNodeStatus.WAITING_USER_INPUT:
+                return GraphStatus.WAITING_USER_INPUT
+            if status not in {GraphNodeStatus.READY_FOR_DISPATCH, GraphNodeStatus.SKIPPED}:
+                all_ready_for_dispatch = False
+            if status in {GraphNodeStatus.READY, GraphNodeStatus.BLOCKED, GraphNodeStatus.RUNNING}:
+                has_active_runtime = True
+            if status not in {GraphNodeStatus.CANCELLED, GraphNodeStatus.SKIPPED}:
+                all_cancelled = False
+            if status not in {GraphNodeStatus.COMPLETED, GraphNodeStatus.SKIPPED}:
+                all_completed = False
+            if status == GraphNodeStatus.SKIPPED and node.skip_reason_code != GraphNodeSkipReason.CONDITION_NOT_MET.value:
+                all_skipped_condition_unmet = False
+            if status == GraphNodeStatus.COMPLETED:
+                has_completed = True
+            if status == GraphNodeStatus.FAILED:
+                has_failed = True
+            if status == GraphNodeStatus.CANCELLED:
+                has_cancelled = True
+
+        if all_ready_for_dispatch:
             return GraphStatus.READY_FOR_DISPATCH
-        if any(status in {GraphNodeStatus.READY, GraphNodeStatus.BLOCKED, GraphNodeStatus.RUNNING} for status in statuses):
+        if has_active_runtime:
             return GraphStatus.RUNNING
-        if all(status in {GraphNodeStatus.CANCELLED, GraphNodeStatus.SKIPPED} for status in statuses):
+        if all_cancelled:
             return GraphStatus.CANCELLED
-        if all(status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.SKIPPED} for status in statuses):
-            return (
-                GraphStatus.COMPLETED
-                if self.all_skipped_nodes_are_condition_unmet(graph)
-                else GraphStatus.PARTIALLY_COMPLETED
-            )
-        if any(status == GraphNodeStatus.FAILED for status in statuses):
-            completed = any(status == GraphNodeStatus.COMPLETED for status in statuses)
-            return GraphStatus.PARTIALLY_COMPLETED if completed else GraphStatus.FAILED
-        if any(status == GraphNodeStatus.CANCELLED for status in statuses):
-            completed = any(status == GraphNodeStatus.COMPLETED for status in statuses)
-            return GraphStatus.PARTIALLY_COMPLETED if completed else GraphStatus.CANCELLED
+        if all_completed:
+            return GraphStatus.COMPLETED if all_skipped_condition_unmet else GraphStatus.PARTIALLY_COMPLETED
+        if has_failed:
+            return GraphStatus.PARTIALLY_COMPLETED if has_completed else GraphStatus.FAILED
+        if has_cancelled:
+            return GraphStatus.PARTIALLY_COMPLETED if has_completed else GraphStatus.CANCELLED
         return GraphStatus.RUNNING
 
     def next_ready_node(self, graph: ExecutionGraphState) -> GraphNodeState | None:
         """Return the next dispatchable node in stable execution order."""
-        ready_nodes = [node for node in graph.nodes if node.status == GraphNodeStatus.READY]
-        if not ready_nodes:
-            return None
-        ready_nodes.sort(key=lambda node: (node.position, node.created_at))
-        return ready_nodes[0]
+        return min(
+            (node for node in graph.nodes if node.status == GraphNodeStatus.READY),
+            key=lambda node: (node.position, node.created_at),
+            default=None,
+        )
 
     def waiting_node(self, graph: ExecutionGraphState | None) -> GraphNodeState | None:
         """Return the most recent node currently waiting on the user."""
         if graph is None:
             return None
-        waiting_nodes = [
-            node
-            for node in graph.nodes
-            if node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
-        ]
-        if not waiting_nodes:
-            return None
-        waiting_nodes.sort(key=lambda node: node.updated_at, reverse=True)
-        return waiting_nodes[0]
+        return max(
+            (
+                node
+                for node in graph.nodes
+                if node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}
+            ),
+            key=lambda node: node.updated_at,
+            default=None,
+        )
 
     def condition_skipped_nodes(self, graph: ExecutionGraphState) -> list[GraphNodeState]:
         """Return nodes skipped only because their runtime condition was not met."""

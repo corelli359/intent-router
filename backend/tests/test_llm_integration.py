@@ -204,8 +204,8 @@ def test_langchain_llm_client_retries_rate_limited_requests_once() -> None:
             )
             self.calls = 0
 
-        async def _stream_once(self, prompt, variables, *, model=None, on_delta=None) -> str:
-            del prompt, variables, model, on_delta
+        async def _invoke_once(self, prompt, variables, *, model=None) -> str:
+            del prompt, variables, model
             self.calls += 1
             if self.calls == 1:
                 raise _FakeRateLimitError()
@@ -240,7 +240,7 @@ def test_langchain_llm_client_logs_elapsed_time_for_completed_call(caplog) -> No
         original_level = client_logger.level
         original_propagate = client_logger.propagate
         client_logger.handlers = [caplog.handler]
-        client_logger.setLevel(logging.INFO)
+        client_logger.setLevel(logging.DEBUG)
         client_logger.propagate = False
         try:
             payload = await client.run_json(
@@ -282,7 +282,7 @@ def test_langchain_llm_client_logs_elapsed_time_for_failed_call(caplog) -> None:
         original_level = client_logger.level
         original_propagate = client_logger.propagate
         client_logger.handlers = [caplog.handler]
-        client_logger.setLevel(logging.INFO)
+        client_logger.setLevel(logging.DEBUG)
         client_logger.propagate = False
         try:
             with pytest.raises(ValueError):
@@ -301,6 +301,83 @@ def test_langchain_llm_client_logs_elapsed_time_for_failed_call(caplog) -> None:
     assert "LLM call request" in caplog.text
     assert "model=test-model" in caplog.text
     assert "elapsed_ms=" in caplog.text
+
+
+def test_langchain_llm_client_uses_non_streaming_path_without_on_delta() -> None:
+    class _DualPathClient(LangChainLLMClient):
+        def __init__(self) -> None:
+            super().__init__(
+                base_url="https://example.com",
+                default_model="test-model",
+            )
+            self.stream_calls = 0
+            self.invoke_calls = 0
+
+        async def _stream_once(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            self.stream_calls += 1
+            return '{"matches":[]}'
+
+        async def _invoke_once(self, prompt, variables, *, model=None) -> str:
+            del prompt, variables, model
+            self.invoke_calls += 1
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        client = _DualPathClient()
+        payload = await client.run_json(
+            prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+            variables={},
+        )
+
+        assert payload == {"matches": []}
+        assert client.invoke_calls == 1
+        assert client.stream_calls == 0
+
+    asyncio.run(run())
+
+
+def test_langchain_llm_client_keeps_streaming_path_when_on_delta_is_provided() -> None:
+    class _DualPathClient(LangChainLLMClient):
+        def __init__(self) -> None:
+            super().__init__(
+                base_url="https://example.com",
+                default_model="test-model",
+            )
+            self.stream_calls = 0
+            self.invoke_calls = 0
+
+        async def _stream_once(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model
+            self.stream_calls += 1
+            if on_delta is not None:
+                await on_delta('{"matches":')
+            return '{"matches":[]}'
+
+        async def _invoke_once(self, prompt, variables, *, model=None) -> str:
+            del prompt, variables, model
+            self.invoke_calls += 1
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        deltas: list[str] = []
+        client = _DualPathClient()
+
+        async def on_delta(delta: str) -> None:
+            deltas.append(delta)
+
+        payload = await client.run_json(
+            prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+            variables={},
+            on_delta=on_delta,
+        )
+
+        assert payload == {"matches": []}
+        assert client.stream_calls == 1
+        assert client.invoke_calls == 0
+        assert deltas == ['{"matches":']
+
+    asyncio.run(run())
 
 
 def test_langchain_llm_client_passes_custom_http_async_client_to_chat_openai(monkeypatch) -> None:

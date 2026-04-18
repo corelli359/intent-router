@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
@@ -14,6 +18,7 @@ class GraphSessionStore:
     def __init__(self, long_term_memory: LongTermMemoryStore | None = None) -> None:
         """Initialize the session store and its long-term memory backend."""
         self._sessions: dict[str, GraphSessionState] = {}
+        self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.long_term_memory = long_term_memory or LongTermMemoryStore()
 
     def create(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
@@ -26,6 +31,12 @@ class GraphSessionStore:
     def get(self, session_id: str) -> GraphSessionState:
         """Return an existing graph session by id."""
         return self._sessions[session_id]
+
+    @asynccontextmanager
+    async def session_lock(self, session_id: str) -> AsyncIterator[None]:
+        """Serialize concurrent mutations for one session id."""
+        async with self._locks[session_id]:
+            yield
 
     def get_or_create(self, session_id: str | None, cust_id: str) -> GraphSessionState:
         """Resolve a session id, recreating expired or customer-mismatched sessions when needed."""
@@ -69,4 +80,5 @@ class GraphSessionStore:
             self.long_term_memory.promote_session(self._compat_session_view(session))
             expired_sessions.append(session_id)
             del self._sessions[session_id]
+            self._locks.pop(session_id, None)
         return expired_sessions

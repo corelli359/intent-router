@@ -88,7 +88,6 @@ class LLMProactiveRecommendationRouter:
                     "recommendation_items_json": json.dumps(
                         [item.model_dump(mode="json", by_alias=True) for item in proactive_recommendation.items],
                         ensure_ascii=False,
-                        indent=2,
                     ),
                 },
                 model=self.model,
@@ -97,7 +96,7 @@ class LLMProactiveRecommendationRouter:
         except Exception as exc:
             if llm_exception_is_retryable(exc) or llm_barrier_triggered(exc):
                 raise
-            logger.warning("Proactive recommendation router failed, falling back", exc_info=True)
+            logger.debug("Proactive recommendation router failed, falling back", exc_info=True)
             return await self.fallback.decide(
                 message=message,
                 proactive_recommendation=proactive_recommendation,

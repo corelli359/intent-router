@@ -34,6 +34,8 @@ spec:
               value: /etc/intent-router/catalog/graph-build-hints.json
             - name: ROUTER_LLM_BARRIER_ENABLED
               value: "true"
+            - name: ROUTER_AGENT_BARRIER_ENABLED
+              value: "true"
             - name: ROUTER_LOG_LEVEL
               value: "WARNING"
             - name: ROUTER_ASYNC_LOGGING_ENABLED

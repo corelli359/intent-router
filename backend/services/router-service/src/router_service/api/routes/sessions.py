@@ -259,6 +259,11 @@ def _serialize_session_payload(
 ) -> dict[str, object]:
     """Serialize the current session state directly from live in-memory objects."""
     session = _session_or_snapshot(orchestrator, session_id, fallback=fallback)
+    return _serialize_session(session)
+
+
+def _serialize_session(session: object) -> dict[str, object]:
+    """Serialize one session-like object into the API response shape."""
     return {
         "session_id": session.session_id,
         "cust_id": session.cust_id,
@@ -319,15 +324,15 @@ async def post_message(
     # drive the router directly without rendering any UI.
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     try:
-        snapshot = await orchestrator.handle_user_message(
+        snapshot = await orchestrator.handle_user_message_serialized(
             session_id=session_id,
             cust_id=resolved_cust_id,
             content=request.content or "",
+            serializer=_serialize_session,
             router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
             guided_selection=request.guided_selection,
             recommendation_context=request.recommendation_context,
             proactive_recommendation=request.proactive_recommendation,
-            return_snapshot=False,
         )
     except ValueError as exc:
         raise RouterApiException(
@@ -335,7 +340,7 @@ async def post_message(
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
-    return {"ok": True, "snapshot": _serialize_session_payload(orchestrator, session_id, fallback=snapshot)}
+    return {"ok": True, "snapshot": snapshot}
 
 
 @router.post("/sessions/{session_id}/actions")
@@ -350,15 +355,15 @@ async def post_action(
     # a pending graph or interrupt the current waiting node.
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
     try:
-        snapshot = await orchestrator.handle_action(
+        snapshot = await orchestrator.handle_action_serialized(
             session_id=session_id,
             cust_id=resolved_cust_id,
             action_code=request.action_code or "",
+            serializer=_serialize_session,
             source=request.source,
             task_id=request.task_id,
             confirm_token=request.confirm_token,
             payload=request.payload,
-            return_snapshot=False,
         )
     except ValueError as exc:
         raise RouterApiException(
@@ -366,7 +371,7 @@ async def post_action(
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
-    return {"ok": True, "snapshot": _serialize_session_payload(orchestrator, session_id, fallback=snapshot)}
+    return {"ok": True, "snapshot": snapshot}
 
 
 @router.post("/sessions/{session_id}/actions/stream")

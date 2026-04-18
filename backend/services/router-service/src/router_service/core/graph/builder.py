@@ -454,8 +454,8 @@ class LLMIntentGraphBuilder:
                 prompt=self.prompt,
                 variables={
                     "message": message,
-                    "recent_messages_json": json.dumps(recent_messages, ensure_ascii=False, indent=2),
-                    "long_term_memory_json": json.dumps(long_term_memory, ensure_ascii=False, indent=2),
+                    "recent_messages_json": json.dumps(recent_messages, ensure_ascii=False),
+                    "long_term_memory_json": json.dumps(long_term_memory, ensure_ascii=False),
                     "recognition_hint_json": json.dumps(
                         {
                             "primary": [match.model_dump(mode="json") for match in (recognition.primary if recognition else [])],
@@ -464,12 +464,10 @@ class LLMIntentGraphBuilder:
                             ],
                         },
                         ensure_ascii=False,
-                        indent=2,
                     ),
                     "intents_json": json.dumps(
                         [recognition_intent_payload(intent) for intent in active_intents],
                         ensure_ascii=False,
-                        indent=2,
                     ),
                 },
                 model=self.model,
@@ -478,7 +476,7 @@ class LLMIntentGraphBuilder:
         except Exception as exc:
             if llm_exception_is_retryable(exc) or llm_barrier_triggered(exc):
                 raise
-            logger.warning("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
+            logger.debug("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
             result = await self._build_via_legacy_chain(
                 message=message,
                 intents=active_intents,
@@ -505,7 +503,7 @@ class LLMIntentGraphBuilder:
         try:
             payload = UnifiedGraphDraftPayload.model_validate(raw_payload)
         except Exception as exc:
-            logger.warning("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
+            logger.debug("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
             result = await self._build_via_legacy_chain(
                 message=message,
                 intents=active_intents,

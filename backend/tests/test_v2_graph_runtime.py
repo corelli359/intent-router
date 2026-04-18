@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import logging
+from unittest.mock import patch
 
 from router_service.core.shared.graph_domain import (  # noqa: E402
     ExecutionGraphState,
@@ -85,7 +85,7 @@ def test_graph_runtime_engine_prefers_lowest_position_ready_node() -> None:
     assert next_node.title == "前面的节点"
 
 
-def test_graph_runtime_engine_logs_condition_type_mismatch(caplog) -> None:
+def test_graph_runtime_engine_logs_condition_type_mismatch() -> None:
     engine = GraphRuntimeEngine()
     source = GraphNodeState(
         intent_code="query_account_balance",
@@ -101,8 +101,9 @@ def test_graph_runtime_engine_logs_condition_type_mismatch(caplog) -> None:
         right_value=100,
     )
 
-    with caplog.at_level(logging.WARNING):
+    with patch("router_service.core.graph.runtime.logger.warning") as mock_warning:
         matched = engine.condition_matches(source, condition)
 
     assert matched is False
-    assert "Graph condition type mismatch" in caplog.text
+    mock_warning.assert_called_once()
+    assert "Graph condition type mismatch" in mock_warning.call_args.args[0]

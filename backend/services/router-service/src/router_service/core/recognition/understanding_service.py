@@ -12,7 +12,12 @@ from router_service.core.shared.diagnostics import (
 )
 from router_service.core.support.llm_client import llm_exception_is_retryable
 from router_service.core.support.trace_logging import current_trace_id, router_stage
-from router_service.core.recognition.recognizer import IntentRecognizer, RecognitionResult
+from router_service.core.recognition.recognizer import (
+    HeuristicIntentRecognizer,
+    IntentRecognizer,
+    NullIntentRecognizer,
+    RecognitionResult,
+)
 from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
 from router_service.core.graph.builder import GraphBuildResult, IntentGraphBuilder
 from router_service.core.graph.planner import TurnDecisionPayload, TurnInterpreter
@@ -89,7 +94,7 @@ class IntentUnderstandingService:
             )
             if emit_events:
                 await self.event_publisher.publish_recognition_completed(session, recognition=recognition)
-            logger.info(
+            logger.debug(
                 "Recognition result (trace_id=%s, session_id=%s, primary_intents=%s, candidate_intents=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -138,7 +143,7 @@ class IntentUnderstandingService:
             )
             if emit_events:
                 await self.event_publisher.publish_graph_builder_completed(session, result=result)
-            logger.info(
+            logger.debug(
                 "Graph builder result (trace_id=%s, session_id=%s, primary_intents=%s, graph_nodes=%s, graph_status=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -161,36 +166,17 @@ class IntentUnderstandingService:
             "understanding.interpret_pending_graph_turn",
             pending_graph_id=pending_graph.graph_id,
         ):
-            try:
-                recognition = await self.recognize_message(
-                    session,
-                    content,
-                    recent_messages=[],
-                    long_term_memory=[],
-                    emit_events=False,
-                )
-            except Exception as exc:
-                if not llm_exception_is_retryable(exc):
-                    raise
-                logger.warning("Pending graph recognition unavailable, falling back to conservative wait", exc_info=True)
-                recognition = RecognitionResult(
-                    primary=[],
-                    candidates=[],
-                    diagnostics=[
-                        diagnostic(
-                            RouterDiagnosticCode.TURN_RECOGNITION_RETRYABLE_UNAVAILABLE,
-                            source="turn_interpreter",
-                            message="待确认图阶段识别服务暂时不可用，已保守保持等待",
-                            details={"error_type": type(exc).__name__, "mode": "pending_graph"},
-                        )
-                    ],
-                )
+            recognition = await self._recognize_turn_message(
+                session=session,
+                content=content,
+                mode="pending_graph",
+            )
             decision = await self.turn_interpreter.interpret_pending_graph(
                 message=content,
                 pending_graph=pending_graph,
                 recognition=recognition,
             )
-            logger.info(
+            logger.debug(
                 "Pending graph interpretation result (trace_id=%s, session_id=%s, action=%s, target_intent_code=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -219,37 +205,18 @@ class IntentUnderstandingService:
             waiting_node_id=waiting_node.node_id,
             waiting_intent_code=waiting_node.intent_code,
         ):
-            try:
-                recognition = await self.recognize_message(
-                    session,
-                    content,
-                    recent_messages=[],
-                    long_term_memory=[],
-                    emit_events=False,
-                )
-            except Exception as exc:
-                if not llm_exception_is_retryable(exc):
-                    raise
-                logger.warning("Waiting node recognition unavailable, continuing current node conservatively", exc_info=True)
-                recognition = RecognitionResult(
-                    primary=[],
-                    candidates=[],
-                    diagnostics=[
-                        diagnostic(
-                            RouterDiagnosticCode.TURN_RECOGNITION_RETRYABLE_UNAVAILABLE,
-                            source="turn_interpreter",
-                            message="补槽阶段识别服务暂时不可用，已保守继续当前节点",
-                            details={"error_type": type(exc).__name__, "mode": "waiting_node"},
-                        )
-                    ],
-                )
+            recognition = await self._recognize_turn_message(
+                session=session,
+                content=content,
+                mode="waiting_node",
+            )
             decision = await self.turn_interpreter.interpret_waiting_node(
                 message=content,
                 waiting_node=waiting_node,
                 current_graph=current_graph,
                 recognition=recognition,
             )
-            logger.info(
+            logger.debug(
                 "Waiting node interpretation result (trace_id=%s, session_id=%s, node_id=%s, action=%s, target_intent_code=%s)",
                 current_trace_id(),
                 session.session_id,
@@ -261,4 +228,94 @@ class IntentUnderstandingService:
                 decision=decision,
                 recognition=recognition,
                 diagnostics=merge_diagnostics(recognition.diagnostics),
+            )
+
+    def _resolve_fast_recognizer(self) -> IntentRecognizer | None:
+        """Resolve the cheapest local recognizer available in the fallback chain."""
+        candidate: Any | None = self.recognizer
+        seen: set[int] = set()
+        while candidate is not None and id(candidate) not in seen:
+            seen.add(id(candidate))
+            if isinstance(candidate, (HeuristicIntentRecognizer, NullIntentRecognizer)):
+                return candidate
+            candidate = getattr(candidate, "fallback", None)
+        return None
+
+    def _turn_recognition_unavailable(
+        self,
+        *,
+        mode: str,
+        error_type: str,
+        path: str,
+    ) -> RecognitionResult:
+        """Return a conservative empty recognition result for blocked-turn handling."""
+        message = (
+            "待确认图阶段识别服务暂时不可用，已保守保持等待"
+            if mode == "pending_graph"
+            else "补槽阶段识别服务暂时不可用，已保守继续当前节点"
+        )
+        return RecognitionResult(
+            primary=[],
+            candidates=[],
+            diagnostics=[
+                diagnostic(
+                    RouterDiagnosticCode.TURN_RECOGNITION_RETRYABLE_UNAVAILABLE,
+                    source="turn_interpreter",
+                    message=message,
+                    details={
+                        "error_type": error_type,
+                        "mode": mode,
+                        "path": path,
+                    },
+                )
+            ],
+        )
+
+    async def _recognize_turn_message(
+        self,
+        *,
+        session: GraphSessionState,
+        content: str,
+        mode: str,
+    ) -> RecognitionResult:
+        """Recognize blocked-turn follow-ups via the lightest available path."""
+        fast_recognizer = self._resolve_fast_recognizer()
+        if fast_recognizer is not None:
+            try:
+                return await fast_recognizer.recognize(
+                    message=content,
+                    intents=self.intent_catalog.active_intents_by_code().values(),
+                    recent_messages=[],
+                    long_term_memory=[],
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Fast-path turn recognition unavailable, using conservative empty result",
+                    exc_info=True,
+                )
+                return self._turn_recognition_unavailable(
+                    mode=mode,
+                    error_type=type(exc).__name__,
+                    path="fast",
+                )
+
+        try:
+            return await self.recognize_message(
+                session,
+                content,
+                recent_messages=[],
+                long_term_memory=[],
+                emit_events=False,
+            )
+        except Exception as exc:
+            if not llm_exception_is_retryable(exc):
+                raise
+            logger.debug(
+                "Turn recognition unavailable, falling back to conservative empty result",
+                exc_info=True,
+            )
+            return self._turn_recognition_unavailable(
+                mode=mode,
+                error_type=type(exc).__name__,
+                path="full",
             )

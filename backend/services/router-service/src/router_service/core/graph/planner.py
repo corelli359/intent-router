@@ -366,8 +366,8 @@ class LLMIntentGraphPlanner:
                 prompt=self.prompt,
                 variables={
                     "message": message,
-                    "recent_messages_json": json.dumps(recent_messages or [], ensure_ascii=False, indent=2),
-                    "long_term_memory_json": json.dumps(long_term_memory or [], ensure_ascii=False, indent=2),
+                    "recent_messages_json": json.dumps(recent_messages or [], ensure_ascii=False),
+                    "long_term_memory_json": json.dumps(long_term_memory or [], ensure_ascii=False),
                     "matched_intents_json": json.dumps(
                         [
                             {
@@ -395,7 +395,6 @@ class LLMIntentGraphPlanner:
                             if match.intent_code in intents_by_code
                         ],
                         ensure_ascii=False,
-                        indent=2,
                     ),
                 },
                 model=self.model,
@@ -489,7 +488,7 @@ class LLMGraphTurnInterpreter:
             message=message,
             waiting_node_json="null",
             current_graph_json="null",
-            pending_graph_json=json.dumps(pending_graph.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            pending_graph_json=json.dumps(pending_graph.model_dump(mode="json"), ensure_ascii=False),
             recognition=recognition,
             fallback=lambda: self.fallback.interpret_pending_graph(
                 message=message,
@@ -510,8 +509,8 @@ class LLMGraphTurnInterpreter:
         return await self._interpret(
             mode="waiting_node",
             message=message,
-            waiting_node_json=json.dumps(waiting_node.model_dump(mode="json"), ensure_ascii=False, indent=2),
-            current_graph_json=json.dumps(current_graph.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            waiting_node_json=json.dumps(waiting_node.model_dump(mode="json"), ensure_ascii=False),
+            current_graph_json=json.dumps(current_graph.model_dump(mode="json"), ensure_ascii=False),
             pending_graph_json="null",
             recognition=recognition,
             fallback=lambda: self.fallback.interpret_waiting_node(
@@ -546,12 +545,10 @@ class LLMGraphTurnInterpreter:
                     "primary_intents_json": json.dumps(
                         [match.model_dump(mode="json") for match in recognition.primary],
                         ensure_ascii=False,
-                        indent=2,
                     ),
                     "candidate_intents_json": json.dumps(
                         [match.model_dump(mode="json") for match in recognition.candidates],
                         ensure_ascii=False,
-                        indent=2,
                     ),
                 },
                 model=self.model,

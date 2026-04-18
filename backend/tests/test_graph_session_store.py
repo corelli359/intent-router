@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -46,3 +47,27 @@ def test_purge_expired_no_action_when_sessions_are_fresh() -> None:
 
     assert removed == []
     assert memory.promoted_sessions == []
+
+
+def test_session_lock_serializes_same_session_id() -> None:
+    store = GraphSessionStore()
+    events: list[str] = []
+
+    async def first() -> None:
+        async with store.session_lock("session-lock"):
+            events.append("first-start")
+            await asyncio.sleep(0.01)
+            events.append("first-end")
+
+    async def second() -> None:
+        await asyncio.sleep(0)
+        async with store.session_lock("session-lock"):
+            events.append("second-start")
+            events.append("second-end")
+
+    async def run() -> None:
+        await asyncio.gather(first(), second())
+
+    asyncio.run(run())
+
+    assert events == ["first-start", "first-end", "second-start", "second-end"]

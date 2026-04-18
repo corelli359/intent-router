@@ -212,7 +212,7 @@ class SlotExtractor:
                     allow_replace_existing_user_message=True,
                 )
         elif llm_barrier_enabled and (llm_missing_required or not merged_memory):
-            logger.info(
+            logger.debug(
                 "Skipping LLM slot extraction because router perf barrier is enabled "
                 "(intent_code=%s, missing_required=%s, merged_memory_empty=%s)",
                 intent.intent_code,
@@ -320,9 +320,8 @@ class SlotExtractor:
                     "intent_json": json.dumps(
                         recognition_intent_payload(intent),
                         ensure_ascii=False,
-                        indent=2,
                     ),
-                    "existing_slot_memory_json": json.dumps(existing_slot_memory, ensure_ascii=False, indent=2),
+                    "existing_slot_memory_json": json.dumps(existing_slot_memory, ensure_ascii=False),
                 },
                 model=self.model,
             )
@@ -330,7 +329,7 @@ class SlotExtractor:
             if llm_barrier_triggered(exc):
                 raise
             if llm_exception_is_retryable(exc):
-                logger.warning(
+                logger.debug(
                     "Slot extraction LLM is temporarily unavailable, preserving heuristic extraction",
                     exc_info=True,
                 )
@@ -348,7 +347,7 @@ class SlotExtractor:
                         ],
                     }
                 )
-            logger.warning("Slot extraction LLM failed, falling back to heuristic extraction", exc_info=True)
+            logger.debug("Slot extraction LLM failed, falling back to heuristic extraction", exc_info=True)
             return SlotExtractionPayload.model_validate(
                 {
                     "slots": [],

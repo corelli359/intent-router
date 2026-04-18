@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, TypeVar
 
 from router_service.core.support.agent_client import AgentClient, StreamingAgentClient
 from router_service.core.support.context_builder import ContextBuilder
@@ -60,6 +60,7 @@ from router_service.core.support.trace_logging import current_trace_id, router_s
 
 
 logger = logging.getLogger(__name__)
+SerializedResponseT = TypeVar("SerializedResponseT")
 
 
 @dataclass(slots=True)
@@ -221,15 +222,23 @@ class GraphRouterOrchestrator:
             expires_at=session.expires_at,
         )
 
-    def _finalize_handover_business(self, session: GraphSessionState) -> GraphRouterSnapshot | None:
-        """Compact the current handover-ready business after preserving the response dump."""
+    def _finalize_handover_business_with(
+        self,
+        session: GraphSessionState,
+        serializer: Callable[[GraphSessionState], SerializedResponseT],
+    ) -> SerializedResponseT | None:
+        """Compact the current handover-ready business after preserving one response payload."""
         business = session.handover_business()
         if business is None:
             return None
-        response_dump = self._build_session_dump(session)
+        response_dump = serializer(session)
         session.finalize_business(business.business_id)
         session.touch()
         return response_dump
+
+    def _finalize_handover_business(self, session: GraphSessionState) -> GraphRouterSnapshot | None:
+        """Compact the current handover-ready business after preserving the response dump."""
+        return self._finalize_handover_business_with(session, self._build_session_dump)
 
     async def handle_user_message(
         self,
@@ -258,22 +267,23 @@ class GraphRouterOrchestrator:
             content=content,
             details=trace_details,
         ):
-            with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
-                await self.message_flow.handle_user_message(
-                    session_id,
-                    cust_id,
-                    content,
-                    router_only=router_only,
-                    guided_selection=guided_selection,
-                    recommendation_context=recommendation_context,
-                    proactive_recommendation=proactive_recommendation,
-                    return_snapshot=False,
-                )
-            session = self.session_store.get(session_id)
-            snapshot = self._finalize_handover_business(session)
-            if snapshot is None and return_snapshot:
-                snapshot = self._build_session_dump(session)
-            logger.info(
+            async with self.session_store.session_lock(session_id):
+                with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
+                    await self.message_flow.handle_user_message(
+                        session_id,
+                        cust_id,
+                        content,
+                        router_only=router_only,
+                        guided_selection=guided_selection,
+                        recommendation_context=recommendation_context,
+                        proactive_recommendation=proactive_recommendation,
+                        return_snapshot=False,
+                    )
+                session = self.session_store.get(session_id)
+                snapshot = self._finalize_handover_business(session)
+                if snapshot is None and return_snapshot:
+                    snapshot = self._build_session_dump(session)
+            logger.debug(
                 "Router message snapshot (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s)",
                 current_trace_id(),
                 session_id,
@@ -283,6 +293,51 @@ class GraphRouterOrchestrator:
                 len(snapshot.candidate_intents) if snapshot is not None else len(session.candidate_intents),
             )
             return snapshot if return_snapshot or snapshot is not None else None
+
+    async def handle_user_message_serialized(
+        self,
+        *,
+        session_id: str,
+        cust_id: str,
+        content: str,
+        serializer: Callable[[GraphSessionState], SerializedResponseT],
+        router_only: bool = False,
+        guided_selection: GuidedSelectionPayload | None = None,
+        recommendation_context: RecommendationContextPayload | None = None,
+        proactive_recommendation: ProactiveRecommendationPayload | None = None,
+    ) -> SerializedResponseT:
+        """Process one user message and serialize the response while the session is still locked."""
+        trace_details = {
+            "router_only": router_only,
+            "has_guided_selection": guided_selection is not None,
+            "has_recommendation_context": recommendation_context is not None,
+            "has_proactive_recommendation": proactive_recommendation is not None,
+        }
+        with router_trace(
+            logger,
+            entrypoint="handle_user_message_serialized",
+            session_id=session_id,
+            cust_id=cust_id,
+            content=content,
+            details=trace_details,
+        ):
+            async with self.session_store.session_lock(session_id):
+                with router_stage(logger, "orchestrator.handle_user_message_serialized", **trace_details):
+                    await self.message_flow.handle_user_message(
+                        session_id,
+                        cust_id,
+                        content,
+                        router_only=router_only,
+                        guided_selection=guided_selection,
+                        recommendation_context=recommendation_context,
+                        proactive_recommendation=proactive_recommendation,
+                        return_snapshot=False,
+                    )
+                session = self.session_store.get(session_id)
+                serialized = self._finalize_handover_business_with(session, serializer)
+                if serialized is None:
+                    serialized = serializer(session)
+        return serialized
 
     async def _handle_proactive_recommendation_turn(
         self,
@@ -325,21 +380,52 @@ class GraphRouterOrchestrator:
         return_snapshot: bool = True,
     ) -> GraphRouterSnapshot | None:
         """Delegate one explicit graph action into the action-flow state machine."""
-        await self.action_flow.handle_action(
-            session_id=session_id,
-            cust_id=cust_id,
-            action_code=action_code,
-            source=source,
-            task_id=task_id,
-            confirm_token=confirm_token,
-            payload=payload,
-            return_snapshot=False,
-        )
-        session = self.session_store.get(session_id)
-        snapshot = self._finalize_handover_business(session)
-        if snapshot is None and return_snapshot:
-            snapshot = self._build_session_dump(session)
+        async with self.session_store.session_lock(session_id):
+            await self.action_flow.handle_action(
+                session_id=session_id,
+                cust_id=cust_id,
+                action_code=action_code,
+                source=source,
+                task_id=task_id,
+                confirm_token=confirm_token,
+                payload=payload,
+                return_snapshot=False,
+            )
+            session = self.session_store.get(session_id)
+            snapshot = self._finalize_handover_business(session)
+            if snapshot is None and return_snapshot:
+                snapshot = self._build_session_dump(session)
         return snapshot if return_snapshot or snapshot is not None else None
+
+    async def handle_action_serialized(
+        self,
+        *,
+        session_id: str,
+        cust_id: str,
+        action_code: str,
+        serializer: Callable[[GraphSessionState], SerializedResponseT],
+        source: str | None = None,
+        task_id: str | None = None,
+        confirm_token: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> SerializedResponseT:
+        """Process one explicit graph action and serialize the response while the session is still locked."""
+        async with self.session_store.session_lock(session_id):
+            await self.action_flow.handle_action(
+                session_id=session_id,
+                cust_id=cust_id,
+                action_code=action_code,
+                source=source,
+                task_id=task_id,
+                confirm_token=confirm_token,
+                payload=payload,
+                return_snapshot=False,
+            )
+            session = self.session_store.get(session_id)
+            serialized = self._finalize_handover_business_with(session, serializer)
+            if serialized is None:
+                serialized = serializer(session)
+        return serialized
 
     async def _route_new_message(
         self,
@@ -818,8 +904,14 @@ class GraphRouterOrchestrator:
             payload=dict(chunk.payload),
             source="agent",
         )
-        await self._refresh_graph_state(session, graph)
-        await self._emit_graph_progress(session)
+        if chunk.status in {
+            TaskStatus.WAITING_USER_INPUT,
+            TaskStatus.WAITING_CONFIRMATION,
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+        }:
+            await self._refresh_graph_state(session, graph)
+            await self._emit_graph_progress(session)
 
     async def _fail_node(
         self,
@@ -888,7 +980,7 @@ class GraphRouterOrchestrator:
             node.slot_bindings = list(validation.slot_bindings)
             node.history_slot_keys = list(validation.history_slot_keys)
             node.diagnostics = list(validation.diagnostics or [])
-            logger.info(
+            logger.debug(
                 "Router node understanding result (trace_id=%s, graph_id=%s, node_id=%s, intent_code=%s, can_dispatch=%s, missing_required_slots=%s, ambiguous_slot_keys=%s, invalid_slot_keys=%s)",
                 current_trace_id(),
                 graph.graph_id,

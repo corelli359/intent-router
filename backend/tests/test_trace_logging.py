@@ -26,7 +26,7 @@ def test_router_trace_and_stage_emit_correlated_logs(caplog) -> None:
     snapshot = _snapshot_logger_state(logger)
     try:
         logger.handlers = [caplog.handler]
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
         logger.propagate = False
 
         with router_trace(
