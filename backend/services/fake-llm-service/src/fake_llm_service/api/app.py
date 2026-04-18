@@ -7,12 +7,82 @@ from typing import Any
 from uuid import uuid4
 
 import orjson
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 
 JSONResponse = ORJSONResponse
+_PERF_TRANSFER_MESSAGE = "给小明转500元"
+_PERF_TRANSFER_RECOGNIZER_PAYLOAD = {
+    "matches": [
+        {
+            "intent_code": "AG_TRANS",
+            "confidence": 0.96,
+            "reason": "matched perf transfer fixture",
+        }
+    ]
+}
+_PERF_TRANSFER_SLOT_PAYLOAD = {
+    "slots": [
+        {
+            "slot_key": "payee_name",
+            "value": "小明",
+            "source": "user_message",
+            "source_text": "给小明转500元",
+            "confidence": 0.96,
+        },
+        {
+            "slot_key": "amount",
+            "value": "500",
+            "source": "user_message",
+            "source_text": "给小明转500元",
+            "confidence": 0.96,
+        },
+    ],
+    "ambiguousSlotKeys": [],
+}
+_PERF_TRANSFER_GRAPH_PAYLOAD = {
+    "summary": "识别到事项：给小明转账 500 元",
+    "needs_confirmation": False,
+    "primary_intents": [
+        {
+            "intent_code": "AG_TRANS",
+            "confidence": 0.96,
+            "reason": "matched perf transfer fixture",
+        }
+    ],
+    "candidate_intents": [],
+    "nodes": [
+        {
+            "intent_code": "AG_TRANS",
+            "title": "给小明转账 500 元",
+            "confidence": 0.96,
+            "source_fragment": "给小明转500元",
+            "slot_memory": {
+                "payee_name": "小明",
+                "amount": "500",
+            },
+            "slot_bindings": [
+                {
+                    "slot_key": "payee_name",
+                    "value": "小明",
+                    "source": "user_message",
+                    "source_text": "给小明转500元",
+                    "confidence": 0.96,
+                },
+                {
+                    "slot_key": "amount",
+                    "value": "500",
+                    "source": "user_message",
+                    "source_text": "给小明转500元",
+                    "confidence": 0.96,
+                },
+            ],
+        }
+    ],
+    "edges": [],
+}
 
 _NORMALIZE_RE = re.compile(r"[^\w\u4e00-\u9fff]+")
 CARD_NUMBER_RE = re.compile(r"(?<!\d)(\d{6,20})(?!\d)")
@@ -81,6 +151,29 @@ def _message_text(content: Any) -> str:
             chunks.append(str(item))
         return "".join(chunks)
     return str(content or "")
+
+
+def _fast_perf_payload(system_text: str, human_text: str) -> dict[str, Any] | None:
+    if _PERF_TRANSFER_MESSAGE not in human_text:
+        return None
+    if "槽位抽取器" in system_text:
+        return _PERF_TRANSFER_SLOT_PAYLOAD
+    if "多意图识别与执行图构建器" in system_text:
+        return _PERF_TRANSFER_GRAPH_PAYLOAD
+    if "多意图执行图规划器" in system_text:
+        return {
+            "summary": _PERF_TRANSFER_GRAPH_PAYLOAD["summary"],
+            "needs_confirmation": False,
+            "nodes": _PERF_TRANSFER_GRAPH_PAYLOAD["nodes"],
+            "edges": [],
+        }
+    if "回合解释器" in system_text:
+        return {
+            "action": "resume_current",
+            "reason": "继续当前流程",
+            "target_intent_code": None,
+        }
+    return _PERF_TRANSFER_RECOGNIZER_PAYLOAD
 
 
 def _normalize_text(value: str) -> str:
@@ -622,13 +715,29 @@ def _handle_proactive_recommendation(system_text: str, human_text: str) -> dict[
     }
 
 
-def _generate_content(request: ChatCompletionRequest) -> str:
-    system_text = "\n".join(_message_text(message.content) for message in request.messages if message.role == "system")
+def _extract_message_fields(messages: list[dict[str, Any]]) -> tuple[str, str]:
+    system_parts: list[str] = []
+    human_parts: list[str] = []
+    for message in messages:
+        role = str(message.get("role") or "")
+        content = _message_text(message.get("content"))
+        if role == "system":
+            system_parts.append(content)
+        elif role in {"human", "user"}:
+            human_parts.append(content)
+    return "\n".join(system_parts), "\n".join(human_parts)
+
+
+def _generate_content_from_messages(messages: list[dict[str, Any]]) -> str:
+    system_text, human_text = _extract_message_fields(messages)
     human_text = "\n".join(
-        _message_text(message.content)
-        for message in request.messages
-        if message.role in {"human", "user"}
+        part
+        for part in [human_text]
+        if part
     )
+    fast_payload = _fast_perf_payload(system_text, human_text)
+    if fast_payload is not None:
+        return _json_dumps(fast_payload)
     if "多意图识别与执行图构建器" in system_text:
         payload = _handle_unified_graph_builder(system_text, human_text)
     elif "多意图执行图规划器" in system_text:
@@ -712,11 +821,16 @@ async def health() -> dict[str, str]:
 
 @app.post("/v1/chat/completions")
 @app.post("/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
-    content = _generate_content(request)
-    if request.stream:
+async def chat_completions(request: Request):
+    payload = orjson.loads(await request.body())
+    raw_messages = payload.get("messages")
+    messages = raw_messages if isinstance(raw_messages, list) else []
+    model = str(payload.get("model") or "")
+    stream = bool(payload.get("stream", False))
+    content = _generate_content_from_messages(messages)
+    if stream:
         return StreamingResponse(
-            _stream_chat_completion(model=request.model, content=content),
+            _stream_chat_completion(model=model, content=content),
             media_type="text/event-stream",
         )
-    return JSONResponse(_chat_completion_response(model=request.model, content=content))
+    return JSONResponse(_chat_completion_response(model=model, content=content))

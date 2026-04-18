@@ -118,6 +118,7 @@ class Settings(BaseModel):
     router_drain_iteration_floor: int = Field(default=8, gt=0)
     llm_api_base_url: str | None = Field(default=None)
     llm_api_key: str | None = Field(default=None)
+    llm_fast_fake_enabled: bool = Field(default=False)
     llm_auth_http_client_enabled: bool = Field(default=False)
     llm_model: str | None = Field(default=None)
     llm_recognizer_model: str | None = Field(default=None)
@@ -190,6 +191,7 @@ class Settings(BaseModel):
             ),
             llm_api_base_url=os.getenv("ROUTER_LLM_API_BASE_URL"),
             llm_api_key=os.getenv("ROUTER_LLM_API_KEY"),
+            llm_fast_fake_enabled=_parse_bool_env("ROUTER_LLM_FAST_FAKE_ENABLED", False),
             llm_auth_http_client_enabled=_parse_bool_env(
                 "ROUTER_LLM_AUTH_HTTP_CLIENT_ENABLED",
                 False,

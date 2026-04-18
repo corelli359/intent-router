@@ -16,7 +16,8 @@ from router_service.api.sse.broker import EventBroker
 from router_service.core.support.agent_barrier import BarrierAgentClient
 from router_service.core.support.agent_client import AgentClient, StreamingAgentClient
 from router_service.core.support.intent_catalog import RepositoryIntentCatalog
-from router_service.core.support.llm_client import LangChainLLMClient
+from router_service.core.support.llm_client import JsonLLMClient, LangChainLLMClient
+from router_service.core.support.perf_llm_client import FastPerfLLMClient
 from router_service.core.support.jwt_utils import AuthHTTPClient
 from router_service.core.support.memory_store import LongTermMemoryStore
 from router_service.core.prompts.prompt_templates import (
@@ -91,7 +92,7 @@ class RouterRuntime:
     """Container for long-lived runtime dependencies stored on the FastAPI app."""
 
     event_broker: EventBroker
-    llm_client: LangChainLLMClient | None
+    llm_client: JsonLLMClient | None
     intent_catalog: RepositoryIntentCatalog
     agent_client: AgentClient
     orchestrator: GraphRouterOrchestrator
@@ -242,9 +243,15 @@ def build_router_runtime() -> RouterRuntime:
     )
 
 
-def _build_llm_client() -> LangChainLLMClient | None:
+def _build_llm_client() -> JsonLLMClient | None:
     """Create the shared LLM client when the required connection settings are present."""
     settings = get_settings()
+    if getattr(settings, "llm_fast_fake_enabled", False):
+        logger.info(
+            "Router LLM perf stub enabled (model=%s)",
+            settings.default_llm_model,
+        )
+        return FastPerfLLMClient(default_model=settings.default_llm_model or "fake-router-llm")
     if not settings.llm_connection_ready or settings.default_llm_model is None:
         logger.info(
             "Router LLM client disabled (base_url=%s, model=%s)",
@@ -292,7 +299,7 @@ def get_event_broker(request: Request) -> EventBroker:
     return get_router_runtime(request).event_broker
 
 
-def get_llm_client(request: Request) -> LangChainLLMClient | None:
+def get_llm_client(request: Request) -> JsonLLMClient | None:
     """FastAPI dependency returning the shared LLM client when configured."""
     return get_router_runtime(request).llm_client
 

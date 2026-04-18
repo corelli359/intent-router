@@ -97,6 +97,10 @@ class JsonLLMClient(Protocol):
         """Run one prompt and return a parsed JSON-compatible Python value."""
         ...
 
+    async def aclose(self) -> None:
+        """Release any network or runtime resources held by the client."""
+        ...
+
 
 def llm_exception_is_retryable(exc: Exception) -> bool:
     """Return whether an exception should be retried as a transient LLM failure."""

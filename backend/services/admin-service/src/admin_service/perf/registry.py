@@ -33,13 +33,12 @@ class PerfTestRunRegistry:
                 raise PerfTestRunNotFoundError(f"perf test run not found: {run_id}")
             return run.model_copy(deep=True)
 
-    def update_run(self, run_id: str, mutator: RunMutator) -> PerfTestRunDetail:
+    def update_run(self, run_id: str, mutator: RunMutator) -> None:
         with self._lock:
             run = self._runs.get(run_id)
             if run is None:
                 raise PerfTestRunNotFoundError(f"perf test run not found: {run_id}")
             mutator(run)
-            return run.model_copy(deep=True)
 
     def set_task(self, run_id: str, task: asyncio.Task[None]) -> None:
         with self._lock:

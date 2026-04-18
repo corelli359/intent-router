@@ -9,6 +9,7 @@ PYTHON_PATHS = [
     REPO_ROOT / "backend",
     REPO_ROOT / "backend" / "services" / "admin-service" / "src",
     REPO_ROOT / "backend" / "services" / "router-service" / "src",
+    REPO_ROOT / "backend" / "services" / "fake-llm-service" / "src",
     REPO_ROOT / "backend" / "services" / "agents" / "account-balance-agent" / "src",
     REPO_ROOT / "backend" / "services" / "agents" / "transfer-money-agent" / "src",
     REPO_ROOT / "backend" / "services" / "agents" / "credit-card-repayment-agent" / "src",
