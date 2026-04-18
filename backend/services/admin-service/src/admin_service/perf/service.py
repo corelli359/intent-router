@@ -151,6 +151,7 @@ class PerfTestService:
         return httpx.AsyncClient(
             base_url=self._settings.perf_test_target_base_url,
             timeout=self._settings.perf_test_request_timeout_seconds,
+            limits=httpx.Limits(max_connections=None, max_keepalive_connections=None),
         )
 
     async def _execute_run(

@@ -150,7 +150,8 @@ async def _main_async(args: argparse.Namespace) -> int:
             _sample_process_stats(args.target_pid, args.monitor_interval_seconds, stop_event)
         )
 
-    async with httpx.AsyncClient(base_url=args.base_url.rstrip("/"), timeout=timeout) as client:
+    limits = httpx.Limits(max_connections=None, max_keepalive_connections=None)
+    async with httpx.AsyncClient(base_url=args.base_url.rstrip("/"), timeout=timeout, limits=limits) as client:
         steps: list[dict[str, Any]] = []
         for concurrency in args.concurrency_steps:
             step = await _run_step(

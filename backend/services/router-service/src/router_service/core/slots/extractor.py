@@ -326,9 +326,7 @@ class SlotExtractor:
                 model=self.model,
             )
         except Exception as exc:
-            if llm_barrier_triggered(exc):
-                raise
-            if llm_exception_is_retryable(exc):
+            if llm_exception_is_retryable(exc) or llm_barrier_triggered(exc):
                 logger.debug(
                     "Slot extraction LLM is temporarily unavailable, preserving heuristic extraction",
                     exc_info=True,

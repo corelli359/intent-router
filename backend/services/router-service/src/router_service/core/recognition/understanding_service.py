@@ -10,6 +10,7 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
+from router_service.core.support.llm_barrier import llm_barrier_triggered
 from router_service.core.support.llm_client import llm_exception_is_retryable
 from router_service.core.support.trace_logging import current_trace_id, router_stage
 from router_service.core.recognition.recognizer import (
@@ -308,7 +309,7 @@ class IntentUnderstandingService:
                 emit_events=False,
             )
         except Exception as exc:
-            if not llm_exception_is_retryable(exc):
+            if not (llm_exception_is_retryable(exc) or llm_barrier_triggered(exc)):
                 raise
             logger.debug(
                 "Turn recognition unavailable, falling back to conservative empty result",
