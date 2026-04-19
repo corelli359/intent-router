@@ -182,6 +182,7 @@ class GraphRouterOrchestrator:
             refresh_graph_state=self._refresh_graph_state,
             emit_graph_progress=self._emit_graph_progress,
             publish_graph_state=self._publish_graph_state,
+            memory_recall_limit=self.config.memory_recall_limit,
         )
         self.message_flow = message_flow or GraphMessageFlow(
             session_store=self.session_store,
@@ -200,6 +201,7 @@ class GraphRouterOrchestrator:
             resume_waiting_node=self._resume_waiting_node,
             cancel_current_node=self._cancel_current_node,
             session_business_limit=self.config.session_business_limit,
+            memory_recall_limit=self.config.memory_recall_limit,
         )
 
     def create_session(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
@@ -239,6 +241,47 @@ class GraphRouterOrchestrator:
         session.finalize_business(business.business_id)
         session.touch()
         return response_dump
+
+    def _get_session_memory_snapshot(self, session: GraphSessionState) -> Any | None:
+        """Resolve the current session memory snapshot from the session store/runtime when available."""
+        get_session_memory = getattr(self.session_store, "get_session_memory", None)
+        if callable(get_session_memory):
+            snapshot = get_session_memory(session)
+            if snapshot is not None:
+                return snapshot
+        ensure_session_memory = getattr(self.session_store, "ensure_session_memory", None)
+        if callable(ensure_session_memory):
+            snapshot = ensure_session_memory(session)
+            if snapshot is not None:
+                return snapshot
+        memory_runtime = getattr(self.session_store, "memory_runtime", None)
+        if memory_runtime is None:
+            return None
+        get_runtime_memory = getattr(memory_runtime, "get_session_memory", None)
+        if callable(get_runtime_memory):
+            snapshot = get_runtime_memory(
+                session_id=session.session_id,
+                cust_id=session.cust_id,
+                recall_limit=self.config.memory_recall_limit,
+            )
+            if snapshot is not None:
+                return snapshot
+        ensure_runtime_memory = getattr(memory_runtime, "ensure_session_memory", None)
+        if callable(ensure_runtime_memory):
+            return ensure_runtime_memory(
+                session_id=session.session_id,
+                cust_id=session.cust_id,
+                recall_limit=self.config.memory_recall_limit,
+            )
+        return None
+
+    def _snapshot_long_term_memory(self, snapshot: Any | None) -> list[str]:
+        """Extract a copy of long-term memory facts from one session memory snapshot."""
+        if snapshot is None:
+            return []
+        if isinstance(snapshot, dict):
+            return list(snapshot.get("long_term_memory") or [])
+        return list(getattr(snapshot, "long_term_memory", None) or [])
 
     def _finalize_handover_business(self, session: GraphSessionState) -> GraphRouterSnapshot | None:
         """Compact the current handover-ready business after preserving the response dump."""
@@ -572,7 +615,7 @@ class GraphRouterOrchestrator:
                 await self._refresh_graph_state(session, graph)
                 waiting_node = self._get_waiting_node(session)
                 if waiting_node is not None:
-                    session.active_node_id = waiting_node.node_id
+                    session.set_active_node(waiting_node.node_id)
                     await self._publish_session_state(
                         session,
                         "session.waiting_confirmation"
@@ -584,12 +627,12 @@ class GraphRouterOrchestrator:
 
                 next_node = self._next_ready_node(graph)
                 if next_node is None:
-                    session.active_node_id = None
+                    session.clear_active_node()
                     await self._emit_graph_progress(session)
                     await self._publish_session_state(session, "session.idle")
                     return
 
-                session.active_node_id = next_node.node_id
+                session.set_active_node(next_node.node_id)
                 await self._run_node(session, graph, next_node, seed_input)
 
                 if next_node.status in TERMINAL_NODE_STATUSES:
@@ -637,7 +680,7 @@ class GraphRouterOrchestrator:
                 await self._refresh_graph_state(session, graph)
                 waiting_node = self._get_waiting_node(session)
                 if waiting_node is not None:
-                    session.active_node_id = waiting_node.node_id
+                    session.set_active_node(waiting_node.node_id)
                     await self._publish_session_state(
                         session,
                         "session.waiting_confirmation"
@@ -649,18 +692,18 @@ class GraphRouterOrchestrator:
 
                 next_node = self._next_ready_node(graph)
                 if next_node is None:
-                    session.active_node_id = None
+                    session.clear_active_node()
                     await self._emit_graph_progress(session)
                     await self._publish_session_state(session, "session.idle")
                     return
 
-                session.active_node_id = next_node.node_id
+                session.set_active_node(next_node.node_id)
                 if not await self._prepare_node_router_only(session, graph, next_node, dispatch_input=seed_input):
                     await self._emit_graph_progress(session)
                     await self._publish_session_state(session, "session.waiting_user_input")
                     return
 
-                session.active_node_id = None
+                session.clear_active_node()
                 await self._publish_session_state(session, "session.ready_for_dispatch")
                 return
 
@@ -699,7 +742,7 @@ class GraphRouterOrchestrator:
         )
         graph.touch(GraphStatus.FAILED)
         graph.summary = f"{graph.summary}；{message}" if graph.summary else message
-        session.active_node_id = None
+        session.clear_active_node()
         session.messages.append(ChatMessage(role="assistant", content=message, created_at=utc_now()))
         session.touch()
         await self._publish_graph_state(session, "graph.failed", message, status=TaskStatus.FAILED)
@@ -1107,10 +1150,10 @@ class GraphRouterOrchestrator:
             node.touch(GraphNodeStatus.READY)
             graph.touch(GraphStatus.RUNNING)
             if not await self._prepare_node_router_only(session, graph, node, dispatch_input=content):
-                session.active_node_id = node.node_id
+                session.set_active_node(node.node_id)
                 await self._publish_session_state(session, "session.waiting_user_input")
                 return
-            session.active_node_id = None
+            session.clear_active_node()
             await self._publish_session_state(session, "session.ready_for_dispatch")
             return
         await self._run_node(session, graph, node, content)
@@ -1334,10 +1377,15 @@ class GraphRouterOrchestrator:
 
     def _build_session_context(self, session: GraphSessionState, task: Task | None = None) -> dict[str, Any]:
         """Assemble recent messages plus long-term memory for recognition and agents."""
-        long_term_memory = self.session_store.long_term_memory.recall(
-            session.cust_id,
-            limit=self.config.memory_recall_limit,
-        )
+        snapshot = self._get_session_memory_snapshot(session)
+        long_term_memory = self._snapshot_long_term_memory(snapshot)
+        if snapshot is None:
+            long_term_memory_store = getattr(self.session_store, "long_term_memory", None)
+            if long_term_memory_store is not None:
+                long_term_memory = long_term_memory_store.recall(
+                    session.cust_id,
+                    limit=self.config.memory_recall_limit,
+                )
         return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
 
     def _intent_requires_slot_understanding(self, intent: IntentDefinition) -> bool:

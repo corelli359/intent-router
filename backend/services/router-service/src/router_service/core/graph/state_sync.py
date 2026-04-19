@@ -182,7 +182,7 @@ class GraphStateSync:
         waiting_node = self.get_waiting_node(session)
         # `active_node_id` is a session-level shortcut used by the API/UI to know
         # whether the current blocker is a graph confirmation or a node-level slot prompt.
-        session.active_node_id = waiting_node.node_id if waiting_node is not None else None
+        session.set_active_node(waiting_node.node_id if waiting_node is not None else None)
 
     def apply_history_prefill_policy(
         self,

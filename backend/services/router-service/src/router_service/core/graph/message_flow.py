@@ -74,6 +74,7 @@ class GraphMessageFlow:
         resume_waiting_node: Callable[[GraphSessionState, GraphNodeState, str], Awaitable[None]],
         cancel_current_node: Callable[[GraphSessionState, str], Awaitable[None]],
         session_business_limit: int = 5,
+        memory_recall_limit: int = 20,
     ) -> None:
         """Initialize message-driven routing with graph compilation and control callbacks."""
         self.session_store = session_store
@@ -92,6 +93,24 @@ class GraphMessageFlow:
         self.resume_waiting_node = resume_waiting_node
         self.cancel_current_node = cancel_current_node
         self.session_business_limit = session_business_limit
+        self.memory_recall_limit = memory_recall_limit
+
+    def _ensure_session_memory_warm(self, session: GraphSessionState) -> None:
+        """Warm the session-scoped memory workset when the backing store supports it."""
+        ensure_session_memory = getattr(self.session_store, "ensure_session_memory", None)
+        if callable(ensure_session_memory):
+            ensure_session_memory(session)
+            return
+        memory_runtime = getattr(self.session_store, "memory_runtime", None)
+        if memory_runtime is None:
+            return
+        ensure_runtime_memory = getattr(memory_runtime, "ensure_session_memory", None)
+        if callable(ensure_runtime_memory):
+            ensure_runtime_memory(
+                session_id=session.session_id,
+                cust_id=session.cust_id,
+                recall_limit=self.memory_recall_limit,
+            )
 
     def _attach_business(
         self,
@@ -132,10 +151,11 @@ class GraphMessageFlow:
             emit_events=emit_events,
         ):
             session = self.session_store.get_or_create(session_id, cust_id)
+            self._ensure_session_memory_warm(session)
             session.last_diagnostics = []
             if session.current_graph is None and session.pending_graph is None:
                 session.restore_latest_suspended_business()
-            session.router_only_mode = router_only
+            session.set_router_only_mode(router_only)
             message_content = content.strip()
             display_content = message_content or self.graph_compiler.guided_selection_display_content(guided_selection)
             if display_content:

@@ -158,6 +158,8 @@ def test_confirm_pending_graph_activates_and_drains() -> None:
 
     assert session.pending_graph is None
     assert session.current_graph is graph
+    assert session.pending_business() is None
+    assert session.focus_business() is not None
     assert ("activate_graph", graph.graph_id) in helper.actions
     assert ("drain_graph", graph.source_message) in helper.actions
 
@@ -170,6 +172,8 @@ def test_cancel_pending_graph_emits_cancel_event() -> None:
 
     asyncio.run(flow.handle_action(session_id=session.session_id, cust_id=session.cust_id, action_code="cancel_graph"))
 
+    assert session.pending_graph is None
+    assert session.pending_business() is None
     assert graph.graph_id in helper.publisher.graph_cancelled
 
 
@@ -240,8 +244,11 @@ def test_cancel_current_graph_marks_nodes_cancelled() -> None:
 
     asyncio.run(flow.cancel_current_graph(session, reason="cleanup"))
 
+    assert session.current_graph is None
+    assert session.focus_business() is None
     assert node1.status == GraphNodeStatus.CANCELLED
     assert node2.status == GraphNodeStatus.CANCELLED
+    assert session.tasks == []
     assert ("publish_graph_state", "graph.cancelled") in helper.actions
     assert node1.task_id in agent_client.cancelled_tasks
     assert helper.graph_state_events[-1]["payload_overrides"] is None

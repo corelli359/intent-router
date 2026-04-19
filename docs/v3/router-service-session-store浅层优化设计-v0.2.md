@@ -184,7 +184,14 @@ session 仍然是：
 
 ### 7.2 graph 生命周期仍然绑定在 session 容器内
 
-当前 graph 还是 session 下的重对象。按照后续规划，graph 应该可以早于 session 释放，但本轮不动这一层。
+当前 graph 还是 session 下的重对象。按照后续规划，graph 应该可以早于 session 释放。
+
+本分支当前已经做的第一步是：
+
+- handover 后会释放对应 business runtime
+- pending/current graph 取消后会释放对应 business runtime
+
+也就是说，terminal business 不再一直滞留到 session 过期，但 graph registry 仍未独立出 session 容器。
 
 ### 7.3 snapshot 返回体仍然偏大
 
@@ -225,4 +232,3 @@ flowchart TB
 - 现有 session 相关回归通过
 - `create_only` 高并发场景下的 `p99/max` 有改善
 - 真实消息入口在高并发段至少不退化，或出现可解释的局部改善
-

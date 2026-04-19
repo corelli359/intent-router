@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 import httpx
+import inspect
 import logging
 
 from fastapi import Request
@@ -17,9 +18,9 @@ from router_service.core.support.agent_barrier import BarrierAgentClient
 from router_service.core.support.agent_client import AgentClient, StreamingAgentClient
 from router_service.core.support.intent_catalog import RepositoryIntentCatalog
 from router_service.core.support.llm_client import JsonLLMClient, LangChainLLMClient
-from router_service.core.support.perf_llm_client import FastPerfLLMClient
 from router_service.core.support.jwt_utils import AuthHTTPClient
-from router_service.core.support.memory_store import LongTermMemoryStore
+from router_service.core.support import memory_store as memory_store_module
+from router_service.core.support.perf_llm_client import FastPerfLLMClient
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
     DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
@@ -57,6 +58,42 @@ from router_service.settings import Settings
 
 
 logger = logging.getLogger(__name__)
+
+
+def _build_memory_runtime(
+    *,
+    fact_limit: int,
+    default_recall_limit: int,
+) -> tuple[object | None, object]:
+    """Build the configured memory runtime, falling back cleanly while T1 lands."""
+    long_term_memory = memory_store_module.LongTermMemoryStore(fact_limit=fact_limit)
+    runtime_cls = getattr(memory_store_module, "InProcessMemoryRuntime", None)
+    if runtime_cls is None:
+        return None, long_term_memory
+    signature = inspect.signature(runtime_cls)
+    parameters = signature.parameters
+    if "long_term_memory" in parameters:
+        kwargs = {"long_term_memory": long_term_memory}
+        if "default_recall_limit" in parameters:
+            kwargs["default_recall_limit"] = default_recall_limit
+        memory_runtime = runtime_cls(**kwargs)
+    elif "fact_limit" in parameters:
+        kwargs = {"fact_limit": fact_limit}
+        if "default_recall_limit" in parameters:
+            kwargs["default_recall_limit"] = default_recall_limit
+        memory_runtime = runtime_cls(**kwargs)
+    elif parameters:
+        memory_runtime = runtime_cls(long_term_memory)
+    else:
+        memory_runtime = runtime_cls()
+    if isinstance(memory_runtime, memory_store_module.LongTermMemoryStore):
+        return memory_runtime, memory_runtime
+    runtime_long_term_memory = getattr(memory_runtime, "long_term_memory", None)
+    if runtime_long_term_memory is None:
+        runtime_long_term_memory = getattr(memory_runtime, "_long_term_memory", None)
+    if runtime_long_term_memory is not None:
+        long_term_memory = runtime_long_term_memory
+    return memory_runtime, long_term_memory
 
 
 @lru_cache(maxsize=1)
@@ -123,10 +160,14 @@ def build_router_runtime() -> RouterRuntime:
         settings.llm_model,
         settings.llm_recognizer_model or settings.llm_model,
     )
+    memory_runtime, long_term_memory = _build_memory_runtime(
+        fact_limit=getattr(settings, "router_long_term_memory_fact_limit", 100),
+        default_recall_limit=getattr(settings, "router_memory_recall_limit", 20),
+    )
     session_store = GraphSessionStore(
-        long_term_memory=LongTermMemoryStore(
-            fact_limit=getattr(settings, "router_long_term_memory_fact_limit", 100)
-        )
+        long_term_memory=long_term_memory,
+        memory_runtime=memory_runtime,
+        memory_recall_limit=getattr(settings, "router_memory_recall_limit", 20),
     )
     event_broker = EventBroker(
         heartbeat_interval_seconds=settings.router_sse_heartbeat_seconds,
@@ -177,10 +218,12 @@ def build_router_runtime() -> RouterRuntime:
             llm_client=llm_client,
             model=settings.llm_model,
             system_prompt_template=(
-                settings.llm_slot_extractor_system_prompt_template or DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT
+                getattr(settings, "llm_slot_extractor_system_prompt_template", None)
+                or DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT
             ),
             human_prompt_template=(
-                settings.llm_slot_extractor_human_prompt_template or DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT
+                getattr(settings, "llm_slot_extractor_human_prompt_template", None)
+                or DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT
             ),
         ),
         slot_validator=SlotValidator(),
@@ -285,14 +328,14 @@ def _build_llm_client() -> JsonLLMClient | None:
     )
     return LangChainLLMClient(
         base_url=settings.llm_api_base_url or "",
-        api_key=settings.llm_api_key,
+        api_key=getattr(settings, "llm_api_key", None),
         default_model=settings.default_llm_model,
-        temperature=settings.llm_temperature,
+        temperature=getattr(settings, "llm_temperature", 0.0),
         timeout_seconds=settings.llm_timeout_seconds,
         rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),
         rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),
-        extra_headers=settings.llm_headers,
-        structured_output_method=settings.llm_structured_output_method,
+        extra_headers=getattr(settings, "llm_headers", {}),
+        structured_output_method=getattr(settings, "llm_structured_output_method", "json_mode"),
         http_async_client=http_async_client,
     )
 

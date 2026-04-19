@@ -3,7 +3,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from router_service.core.shared.domain import ChatMessage  # noqa: E402
-from router_service.core.support.memory_store import LongTermMemoryStore  # noqa: E402
+from router_service.core.shared.domain import utc_now  # noqa: E402
+from router_service.core.shared.graph_domain import BusinessMemoryDigest  # noqa: E402
+from router_service.core.support.memory_store import (  # noqa: E402
+    LongTermMemoryStore,
+    SessionMemoryDumpRequest,
+    SessionMemoryMessageRecord,
+    SessionMemoryTaskRecord,
+)
 
 
 def test_long_term_memory_store_promotes_recent_messages_and_slots() -> None:
@@ -65,3 +72,35 @@ def test_long_term_memory_store_applies_environment_limit(monkeypatch) -> None:
     recalled = store.recall("cust_env", limit=10)
     assert len(recalled) == 2
     assert recalled == ["assistant: reply 1", "assistant: reply 2"]
+
+
+def test_long_term_memory_store_promotes_shared_slot_memory_and_business_digests() -> None:
+    store = LongTermMemoryStore()
+    dump = SessionMemoryDumpRequest(
+        session_id="session_shared",
+        cust_id="cust_shared",
+        messages=[SessionMemoryMessageRecord(role="user", content="发起转账")],
+        tasks=[SessionMemoryTaskRecord(intent_code="transfer_money", slot_memory={"amount": "100"})],
+        shared_slot_memory={"account_id": "ACC-001", "ignored": None},
+        business_memory_digests=[
+            BusinessMemoryDigest(
+                business_id="biz-001",
+                graph_id="graph-001",
+                intent_codes=["transfer_money"],
+                status="completed",
+                ishandover=True,
+                summary="转账完成",
+                slot_memory={"amount": "100", "empty": None},
+                created_at=utc_now(),
+            )
+        ],
+        reason="expired",
+    )
+
+    store.promote_dump(dump)
+
+    recalled = store.recall("cust_shared", limit=10)
+    assert "user: 发起转账" in recalled
+    assert "transfer_money: amount=100" in recalled
+    assert "shared_slots: account_id=ACC-001" in recalled
+    assert "transfer_money: amount=100" in recalled

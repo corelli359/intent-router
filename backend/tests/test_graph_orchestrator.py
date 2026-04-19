@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+
+_router_app_stub = ModuleType("router_service.api.app")
+_router_app_stub.app = None
+_router_app_stub.create_router_app = lambda: None
+sys.modules.setdefault("router_service.api.app", _router_app_stub)
 
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
 from router_service.core.shared.domain import IntentDefinition, Task, TaskStatus
@@ -21,6 +28,49 @@ class _SingleIntentCatalog:
 
     def active_intents_by_code(self) -> dict[str, IntentDefinition]:
         return {self._intent.intent_code: self._intent}
+
+
+def test_graph_orchestrator_message_flow_warms_session_memory_after_get_or_create() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        ensure_session_memory = Mock()
+        orchestrator.session_store.ensure_session_memory = ensure_session_memory
+        orchestrator.message_flow.route_new_message = AsyncMock()
+
+        snapshot = await orchestrator.handle_user_message(
+            session_id="session_message_warmup",
+            cust_id="cust_message_warmup",
+            content="帮我查余额",
+            emit_events=False,
+        )
+
+        assert snapshot is not None
+        ensure_session_memory.assert_called_once()
+        session = orchestrator.session_store.get("session_message_warmup")
+        assert ensure_session_memory.call_args.args == (session,)
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_action_flow_warms_session_memory_after_get_or_create() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        ensure_session_memory = Mock()
+        orchestrator.session_store.ensure_session_memory = ensure_session_memory
+        orchestrator.action_flow.confirm_pending_graph = AsyncMock()
+
+        snapshot = await orchestrator.handle_action(
+            session_id="session_action_warmup",
+            cust_id="cust_action_warmup",
+            action_code="confirm_graph",
+        )
+
+        assert snapshot is not None
+        ensure_session_memory.assert_called_once()
+        session = orchestrator.session_store.get("session_action_warmup")
+        assert ensure_session_memory.call_args.args == (session,)
+
+    asyncio.run(run())
 
 
 def test_graph_orchestrator_drain_guard_fails_non_converging_graph() -> None:
@@ -243,6 +293,57 @@ def test_graph_orchestrator_serialized_message_response_preserves_handover_graph
         assert session.business_memory_digests[-1].status == "ready_for_dispatch"
 
     asyncio.run(run())
+
+
+def test_graph_orchestrator_finalize_handover_keeps_business_digest_in_session_cache() -> None:
+    orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+    session = orchestrator.session_store.get_or_create("session_handover_memory", "cust_handover_memory")
+    graph = ExecutionGraphState(
+        source_message="转 500 给王芳",
+        summary="router_only handover",
+        status=GraphStatus.READY_FOR_DISPATCH,
+    )
+    graph.nodes.append(
+        GraphNodeState(
+            intent_code="transfer_money",
+            title="转账",
+            confidence=0.96,
+            position=0,
+            status=GraphNodeStatus.READY_FOR_DISPATCH,
+            slot_memory={
+                "amount": "500",
+                "payee_name": "王芳",
+            },
+        )
+    )
+    session.attach_business(graph, router_only_mode=True, pending=False)
+
+    snapshot = orchestrator._finalize_handover_business(session)
+
+    assert snapshot is not None
+    assert session.shared_slot_memory == {
+        "amount": "500",
+        "payee_name": "王芳",
+    }
+    assert session.business_memory_digests[-1].slot_memory == {
+        "amount": "500",
+        "payee_name": "王芳",
+    }
+
+
+def test_graph_orchestrator_build_session_context_uses_session_memory_snapshot() -> None:
+    orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+    session = orchestrator.session_store.create(cust_id="cust_snapshot", session_id="session_snapshot")
+    get_session_memory = Mock(return_value=SimpleNamespace(long_term_memory=["snapshot fact"]))
+    orchestrator.session_store.get_session_memory = get_session_memory
+    orchestrator.session_store.long_term_memory.recall = Mock(
+        side_effect=AssertionError("should use session memory snapshot")
+    )
+
+    context = orchestrator._build_session_context(session)
+
+    assert context["long_term_memory"] == ["snapshot fact"]
+    get_session_memory.assert_called_once_with(session)
 
 
 def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default() -> None:

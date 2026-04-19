@@ -274,6 +274,8 @@ class GraphSessionState(BaseModel):
     last_diagnostics: list[RouterDiagnostic] = Field(default_factory=list)
     shared_slot_memory: dict[str, Any] = Field(default_factory=dict)
     business_memory_digests: list[BusinessMemoryDigest] = Field(default_factory=list)
+    recalled_long_term_memory: list[str] = Field(default_factory=list)
+    memory_warmed: bool = False
     business_objects: list[BusinessObjectState] = Field(default_factory=list)
     workflow: SessionWorkflowState = Field(default_factory=SessionWorkflowState)
     current_graph: ExecutionGraphState | None = None
@@ -294,6 +296,36 @@ class GraphSessionState(BaseModel):
         """Return whether the session TTL has elapsed."""
         current = now or utc_now()
         return current >= self.expires_at
+
+    def set_router_only_mode(self, enabled: bool) -> None:
+        """Update the turn-scoped router-only mode flag."""
+        self.router_only_mode = enabled
+
+    def warm_session_memory(self, long_term_memory: list[str]) -> None:
+        """Initialize the active-session hot cache from memory warmup."""
+        self.recalled_long_term_memory = list(long_term_memory)
+        self.memory_warmed = True
+
+    def session_long_term_memory(self) -> list[str]:
+        """Return the active-session cached long-term memory facts."""
+        return list(self.recalled_long_term_memory)
+
+    def set_active_node(self, node_id: str | None) -> None:
+        """Update the session-level active node shortcut used by API and SSE surfaces."""
+        self.active_node_id = node_id
+
+    def clear_active_node(self) -> None:
+        """Clear the session-level active node shortcut."""
+        self.active_node_id = None
+
+    def clear_focus_graph_alias(self) -> None:
+        """Clear the compatibility alias for the current focus graph."""
+        self.current_graph = None
+        self.clear_active_node()
+
+    def clear_pending_graph_alias(self) -> None:
+        """Clear the compatibility alias for the pending-confirmation graph."""
+        self.pending_graph = None
 
     def business_object(self, business_id: str | None) -> BusinessObjectState | None:
         """Return the business object with the given id when present."""
@@ -467,6 +499,44 @@ class GraphSessionState(BaseModel):
             return business
         return None
 
+    def confirm_pending_business(self) -> BusinessObjectState | None:
+        """Promote the pending business into the active focus slot."""
+        self._adopt_legacy_aliases()
+        business = self.pending_business()
+        if business is None:
+            return None
+        business.suspended_reason = None
+        business.sync_from_graph()
+        self.workflow.pending_business_id = None
+        self.workflow.focus_business_id = business.business_id
+        self._sync_focus_aliases()
+        return business
+
+    def release_business(self, business_id: str | None) -> BusinessObjectState | None:
+        """Remove one business runtime from the live session workset without creating a digest."""
+        business = self.business_object(business_id)
+        if business is None:
+            return None
+        task_ids = {node.task_id for node in business.graph.nodes if node.task_id}
+        if task_ids:
+            self.tasks = [task for task in self.tasks if task.task_id not in task_ids]
+        self.business_objects = [
+            item
+            for item in self.business_objects
+            if item.business_id != business.business_id
+        ]
+        if self.workflow.focus_business_id == business.business_id:
+            self.workflow.focus_business_id = None
+        if self.workflow.pending_business_id == business.business_id:
+            self.workflow.pending_business_id = None
+        self.workflow.suspended_business_ids = [
+            item
+            for item in self.workflow.suspended_business_ids
+            if item != business.business_id
+        ]
+        self._sync_focus_aliases()
+        return business
+
     def handover_business(self) -> BusinessObjectState | None:
         """Return the business object that is ready to hand over and be compacted."""
         self._adopt_legacy_aliases()
@@ -503,24 +573,7 @@ class GraphSessionState(BaseModel):
         self.business_memory_digests.append(digest)
         if business.business_id not in self.workflow.completed_business_ids:
             self.workflow.completed_business_ids.append(business.business_id)
-        task_ids = {node.task_id for node in business.graph.nodes if node.task_id}
-        if task_ids:
-            self.tasks = [task for task in self.tasks if task.task_id not in task_ids]
-        self.business_objects = [
-            item
-            for item in self.business_objects
-            if item.business_id != business.business_id
-        ]
-        if self.workflow.focus_business_id == business.business_id:
-            self.workflow.focus_business_id = None
-        if self.workflow.pending_business_id == business.business_id:
-            self.workflow.pending_business_id = None
-        self.workflow.suspended_business_ids = [
-            item
-            for item in self.workflow.suspended_business_ids
-            if item != business.business_id
-        ]
-        self._sync_focus_aliases()
+        self.release_business(business.business_id)
         return digest
 
     def _collect_business_slot_memory(self, business: BusinessObjectState) -> dict[str, Any]:
@@ -554,7 +607,7 @@ class GraphSessionState(BaseModel):
         self.current_graph = focus.graph if focus is not None else None
         self.pending_graph = pending.graph if pending is not None else None
         if focus is None:
-            self.active_node_id = None
+            self.clear_active_node()
         self.router_only_mode = focus.router_only_mode if focus is not None else False
 
     def _adopt_legacy_aliases(self) -> None:

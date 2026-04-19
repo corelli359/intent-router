@@ -43,6 +43,7 @@ class GraphActionFlow:
         refresh_graph_state: Callable[[GraphSessionState, ExecutionGraphState], Awaitable[None]],
         emit_graph_progress: Callable[[GraphSessionState], Awaitable[None]],
         publish_graph_state: Callable[..., Awaitable[None]],
+        memory_recall_limit: int = 20,
     ) -> None:
         """Initialize explicit graph action handlers and their collaborators."""
         self.session_store = session_store
@@ -57,6 +58,24 @@ class GraphActionFlow:
         self.refresh_graph_state = refresh_graph_state
         self.emit_graph_progress = emit_graph_progress
         self.publish_graph_state = publish_graph_state
+        self.memory_recall_limit = memory_recall_limit
+
+    def _ensure_session_memory_warm(self, session: GraphSessionState) -> None:
+        """Warm the session-scoped memory workset when the backing store supports it."""
+        ensure_session_memory = getattr(self.session_store, "ensure_session_memory", None)
+        if callable(ensure_session_memory):
+            ensure_session_memory(session)
+            return
+        memory_runtime = getattr(self.session_store, "memory_runtime", None)
+        if memory_runtime is None:
+            return
+        ensure_runtime_memory = getattr(memory_runtime, "ensure_session_memory", None)
+        if callable(ensure_runtime_memory):
+            ensure_runtime_memory(
+                session_id=session.session_id,
+                cust_id=session.cust_id,
+                recall_limit=self.memory_recall_limit,
+            )
 
     async def handle_action(
         self,
@@ -72,6 +91,7 @@ class GraphActionFlow:
     ) -> GraphRouterSnapshot | None:
         """Entry point for action APIs and graph-originated control actions."""
         session = self.session_store.get_or_create(session_id, cust_id)
+        self._ensure_session_memory_warm(session)
         if source not in {None, "router", "graph"}:
             raise ValueError(f"Unsupported action source: {source}")
 
@@ -131,7 +151,7 @@ class GraphActionFlow:
                 task.touch(TaskStatus.CANCELLED)
             node.touch(GraphNodeStatus.CANCELLED, blocking_reason=reason)
         graph.touch(GraphStatus.CANCELLED)
-        session.active_node_id = None
+        session.clear_active_node()
         payload_overrides: dict[str, Any] | None = None
         event_message = reason or "执行图已取消"
         if cancel_failures:
@@ -145,6 +165,9 @@ class GraphActionFlow:
         business = session.business_for_graph(graph)
         if business is not None:
             business.sync_from_graph()
+            session.release_business(business.business_id)
+        else:
+            session.clear_focus_graph_alias()
         await self.publish_graph_state(
             session,
             "graph.cancelled",
@@ -169,15 +192,7 @@ class GraphActionFlow:
         if confirm_token is not None and confirm_token != graph.confirm_token:
             raise ValueError("Invalid graph confirm token")
 
-        pending_business = session.pending_business()
-        if pending_business is not None:
-            pending_business.sync_from_graph()
-            session.workflow.pending_business_id = None
-            session.workflow.focus_business_id = pending_business.business_id
-            session._sync_focus_aliases()
-        else:
-            session.pending_graph = None
-            session.current_graph = graph
+        session.confirm_pending_business()
         self.activate_graph(graph)
         await self.publish_graph_state(session, "graph.confirmed", "执行图已确认，开始执行")
         await self.drain_graph(session, graph.source_message)
@@ -203,4 +218,7 @@ class GraphActionFlow:
         business = session.pending_business()
         if business is not None:
             business.sync_from_graph()
+            session.release_business(business.business_id)
+        else:
+            session.clear_pending_graph_alias()
         await self.event_publisher.publish_graph_cancelled(session, graph)
