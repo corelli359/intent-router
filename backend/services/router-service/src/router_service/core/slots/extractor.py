@@ -27,7 +27,7 @@ from router_service.core.slots.grounding import (
     slot_value_grounded_with_currency_fallback,
 )
 from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingSource, SlotBindingState
-from router_service.models.intent import IntentSlotDefinition, SlotOverwritePolicy
+from router_service.models.intent import IntentSlotDefinition, SlotOverwritePolicy, SlotValueType
 
 
 logger = logging.getLogger(__name__)
@@ -146,12 +146,30 @@ class SlotExtractor:
             if is_history:
                 history_slot_keys.append(slot_key)
 
+        ambiguous_slot_keys: list[str] = []
+        diagnostics: list[RouterDiagnostic] = []
+        local_result = self._extract_with_local_heuristics(
+            intent=intent,
+            current_message=current_message or graph_source_message,
+            source_fragment=node.source_fragment or graph_source_message,
+            existing_slot_memory=merged_memory,
+            long_term_memory=long_term_memory,
+        )
+        if local_result is not None:
+            self._merge_items(
+                merged_memory=merged_memory,
+                merged_bindings=merged_bindings,
+                history_slot_keys=history_slot_keys,
+                slot_defs_by_key=slot_defs_by_key,
+                items=local_result.slots,
+                grounding_text=grounding_text,
+                history_text=history_text,
+                allow_replace_existing_user_message=True,
+            )
         llm_missing_required = any(
             slot.required and slot.slot_key not in merged_memory
             for slot in slot_schema
         )
-        ambiguous_slot_keys: list[str] = []
-        diagnostics: list[RouterDiagnostic] = []
         if self.llm_client is not None and (llm_missing_required or not merged_memory):
             llm_result = await self._extract_with_llm(
                 intent=intent,
@@ -184,6 +202,484 @@ class SlotExtractor:
             ],
             diagnostics=diagnostics,
         )
+
+    def _extract_with_local_heuristics(
+        self,
+        *,
+        intent: IntentDefinition,
+        current_message: str,
+        source_fragment: str,
+        existing_slot_memory: dict[str, Any],
+        long_term_memory: list[str] | None = None,
+    ) -> SlotExtractionPayload | None:
+        """Extract unambiguous typed values without guessing business semantics in code."""
+        text = combine_distinct_text(source_fragment, current_message)
+        if not text:
+            return None
+        digit_spans = self._digit_spans(text)
+        claimed_numeric_values = self._claimed_numeric_values(long_term_memory or [])
+        missing_slot_defs = [
+            slot_def
+            for slot_def in intent.slot_schema
+            if slot_def.slot_key not in existing_slot_memory
+        ]
+        items: list[SlotExtractionItemPayload] = []
+        account_candidate = self._pick_account_number_candidate(
+            text=text,
+            digit_spans=digit_spans,
+            slot_defs=missing_slot_defs,
+            claimed_numeric_values=claimed_numeric_values,
+        )
+        self._append_local_typed_item(
+            items=items,
+            slot_defs=missing_slot_defs,
+            value_type=SlotValueType.ACCOUNT_NUMBER,
+            value=account_candidate[0] if account_candidate is not None else None,
+            source_text=current_message,
+        )
+        self._append_local_typed_item(
+            items=items,
+            slot_defs=missing_slot_defs,
+            value_type=SlotValueType.PHONE_LAST4,
+            value=self._pick_phone_last_four(
+                text=text,
+                digit_spans=digit_spans,
+                slot_defs=missing_slot_defs,
+                preferred_group_span=account_candidate,
+            ),
+            source_text=current_message,
+        )
+        self._append_local_typed_item(
+            items=items,
+            slot_defs=missing_slot_defs,
+            value_type=SlotValueType.CURRENCY,
+            value=self._pick_amount(text=text, digit_spans=digit_spans, slot_defs=missing_slot_defs),
+            source_text=current_message,
+        )
+        self._append_local_typed_item(
+            items=items,
+            slot_defs=missing_slot_defs,
+            value_type=SlotValueType.INTEGER,
+            value=self._pick_integer(text=text, digit_spans=digit_spans, slot_defs=missing_slot_defs),
+            source_text=current_message,
+        )
+        self._append_local_typed_item(
+            items=items,
+            slot_defs=missing_slot_defs,
+            value_type=SlotValueType.NUMBER,
+            value=self._pick_number(text=text, digit_spans=digit_spans, slot_defs=missing_slot_defs),
+            source_text=current_message,
+        )
+        if not items:
+            return None
+        return SlotExtractionPayload(slots=items, ambiguousSlotKeys=[])
+
+    def _append_local_typed_item(
+        self,
+        *,
+        items: list[SlotExtractionItemPayload],
+        slot_defs: list[IntentSlotDefinition],
+        value_type: SlotValueType,
+        value: Any | None,
+        source_text: str,
+    ) -> None:
+        """Append one local typed binding only when the slot family is unambiguous."""
+        if value is None:
+            return
+        matching_slot_defs = [slot_def for slot_def in slot_defs if slot_def.value_type == value_type]
+        if len(matching_slot_defs) != 1:
+            return
+        items.append(
+            SlotExtractionItemPayload(
+                slot_key=matching_slot_defs[0].slot_key,
+                value=value,
+                source=SlotBindingSource.USER_MESSAGE,
+                source_text=source_text,
+                confidence=0.93,
+            )
+        )
+
+    def _digit_spans(self, text: str) -> list[tuple[str, int, int]]:
+        """Return contiguous digit spans from one text fragment."""
+        spans: list[tuple[str, int, int]] = []
+        start: int | None = None
+        for index, character in enumerate(text):
+            if character.isdigit():
+                if start is None:
+                    start = index
+                continue
+            if start is not None:
+                spans.append((text[start:index], start, index))
+                start = None
+        if start is not None:
+            spans.append((text[start:], start, len(text)))
+        return spans
+
+    def _pick_account_number_candidate(
+        self,
+        *,
+        text: str,
+        digit_spans: list[tuple[str, int, int]],
+        slot_defs: list[IntentSlotDefinition],
+        claimed_numeric_values: set[str],
+    ) -> tuple[str, int, int] | None:
+        """Choose one account-like span via slot anchors or unambiguous raw fallback."""
+        matching_slot_defs = [slot_def for slot_def in slot_defs if slot_def.value_type == SlotValueType.ACCOUNT_NUMBER]
+        if len(matching_slot_defs) != 1:
+            return None
+        candidates = [
+            (digits, start, end)
+            for digits, start, end in digit_spans
+            if 6 <= len(digits) <= 20
+        ]
+        if len(candidates) > 1:
+            unclaimed_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate[0] not in claimed_numeric_values
+            ]
+            if len(unclaimed_candidates) == 1:
+                candidates = unclaimed_candidates
+        return self._pick_span_candidate(
+            text=text,
+            span_candidates=candidates,
+            slot_def=matching_slot_defs[0],
+            generic_markers=("卡号", "账号", "账户", "银行卡", "银行卡号", "户号"),
+            allow_raw_fallback=True,
+            raw_fallback_requires_exact_text=False,
+        )
+
+    def _pick_phone_last_four(
+        self,
+        *,
+        text: str,
+        digit_spans: list[tuple[str, int, int]],
+        slot_defs: list[IntentSlotDefinition],
+        preferred_group_span: tuple[str, int, int] | None = None,
+    ) -> str | None:
+        """Choose one phone-last-four span via slot anchors or safe raw fallback."""
+        matching_slot_defs = [slot_def for slot_def in slot_defs if slot_def.value_type == SlotValueType.PHONE_LAST4]
+        if len(matching_slot_defs) != 1:
+            return None
+        candidates = [
+            (digits, start, end)
+            for digits, start, end in digit_spans
+            if len(digits) == 4
+        ]
+        has_other_numeric_slots = any(
+            slot_def.value_type in {SlotValueType.CURRENCY, SlotValueType.NUMBER, SlotValueType.INTEGER}
+            for slot_def in slot_defs
+            if slot_def.value_type != SlotValueType.PHONE_LAST4
+        )
+        candidate = self._pick_span_candidate(
+            text=text,
+            span_candidates=candidates,
+            slot_def=matching_slot_defs[0],
+            generic_markers=("尾号", "后4位", "后四位", "手机号", "手机", "手机号后4位", "手机号后四位"),
+            allow_raw_fallback=not has_other_numeric_slots,
+            raw_fallback_requires_exact_text=True,
+        )
+        if candidate is not None:
+            return candidate[0]
+        if preferred_group_span is None or len(candidates) <= 1:
+            return None
+        same_group_candidates = [
+            candidate
+            for candidate in candidates
+            if self._spans_share_phrase_group(
+                text=text,
+                left_span=preferred_group_span,
+                right_span=candidate,
+            )
+        ]
+        if len(same_group_candidates) != 1:
+            return None
+        return same_group_candidates[0][0]
+
+    def _pick_amount(
+        self,
+        *,
+        text: str,
+        digit_spans: list[tuple[str, int, int]],
+        slot_defs: list[IntentSlotDefinition],
+    ) -> str | None:
+        """Choose one amount-like span via syntax cues or raw numeric fallback."""
+        matching_slot_defs = [slot_def for slot_def in slot_defs if slot_def.value_type == SlotValueType.CURRENCY]
+        if len(matching_slot_defs) != 1:
+            return None
+        unit_candidates = [
+            (digits, start, end)
+            for digits, start, end in digit_spans
+            if self._span_has_amount_context(
+                text=text,
+                start=start,
+                end=end,
+            )
+        ]
+        if len(unit_candidates) == 1:
+            return unit_candidates[0][0]
+        if len(unit_candidates) > 1:
+            return None
+        stripped = self._strip_inline_whitespace(text)
+        if len(digit_spans) != 1 or not stripped.isdigit():
+            return None
+        digits, _start, _end = digit_spans[0]
+        if digits != stripped or len(digits) > 6:
+            return None
+        has_phone_slot = any(slot_def.value_type == SlotValueType.PHONE_LAST4 for slot_def in slot_defs)
+        if has_phone_slot and len(digits) == 4:
+            return None
+        return digits
+
+    def _pick_integer(
+        self,
+        *,
+        text: str,
+        digit_spans: list[tuple[str, int, int]],
+        slot_defs: list[IntentSlotDefinition],
+    ) -> str | None:
+        """Choose one integer value only when the user turn is a raw integer token."""
+        matching_slot_defs = [slot_def for slot_def in slot_defs if slot_def.value_type == SlotValueType.INTEGER]
+        if len(matching_slot_defs) != 1:
+            return None
+        stripped = self._strip_inline_whitespace(text)
+        if len(digit_spans) != 1 or not stripped.isdigit():
+            return None
+        digits, _start, _end = digit_spans[0]
+        return digits if digits == stripped else None
+
+    def _pick_number(
+        self,
+        *,
+        text: str,
+        digit_spans: list[tuple[str, int, int]],
+        slot_defs: list[IntentSlotDefinition],
+    ) -> str | None:
+        """Choose one numeric token only when the user turn is a raw integer token."""
+        matching_slot_defs = [slot_def for slot_def in slot_defs if slot_def.value_type == SlotValueType.NUMBER]
+        if len(matching_slot_defs) != 1:
+            return None
+        stripped = self._strip_inline_whitespace(text)
+        if len(digit_spans) != 1 or not stripped.isdigit():
+            return None
+        digits, _start, _end = digit_spans[0]
+        return digits if digits == stripped else None
+
+    def _pick_span_candidate(
+        self,
+        *,
+        text: str,
+        span_candidates: list[tuple[str, int, int]],
+        slot_def: IntentSlotDefinition,
+        generic_markers: tuple[str, ...],
+        allow_raw_fallback: bool,
+        raw_fallback_requires_exact_text: bool,
+    ) -> tuple[str, int, int] | None:
+        """Choose one span by preferring slot-defined anchors over generic type markers."""
+        if not span_candidates:
+            return None
+        anchored = self._anchored_spans(
+            text=text,
+            span_candidates=span_candidates,
+            markers=tuple(self._slot_anchor_phrases(slot_def)),
+        )
+        if len(anchored) == 1:
+            return anchored[0]
+        if len(anchored) > 1:
+            return None
+        slot_anchors = tuple(self._slot_anchor_phrases(slot_def))
+        explicit_anchor_required = self._slot_requires_explicit_anchor(
+            slot_anchors=slot_anchors,
+            generic_markers=generic_markers,
+        )
+        generic = self._anchored_spans(
+            text=text,
+            span_candidates=span_candidates,
+            markers=generic_markers,
+        )
+        if explicit_anchor_required:
+            generic = [
+                candidate
+                for candidate in generic
+                if self._span_has_slot_role_hint(
+                    text=text,
+                    start=candidate[1],
+                    end=candidate[2],
+                    slot_def=slot_def,
+                    generic_markers=generic_markers,
+                )
+            ]
+        if len(generic) == 1:
+            return generic[0]
+        if len(generic) > 1:
+            return None
+        if explicit_anchor_required:
+            return None
+        stripped = self._strip_inline_whitespace(text)
+        if (
+            allow_raw_fallback
+            and len(span_candidates) == 1
+            and (
+                not raw_fallback_requires_exact_text
+                or stripped == span_candidates[0][0]
+            )
+        ):
+            return span_candidates[0]
+        return None
+
+    def _slot_requires_explicit_anchor(
+        self,
+        *,
+        slot_anchors: tuple[str, ...],
+        generic_markers: tuple[str, ...],
+    ) -> bool:
+        """Return whether the slot schema names an explicit role that should not degrade to generic matching."""
+        return bool(slot_anchors) and all(anchor not in generic_markers for anchor in slot_anchors)
+
+    def _span_has_slot_role_hint(
+        self,
+        *,
+        text: str,
+        start: int,
+        end: int,
+        slot_def: IntentSlotDefinition,
+        generic_markers: tuple[str, ...],
+    ) -> bool:
+        """Return whether the candidate clause contains a schema-derived role hint for this slot."""
+        role_hints = self._slot_role_hints(slot_def=slot_def, generic_markers=generic_markers)
+        if not role_hints:
+            return False
+        clause = self._candidate_clause(text=text, start=start, end=end)
+        return any(role_hint in clause for role_hint in role_hints)
+
+    def _slot_role_hints(
+        self,
+        *,
+        slot_def: IntentSlotDefinition,
+        generic_markers: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """Derive stable role hints from structured slot anchors by stripping generic type words."""
+        role_hints: list[str] = []
+        for anchor in self._slot_anchor_phrases(slot_def):
+            role_hint = anchor
+            for marker in generic_markers:
+                role_hint = role_hint.replace(marker, "")
+            role_hint = role_hint.strip(" :：-_()（）[]【】0123456789")
+            role_hint = role_hint.replace("后四位", "").replace("后4位", "").strip()
+            if role_hint.endswith("人"):
+                compact = role_hint[:-1].strip()
+                if compact and compact not in role_hints:
+                    role_hints.append(compact)
+            if role_hint and role_hint not in role_hints:
+                role_hints.append(role_hint)
+        role_hints.sort(key=len, reverse=True)
+        return tuple(role_hints)
+
+    def _candidate_clause(
+        self,
+        *,
+        text: str,
+        start: int,
+        end: int,
+    ) -> str:
+        """Return the local phrase group around a candidate span."""
+        separators = "；;。！？!?\n"
+        left = start
+        right = end
+        while left > 0 and text[left - 1] not in separators:
+            left -= 1
+        while right < len(text) and text[right] not in separators:
+            right += 1
+        return text[left:right]
+
+    def _spans_share_phrase_group(
+        self,
+        *,
+        text: str,
+        left_span: tuple[str, int, int],
+        right_span: tuple[str, int, int],
+    ) -> bool:
+        """Return whether two spans belong to the same semicolon-delimited phrase group."""
+        left_group = self._candidate_clause(text=text, start=left_span[1], end=left_span[2])
+        right_group = self._candidate_clause(text=text, start=right_span[1], end=right_span[2])
+        return bool(left_group) and left_group == right_group
+
+    def _claimed_numeric_values(self, memory_entries: list[str]) -> set[str]:
+        """Collect numeric values that were already claimed elsewhere in the session context."""
+        claimed: set[str] = set()
+        for entry in memory_entries:
+            if "=" not in entry:
+                continue
+            _slot_key, raw_value = entry.split("=", 1)
+            digits = "".join(character for character in raw_value if character.isdigit())
+            if digits:
+                claimed.add(digits)
+        return claimed
+
+    def _span_has_amount_context(
+        self,
+        *,
+        text: str,
+        start: int,
+        end: int,
+    ) -> bool:
+        """Return whether one digit span is immediately shaped like an amount token."""
+        before = text[max(0, start - 6):start]
+        after = text[end:end + 4].lstrip()
+        return (
+            after.startswith(("元", "块", "人民币"))
+            or "金额" in before
+            or before.endswith(("改成", "改为", "改到"))
+        )
+
+    def _anchored_spans(
+        self,
+        *,
+        text: str,
+        span_candidates: list[tuple[str, int, int]],
+        markers: tuple[str, ...],
+    ) -> list[tuple[str, int, int]]:
+        """Return span candidates whose nearby text contains one explicit anchor phrase."""
+        if not markers:
+            return []
+        return [
+            candidate
+            for candidate in span_candidates
+            if self._span_has_marker(
+                text=text,
+                start=candidate[1],
+                end=candidate[2],
+                markers=markers,
+            )
+        ]
+
+    def _span_has_marker(
+        self,
+        *,
+        text: str,
+        start: int,
+        end: int,
+        markers: tuple[str, ...],
+    ) -> bool:
+        """Return whether one marker appears near the candidate span."""
+        before = text[max(0, start - 12):start]
+        after = text[end:end + 12]
+        return any(marker and (marker in before or marker in after) for marker in markers)
+
+    def _slot_anchor_phrases(self, slot_def: IntentSlotDefinition) -> list[str]:
+        """Return explicit slot-owned anchor phrases derived from structured schema metadata."""
+        anchors: list[str] = []
+        for raw_value in [slot_def.label, *slot_def.aliases]:
+            cleaned = (raw_value or "").strip()
+            if not cleaned or cleaned in anchors:
+                continue
+            anchors.append(cleaned)
+        anchors.sort(key=len, reverse=True)
+        return anchors
+
+    def _strip_inline_whitespace(self, text: str) -> str:
+        """Remove inline whitespace so raw-token fallbacks stay deterministic."""
+        return "".join(character for character in text if not character.isspace())
 
     def _normalize_seed_binding(
         self,

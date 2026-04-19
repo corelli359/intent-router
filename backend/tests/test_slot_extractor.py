@@ -68,6 +68,50 @@ def _gas_intent() -> IntentDefinition:
     )
 
 
+def _transfer_intent() -> IntentDefinition:
+    return IntentDefinition(
+        intent_code="AG_TRANS",
+        name="转账",
+        description="执行转账，需要收款人姓名和金额。",
+        examples=["给小明转500元"],
+        keywords=["转账", "汇款"],
+        agent_url="http://agent.example.com/transfer",
+        slot_schema=[
+            {
+                "slot_key": "payee_name",
+                "field_code": "payee_name",
+                "label": "收款人姓名",
+                "description": "当前转账的收款人姓名",
+                "aliases": ["收款人", "对方姓名"],
+                "value_type": "string",
+                "required": True,
+            },
+            {
+                "slot_key": "amount",
+                "field_code": "amount",
+                "label": "转账金额",
+                "description": "当前转账金额",
+                "value_type": "currency",
+                "required": True,
+            },
+            {
+                "slot_key": "payee_card_no",
+                "label": "收款卡号",
+                "aliases": ["收款卡号", "对方卡号"],
+                "value_type": "string",
+                "required": False,
+            },
+            {
+                "slot_key": "payee_phone",
+                "label": "收款手机号",
+                "aliases": ["收款手机号", "对方手机号"],
+                "value_type": "string",
+                "required": False,
+            },
+        ],
+    )
+
+
 def test_slot_extractor_returns_structured_slots_from_llm() -> None:
     async def run() -> None:
         extractor = SlotExtractor(llm_client=_SuccessfulLLMClient())
@@ -90,6 +134,30 @@ def test_slot_extractor_returns_structured_slots_from_llm() -> None:
         assert binding_by_key["gas_account_number"].source == SlotBindingSource.USER_MESSAGE
         assert binding_by_key["gas_account_number"].source_text
         assert binding_by_key["amount"].value == "88"
+
+    asyncio.run(run())
+
+
+def test_slot_extractor_local_typed_parser_does_not_guess_semantic_string_slots() -> None:
+    async def run() -> None:
+        extractor = SlotExtractor()
+        result = await extractor.extract(
+            intent=_transfer_intent(),
+            node=GraphNodeState(
+                intent_code="AG_TRANS",
+                title="转账",
+                confidence=0.97,
+                source_fragment="给小明转500元",
+            ),
+            graph_source_message="给小明转500元",
+            current_message="给小明转500元",
+            long_term_memory=[],
+        )
+
+        assert result.slot_memory == {"amount": "500"}
+        assert "payee_name" not in result.slot_memory
+        assert "payee_card_no" not in result.slot_memory
+        assert "payee_phone" not in result.slot_memory
 
     asyncio.run(run())
 
@@ -134,7 +202,7 @@ def test_slot_extractor_keeps_empty_result_when_llm_is_rate_limited() -> None:
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {}
+        assert result.slot_memory == {"gas_account_number": "88001234"}
         assert result.ambiguous_slot_keys == []
         assert result.diagnostics
         assert result.diagnostics[0].code == "SLOT_EXTRACTOR_LLM_RETRYABLE_UNAVAILABLE"

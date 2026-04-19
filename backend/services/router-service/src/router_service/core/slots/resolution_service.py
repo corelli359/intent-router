@@ -158,26 +158,28 @@ class SlotResolutionService:
         *,
         preferred_sources: dict[str, SlotBindingSource] | None = None,
         source_text: str | None = None,
+        source_text_slot_keys: set[str] | None = None,
     ) -> None:
         """Rebuild node bindings from `slot_memory` after merge/normalization steps."""
         existing_by_key = {binding.slot_key: binding for binding in node.slot_bindings}
         rebuilt: list[SlotBindingState] = []
         for slot_key, value in node.slot_memory.items():
             existing = existing_by_key.get(slot_key)
+            preferred_source = preferred_sources[slot_key] if preferred_sources and slot_key in preferred_sources else None
+            inferred_source_text = existing.source_text if existing is not None and existing.source_text else None
+            if inferred_source_text is None and source_text is not None:
+                if source_text_slot_keys is None or slot_key in source_text_slot_keys:
+                    inferred_source_text = source_text
             rebuilt.append(
                 SlotBindingState(
                     slot_key=slot_key,
                     value=value,
                     source=(
-                        preferred_sources[slot_key]
-                        if preferred_sources and slot_key in preferred_sources
+                        preferred_source
+                        if preferred_source is not None
                         else existing.source if existing is not None else SlotBindingSource.USER_MESSAGE
                     ),
-                    source_text=(
-                        existing.source_text
-                        if existing is not None and existing.source_text
-                        else source_text
-                    ),
+                    source_text=inferred_source_text,
                     confidence=existing.confidence if existing is not None else node.confidence,
                     is_modified=existing.is_modified if existing is not None else False,
                 )
@@ -263,6 +265,7 @@ class SlotResolutionService:
                     if selected_item is not None
                     else proactive_recommendation.intro_text if proactive_recommendation is not None else node.source_fragment
                 ),
+                source_text_slot_keys=recommendation_keys,
             )
             if selected_item is not None:
                 if not node.title:

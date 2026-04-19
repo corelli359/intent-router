@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-import re
 from typing import Any, Callable, Literal
 
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
@@ -41,14 +40,6 @@ RecentMessageSanitizer = Callable[[list[str]], list[str]]
 GraphPlanningPolicy = Literal["always", "never", "multi_intent_only", "auto"]
 
 logger = logging.getLogger(__name__)
-
-_COMPLEX_GRAPH_SIGNAL_PATTERNS = (
-    re.compile(r"(如果|若|要是).*(就|则)"),
-    re.compile(r"先.+再"),
-    re.compile(r"(然后|之后|接着|随后|同时|并且|另外|顺便|分别)"),
-    re.compile(r"再(给|转|查|做|办|交|缴|买|换|付|执行)"),
-    re.compile(r"还(给|转|查|做|办|交|缴|买|换|付|大于|小于|超过|低于|剩|够)"),
-)
 
 
 @dataclass(slots=True)
@@ -311,7 +302,11 @@ class GraphCompiler:
         long_term_memory: list[str],
     ) -> ExecutionGraphState:
         """Choose between heavy planning and deterministic fallback planning."""
-        use_heavy_planner = self._should_use_heavy_planner(message=message, matches=matches)
+        use_heavy_planner = self._should_use_heavy_planner(
+            message=message,
+            matches=matches,
+            intents_by_code=intents_by_code,
+        )
         planner = self.planner if use_heavy_planner else self.fallback_planner
         with router_stage(
             logger,
@@ -344,8 +339,10 @@ class GraphCompiler:
         *,
         message: str,
         matches: list[IntentMatch],
+        intents_by_code: dict[str, IntentDefinition],
     ) -> bool:
         """Return whether this turn should go through the heavier LLM planning path."""
+        del message
         if self.planning_policy == "always":
             return True
         if self.planning_policy == "never":
@@ -354,14 +351,13 @@ class GraphCompiler:
             return True
         if self.planning_policy == "multi_intent_only":
             return False
-        return self._message_has_complex_graph_signal(message)
-
-    def _message_has_complex_graph_signal(self, message: str) -> bool:
-        """Detect conditions, sequencing, or repeated actions in a single-intent turn."""
-        normalized = " ".join(part for part in message.split() if part).strip()
-        if not normalized:
+        if not matches:
             return False
-        return any(pattern.search(normalized) for pattern in _COMPLEX_GRAPH_SIGNAL_PATTERNS)
+        intent = intents_by_code.get(matches[0].intent_code)
+        if intent is None:
+            return False
+        hints = intent.graph_build_hints
+        return bool(hints.max_nodes_per_message > 1 and hints.multi_node_examples)
 
     def _apply_single_node_confirmation_policy(
         self,

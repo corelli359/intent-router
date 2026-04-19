@@ -59,6 +59,43 @@ def _gas_intent() -> IntentDefinition:
     )
 
 
+def _transfer_intent() -> IntentDefinition:
+    return IntentDefinition(
+        intent_code="AG_TRANS",
+        name="转账",
+        description="执行转账，需要收款人姓名和金额。",
+        examples=["给小明转500元"],
+        keywords=["转账", "汇款"],
+        agent_url="http://agent.example.com/transfer",
+        slot_schema=[
+            {
+                "slot_key": "payee_name",
+                "field_code": "payee_name",
+                "label": "收款人姓名",
+                "description": "当前转账的收款人姓名",
+                "aliases": ["收款人", "对方姓名"],
+                "value_type": "string",
+                "required": True,
+            },
+            {
+                "slot_key": "amount",
+                "field_code": "amount",
+                "label": "转账金额",
+                "description": "当前转账金额",
+                "value_type": "currency",
+                "required": True,
+            },
+            {
+                "slot_key": "payee_card_no",
+                "label": "收款卡号",
+                "aliases": ["收款卡号", "对方卡号"],
+                "value_type": "string",
+                "required": False,
+            },
+        ],
+    )
+
+
 def test_understanding_validator_requires_all_slots_before_dispatch() -> None:
     async def run() -> None:
         validator = UnderstandingValidator()
@@ -75,9 +112,33 @@ def test_understanding_validator_requires_all_slots_before_dispatch() -> None:
             long_term_memory=[],
         )
 
-        assert result.missing_required_slots == ["gas_account_number", "amount"]
+        assert result.slot_memory == {"gas_account_number": "88001234"}
+        assert result.missing_required_slots == ["amount"]
         assert result.can_dispatch is False
         assert not result.needs_confirmation
+
+    asyncio.run(run())
+
+
+def test_understanding_validator_keeps_waiting_when_only_amount_is_locally_grounded() -> None:
+    async def run() -> None:
+        validator = UnderstandingValidator()
+        result = await validator.validate_node(
+            intent=_transfer_intent(),
+            node=GraphNodeState(
+                intent_code="AG_TRANS",
+                title="转账",
+                confidence=0.97,
+                source_fragment="给小明转500元",
+            ),
+            graph_source_message="给小明转500元",
+            current_message="给小明转500元",
+            long_term_memory=[],
+        )
+
+        assert result.slot_memory == {"amount": "500"}
+        assert result.missing_required_slots == ["payee_name"]
+        assert result.can_dispatch is False
 
     asyncio.run(run())
 

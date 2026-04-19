@@ -69,6 +69,9 @@ class GraphRouterOrchestratorConfig:
 
     intent_switch_threshold: float = 0.80
     agent_timeout_seconds: float = 60.0
+    memory_recall_limit: int = 20
+    session_task_limit: int = 5
+    session_business_limit: int = 5
     max_drain_iterations: int | None = None
     drain_iteration_multiplier: int = 3
     drain_iteration_floor: int = 8
@@ -196,6 +199,7 @@ class GraphRouterOrchestrator:
             confirm_pending_graph=self._confirm_pending_graph,
             resume_waiting_node=self._resume_waiting_node,
             cancel_current_node=self._cancel_current_node,
+            session_business_limit=self.config.session_business_limit,
         )
 
     def create_session(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
@@ -798,19 +802,24 @@ class GraphRouterOrchestrator:
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
 
-        validation = await self._validate_node_understanding(
-            session,
-            graph,
-            node,
-            intent=intent,
-            current_message=dispatch_input,
-        )
-        if not validation.can_dispatch:
-            # Slot fill stays in the router layer. The downstream agent only does
-            # defensive slot checking and business execution.
-            await self._mark_node_waiting_for_slots(session, graph, node, validation)
-            return None
-        session.last_diagnostics = list(validation.diagnostics or [])
+        if self._intent_requires_slot_understanding(intent):
+            validation = await self._validate_node_understanding(
+                session,
+                graph,
+                node,
+                intent=intent,
+                current_message=dispatch_input,
+            )
+            if not validation.can_dispatch:
+                # Slot fill stays in the router layer. The downstream agent only does
+                # defensive slot checking and business execution.
+                await self._mark_node_waiting_for_slots(session, graph, node, validation)
+                return None
+            session.last_diagnostics = list(validation.diagnostics or [])
+        else:
+            session.last_diagnostics = []
+            node.diagnostics = []
+            node.history_slot_keys = []
 
         context = self._build_graph_task_context(session, graph=graph)
         context.update(
@@ -837,6 +846,7 @@ class GraphRouterOrchestrator:
         )
         task.touch(TaskStatus.CREATED)
         session.tasks.append(task)
+        session.enforce_task_limit(self.config.session_task_limit)
         node.task_id = task.task_id
         await self._publish_node_state(session, graph, node, task.status, "node.created", f"创建节点 {node.intent_code}")
         return task
@@ -855,16 +865,21 @@ class GraphRouterOrchestrator:
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
 
-        validation = await self._validate_node_understanding(
-            session,
-            graph,
-            node,
-            intent=intent,
-            current_message=dispatch_input,
-        )
-        if not validation.can_dispatch:
-            await self._mark_node_waiting_for_slots(session, graph, node, validation)
-            return False
+        if self._intent_requires_slot_understanding(intent):
+            validation = await self._validate_node_understanding(
+                session,
+                graph,
+                node,
+                intent=intent,
+                current_message=dispatch_input,
+            )
+            if not validation.can_dispatch:
+                await self._mark_node_waiting_for_slots(session, graph, node, validation)
+                return False
+        else:
+            session.last_diagnostics = []
+            node.diagnostics = []
+            node.history_slot_keys = []
         await self._mark_node_ready_for_dispatch(session, graph, node)
         return True
 
@@ -1326,8 +1341,15 @@ class GraphRouterOrchestrator:
 
     def _build_session_context(self, session: GraphSessionState, task: Task | None = None) -> dict[str, Any]:
         """Assemble recent messages plus long-term memory for recognition and agents."""
-        long_term_memory = self.session_store.long_term_memory.recall(session.cust_id)
+        long_term_memory = self.session_store.long_term_memory.recall(
+            session.cust_id,
+            limit=self.config.memory_recall_limit,
+        )
         return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
+
+    def _intent_requires_slot_understanding(self, intent: IntentDefinition) -> bool:
+        """Return whether the router still needs to run slot extraction/validation for this intent."""
+        return bool(intent.slot_schema)
 
     def _sanitize_recent_messages_for_planning(self, recent_messages: list[str]) -> list[str]:
         """Delegate planning-message sanitization into the message flow."""

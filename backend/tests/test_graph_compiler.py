@@ -94,6 +94,26 @@ def _transfer_intent(*, confirm_policy: str = "auto") -> IntentDefinition:
     )
 
 
+def _structured_multi_step_transfer_intent() -> IntentDefinition:
+    return IntentDefinition(
+        intent_code="transfer_money",
+        name="转账",
+        description="执行转账。",
+        examples=["先给小红转200，再给小明转300"],
+        keywords=["转账"],
+        agent_url="http://agent.example.com/transfer",
+        dispatch_priority=100,
+        primary_threshold=0.75,
+        candidate_threshold=0.5,
+        slot_schema=[],
+        graph_build_hints={
+            "multi_node_examples": ["先给小红转200，再给小明转300"],
+            "confirm_policy": "auto",
+            "max_nodes_per_message": 4,
+        },
+    )
+
+
 def _balance_intent() -> IntentDefinition:
     return IntentDefinition(
         intent_code="query_account_balance",
@@ -173,7 +193,7 @@ def test_graph_compiler_auto_policy_skips_heavy_planner_for_simple_single_intent
     assert result.graph.status == GraphStatus.DRAFT
 
 
-def test_graph_compiler_auto_policy_uses_heavy_planner_for_complex_single_intent() -> None:
+def test_graph_compiler_auto_policy_skips_heavy_planner_for_complex_wording_without_structured_hints() -> None:
     compiler, heavy, fallback = _compiler(
         intents=[_transfer_intent()],
         planning_policy="auto",
@@ -183,6 +203,24 @@ def test_graph_compiler_auto_policy_uses_heavy_planner_for_complex_single_intent
         _compile_with_matches(
             compiler,
             message="给小红转200，再给小明转300",
+            matches=[IntentMatch(intent_code="transfer_money", confidence=0.96, reason="single intent")],
+        )
+    )
+
+    assert len(heavy.calls) == 0
+    assert len(fallback.calls) == 1
+
+
+def test_graph_compiler_auto_policy_uses_heavy_planner_when_catalog_declares_multi_step_examples() -> None:
+    compiler, heavy, fallback = _compiler(
+        intents=[_structured_multi_step_transfer_intent()],
+        planning_policy="auto",
+    )
+
+    asyncio.run(
+        _compile_with_matches(
+            compiler,
+            message="先给小红转200，再给小明转300",
             matches=[IntentMatch(intent_code="transfer_money", confidence=0.96, reason="single intent")],
         )
     )

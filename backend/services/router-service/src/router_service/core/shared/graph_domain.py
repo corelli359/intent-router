@@ -357,6 +357,65 @@ class GraphSessionState(BaseModel):
         self._sync_focus_aliases()
         return business
 
+    def enforce_business_limit(self, max_businesses: int) -> list[str]:
+        """Trim old suspended businesses when the live session workset grows too large."""
+        self._adopt_legacy_aliases()
+        if max_businesses <= 0:
+            return []
+        removed: list[str] = []
+        protected = {
+            business_id
+            for business_id in {
+                self.workflow.focus_business_id,
+                self.workflow.pending_business_id,
+            }
+            if business_id
+        }
+        while len(self.business_objects) > max_businesses:
+            removable = [
+                item
+                for item in self.business_objects
+                if item.business_id not in protected and item.status == BusinessObjectStatus.SUSPENDED
+            ]
+            if not removable:
+                break
+            oldest = min(removable, key=lambda item: (item.updated_at, item.created_at))
+            removed.append(oldest.business_id)
+            self.business_objects = [
+                item
+                for item in self.business_objects
+                if item.business_id != oldest.business_id
+            ]
+            self.workflow.suspended_business_ids = [
+                business_id
+                for business_id in self.workflow.suspended_business_ids
+                if business_id != oldest.business_id
+            ]
+        if removed:
+            self._sync_focus_aliases()
+        return removed
+
+    def enforce_task_limit(self, max_tasks: int) -> list[str]:
+        """Trim stale unreferenced tasks while preserving tasks still bound to live business graphs."""
+        self._adopt_legacy_aliases()
+        if max_tasks <= 0:
+            return []
+        protected_task_ids = {
+            node.task_id
+            for business in self.business_objects
+            for node in business.graph.nodes
+            if node.task_id
+        }
+        removed: list[str] = []
+        while len(self.tasks) > max_tasks:
+            removable = [task for task in self.tasks if task.task_id not in protected_task_ids]
+            if not removable:
+                break
+            oldest = min(removable, key=lambda task: (task.updated_at, task.created_at))
+            removed.append(oldest.task_id)
+            self.tasks = [task for task in self.tasks if task.task_id != oldest.task_id]
+        return removed
+
     def suspend_focus_business(self, *, reason: str | None = None) -> BusinessObjectState | None:
         """Suspend the focus business so another business can take over the session."""
         business = self.focus_business()

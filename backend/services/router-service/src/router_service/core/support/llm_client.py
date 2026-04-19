@@ -114,6 +114,7 @@ class LangChainLLMClient:
     base_url: str
     default_model: str
     api_key: str | None = None
+    temperature: float = 0.0
     timeout_seconds: float = 30.0
     rate_limit_max_retries: int = 2
     rate_limit_retry_delay_seconds: float = 2.0
@@ -368,7 +369,7 @@ class LangChainLLMClient:
             "model": model or self.default_model,
             "messages": messages,
             "stream": stream,
-            "temperature": 0,
+            "temperature": self.temperature,
         }
 
     def _render_chat_messages(

@@ -133,14 +133,30 @@ def normalize_slot_memory(
 
     for slot_key, raw_value in slot_memory.items():
         slot_def = slot_schema_by_key.get(slot_key)
-        if slot_value_grounded(slot_def=slot_def, value=raw_value, grounding_text=grounding_text):
+        if slot_def is not None:
+            grounded_in_turn = slot_value_grounded_with_currency_fallback(
+                slot_def=slot_def,
+                value=raw_value,
+                grounding_text=grounding_text,
+            )
+        else:
+            grounded_in_turn = slot_value_grounded(
+                slot_def=slot_def,
+                value=raw_value,
+                grounding_text=grounding_text,
+            )
+        if grounded_in_turn:
             normalized[slot_key] = raw_value
             continue
         if (
             slot_def is not None
             and slot_def.allow_from_history
             and combined_history_text
-            and slot_value_grounded(slot_def=slot_def, value=raw_value, grounding_text=combined_history_text)
+            and slot_value_grounded_with_currency_fallback(
+                slot_def=slot_def,
+                value=raw_value,
+                grounding_text=combined_history_text,
+            )
         ):
             normalized[slot_key] = raw_value
             history_slot_keys.append(slot_key)

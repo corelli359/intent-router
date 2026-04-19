@@ -111,6 +111,9 @@ class Settings(BaseModel):
     router_sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
     router_sse_max_idle_seconds: float = Field(default=300.0, gt=0)
     router_long_term_memory_fact_limit: int | None = Field(default=DEFAULT_LONG_TERM_MEMORY_FACT_LIMIT)
+    router_memory_recall_limit: int = Field(default=20, gt=0)
+    router_session_max_tasks: int = Field(default=5, gt=0)
+    router_session_max_businesses: int = Field(default=5, gt=0)
     router_session_cleanup_enabled: bool = Field(default=True)
     router_session_cleanup_interval_seconds: float = Field(default=60.0, gt=0)
     router_drain_max_iterations: int | None = Field(default=None, gt=0)
@@ -124,9 +127,12 @@ class Settings(BaseModel):
     llm_recognizer_model: str | None = Field(default=None)
     llm_recognizer_system_prompt_template: str | None = Field(default=None)
     llm_recognizer_human_prompt_template: str | None = Field(default=None)
+    llm_slot_extractor_system_prompt_template: str | None = Field(default=None)
+    llm_slot_extractor_human_prompt_template: str | None = Field(default=None)
     llm_structured_output_method: Literal["function_calling", "json_mode", "json_schema"] = Field(
         default="json_mode"
     )
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
     llm_rate_limit_max_retries: int = Field(default=2, ge=0)
     llm_rate_limit_retry_delay_seconds: float = Field(default=2.0, gt=0)
@@ -174,6 +180,9 @@ class Settings(BaseModel):
             router_long_term_memory_fact_limit=parse_long_term_memory_fact_limit(
                 os.getenv(ROUTER_LONG_TERM_MEMORY_FACT_LIMIT_ENV)
             ),
+            router_memory_recall_limit=int(os.getenv("ROUTER_MEMORY_RECALL_LIMIT", "20")),
+            router_session_max_tasks=int(os.getenv("ROUTER_SESSION_MAX_TASKS", "5")),
+            router_session_max_businesses=int(os.getenv("ROUTER_SESSION_MAX_BUSINESSES", "5")),
             router_session_cleanup_enabled=_parse_bool_env("ROUTER_SESSION_CLEANUP_ENABLED", True),
             router_session_cleanup_interval_seconds=float(
                 os.getenv("ROUTER_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
@@ -200,7 +209,14 @@ class Settings(BaseModel):
             llm_recognizer_model=os.getenv("ROUTER_LLM_RECOGNIZER_MODEL"),
             llm_recognizer_system_prompt_template=os.getenv("ROUTER_LLM_RECOGNIZER_SYSTEM_PROMPT_TEMPLATE"),
             llm_recognizer_human_prompt_template=os.getenv("ROUTER_LLM_RECOGNIZER_HUMAN_PROMPT_TEMPLATE"),
+            llm_slot_extractor_system_prompt_template=os.getenv(
+                "ROUTER_LLM_SLOT_EXTRACTOR_SYSTEM_PROMPT_TEMPLATE"
+            ),
+            llm_slot_extractor_human_prompt_template=os.getenv(
+                "ROUTER_LLM_SLOT_EXTRACTOR_HUMAN_PROMPT_TEMPLATE"
+            ),
             llm_structured_output_method=os.getenv("ROUTER_LLM_STRUCTURED_OUTPUT_METHOD", "json_mode"),
+            llm_temperature=float(os.getenv("ROUTER_LLM_TEMPERATURE", "0")),
             llm_timeout_seconds=float(os.getenv("ROUTER_LLM_TIMEOUT_SECONDS", "30")),
             llm_rate_limit_max_retries=int(os.getenv("ROUTER_LLM_RATE_LIMIT_MAX_RETRIES", "2")),
             llm_rate_limit_retry_delay_seconds=float(

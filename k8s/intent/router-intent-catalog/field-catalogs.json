@@ -80,7 +80,7 @@
       {
         "field_code": "payee_name",
         "label": "收款人姓名",
-        "semantic_definition": "本次转账对应的收款人姓名。",
+        "semantic_definition": "本次转账对应的收款对象名称，可以是正式姓名、昵称或明确的关系称呼。",
         "value_type": "string",
         "aliases": [
           "收款人姓名",
@@ -89,16 +89,21 @@
         ],
         "examples": [
           "小红",
-          "张三",
-          "弟弟"
+          "王芳",
+          "李晓东",
+          "欧阳娜娜",
+          "我妈",
+          "阿杰"
         ],
         "counter_examples": [
           "6222020100043219999",
-          "500"
+          "500",
+          "招商银行",
+          "工资卡"
         ],
-        "format_hint": "",
-        "normalization_hint": "",
-        "validation_hint": ""
+        "format_hint": "输出用户原文中的人名、昵称或关系称呼，不要补全、改写或添加尊称。",
+        "normalization_hint": "保留用户原文称呼，不要把 我妈/妈妈/弟弟/小明 擅自改写成实名；原文是什么就输出什么。",
+        "validation_hint": "优先识别转账动作中由 给/转给/汇给/打给/付给 引出的收款对象；不要把金额、卡号、银行名、卡备注识别为 payee_name。"
       },
       {
         "field_code": "payee_card_no",

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
-from router_service.core.shared.domain import Task, TaskStatus
+from router_service.core.shared.domain import IntentDefinition, Task, TaskStatus
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeState,
@@ -13,6 +13,14 @@ from router_service.core.shared.graph_domain import (
     GraphSessionState,
     GraphStatus,
 )
+
+
+class _SingleIntentCatalog:
+    def __init__(self, intent: IntentDefinition) -> None:
+        self._intent = intent
+
+    def active_intents_by_code(self) -> dict[str, IntentDefinition]:
+        return {self._intent.intent_code: self._intent}
 
 
 def test_graph_orchestrator_drain_guard_fails_non_converging_graph() -> None:
@@ -271,5 +279,160 @@ def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default()
 
         assert payload is not None
         assert captured["emit_events"] is True
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_create_task_skips_understanding_for_no_slot_intent() -> None:
+    async def run() -> None:
+        intent = IntentDefinition(
+            intent_code="query_account_balance",
+            name="查询余额",
+            description="查询账户余额",
+            agent_url="http://agent/balance",
+            slot_schema=[],
+        )
+        orchestrator = GraphRouterOrchestrator(
+            publish_event=lambda event: None,
+            intent_catalog=_SingleIntentCatalog(intent),
+        )
+        orchestrator.understanding_validator.validate_node = AsyncMock(
+            side_effect=AssertionError("no-slot intent should not run router slot validation")
+        )
+        orchestrator._publish_node_state = AsyncMock()
+
+        session = GraphSessionState(session_id="session_no_slot_task", cust_id="cust_no_slot_task")
+        graph = ExecutionGraphState(source_message="帮我查余额")
+        node = GraphNodeState(
+            intent_code=intent.intent_code,
+            title="查询余额",
+            confidence=0.95,
+            status=GraphNodeStatus.READY,
+        )
+        graph.nodes.append(node)
+
+        task = await orchestrator._create_task_for_node(
+            session,
+            graph,
+            node,
+            dispatch_input="帮我查余额",
+        )
+
+        assert task is not None
+        assert task.intent_code == intent.intent_code
+        assert node.task_id == task.task_id
+        assert session.last_diagnostics == []
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_router_only_skips_understanding_for_no_slot_intent() -> None:
+    async def run() -> None:
+        intent = IntentDefinition(
+            intent_code="query_account_balance",
+            name="查询余额",
+            description="查询账户余额",
+            agent_url="http://agent/balance",
+            slot_schema=[],
+        )
+        orchestrator = GraphRouterOrchestrator(
+            publish_event=lambda event: None,
+            intent_catalog=_SingleIntentCatalog(intent),
+        )
+        orchestrator.understanding_validator.validate_node = AsyncMock(
+            side_effect=AssertionError("no-slot intent should not run router slot validation")
+        )
+        orchestrator._publish_node_state = AsyncMock()
+        orchestrator._publish_graph_state = AsyncMock()
+
+        session = GraphSessionState(session_id="session_no_slot_router_only", cust_id="cust_no_slot_router_only")
+        graph = ExecutionGraphState(source_message="帮我查余额")
+        node = GraphNodeState(
+            intent_code=intent.intent_code,
+            title="查询余额",
+            confidence=0.95,
+            status=GraphNodeStatus.READY,
+        )
+        graph.nodes.append(node)
+
+        ready = await orchestrator._prepare_node_router_only(
+            session,
+            graph,
+            node,
+            dispatch_input="帮我查余额",
+        )
+
+        assert ready is True
+        assert node.status == GraphNodeStatus.READY_FOR_DISPATCH
+        assert graph.status == GraphStatus.READY_FOR_DISPATCH
+        assert session.last_diagnostics == []
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_router_only_waits_when_semantic_string_slots_are_missing() -> None:
+    async def run() -> None:
+        intent = IntentDefinition(
+            intent_code="AG_TRANS",
+            name="转账",
+            description="执行转账，需要收款人姓名和金额。",
+            agent_url="http://agent/transfer",
+            slot_schema=[
+                {
+                    "slot_key": "payee_name",
+                    "field_code": "payee_name",
+                    "label": "收款人姓名",
+                    "description": "当前转账的收款人姓名",
+                    "aliases": ["收款人", "对方姓名"],
+                    "value_type": "string",
+                    "required": True,
+                },
+                {
+                    "slot_key": "amount",
+                    "field_code": "amount",
+                    "label": "转账金额",
+                    "description": "当前转账金额",
+                    "value_type": "currency",
+                    "required": True,
+                },
+                {
+                    "slot_key": "payee_card_no",
+                    "label": "收款卡号",
+                    "aliases": ["收款卡号", "对方卡号"],
+                    "value_type": "string",
+                    "required": False,
+                },
+            ],
+        )
+        orchestrator = GraphRouterOrchestrator(
+            publish_event=lambda event: None,
+            intent_catalog=_SingleIntentCatalog(intent),
+        )
+        orchestrator._publish_node_state = AsyncMock()
+        orchestrator._publish_graph_state = AsyncMock()
+
+        session = GraphSessionState(session_id="session_transfer_router_only", cust_id="cust_transfer_router_only")
+        graph = ExecutionGraphState(source_message="给小明转500元")
+        node = GraphNodeState(
+            intent_code=intent.intent_code,
+            title="转账",
+            confidence=0.97,
+            status=GraphNodeStatus.READY,
+            source_fragment="给小明转500元",
+        )
+        graph.nodes.append(node)
+
+        ready = await orchestrator._prepare_node_router_only(
+            session,
+            graph,
+            node,
+            dispatch_input="给小明转500元",
+        )
+
+        assert ready is False
+        assert node.status == GraphNodeStatus.WAITING_USER_INPUT
+        assert graph.status == GraphStatus.WAITING_USER_INPUT
+        assert node.slot_memory == {"amount": "500"}
+        assert "收款人姓名" in session.messages[-1].content
 
     asyncio.run(run())

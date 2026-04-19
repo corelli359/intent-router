@@ -127,13 +127,22 @@ Standard multi-turn intent + slot verification suite:
 python scripts/verify_multiturn_intent_slot_suite.py
 ```
 
-This script is user-side end-to-end dialog verification only:
+This script now supports two modes.
+
+Interactive mode:
 
 - it creates a session
 - by default it waits for your terminal input and sends one real dialog turn at a time
 - validates the returned reply, current intent, current slots, and dialog stage
 - it does not call any removed analyze endpoint
 - it sends `executionMode=router_only`, so the router stops before downstream agent execution
+
+Scenario-suite mode:
+
+- use `INTENT_ROUTER_INTERACTIVE=0` or `--scenario ...`
+- runs fixed one-turn, two-turn, and three-turn contract cases
+- verifies each turn against the expected intent, stage, slot set, and assistant reply
+- verifies that the final turn has the complete required slots
 
 Useful environment variables:
 
@@ -149,13 +158,24 @@ Recommended usage:
 - each turn prints only user input, assistant reply, current intent, current slots, and current stage
 - use this script when you want to validate the real multi-turn intent recognition + slot filling chain without running downstream agents
 
-If you want the old fixed-turn replay behavior:
+List built-in scenario names:
+
+```bash
+python scripts/verify_multiturn_intent_slot_suite.py --list-scenarios
+```
+
+Run the full fixed scenario suite:
 
 ```bash
 INTENT_ROUTER_INTERACTIVE=0 python scripts/verify_multiturn_intent_slot_suite.py
 ```
 
-In that mode, the script replays the built-in `TURNS` list defined at the top of the file.
+Run only a two-turn contract case such as "give name first, then amount":
+
+```bash
+INTENT_ROUTER_INTERACTIVE=0 python scripts/verify_multiturn_intent_slot_suite.py \
+  --scenario two_turn_name_then_amount
+```
 
 ### 6) Build target-cluster frontend artifacts
 

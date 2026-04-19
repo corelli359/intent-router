@@ -27,6 +27,8 @@ from router_service.core.prompts.prompt_templates import (
     DEFAULT_LEAF_ROUTER_SYSTEM_PROMPT,
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
+    DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
+    DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT,
 )
 from router_service.core.recognition.recognizer import (
     LLMIntentRecognizer,
@@ -174,6 +176,12 @@ def build_router_runtime() -> RouterRuntime:
         slot_extractor=SlotExtractor(
             llm_client=llm_client,
             model=settings.llm_model,
+            system_prompt_template=(
+                settings.llm_slot_extractor_system_prompt_template or DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT
+            ),
+            human_prompt_template=(
+                settings.llm_slot_extractor_human_prompt_template or DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT
+            ),
         ),
         slot_validator=SlotValidator(),
     )
@@ -226,6 +234,9 @@ def build_router_runtime() -> RouterRuntime:
         config=GraphRouterOrchestratorConfig(
             intent_switch_threshold=settings.router_intent_switch_threshold,
             agent_timeout_seconds=settings.router_agent_timeout_seconds,
+            memory_recall_limit=getattr(settings, "router_memory_recall_limit", 20),
+            session_task_limit=getattr(settings, "router_session_max_tasks", 5),
+            session_business_limit=getattr(settings, "router_session_max_businesses", 5),
             max_drain_iterations=getattr(settings, "router_drain_max_iterations", None),
             drain_iteration_multiplier=getattr(settings, "router_drain_iteration_multiplier", 3),
             drain_iteration_floor=getattr(settings, "router_drain_iteration_floor", 8),
@@ -276,6 +287,7 @@ def _build_llm_client() -> JsonLLMClient | None:
         base_url=settings.llm_api_base_url or "",
         api_key=settings.llm_api_key,
         default_model=settings.default_llm_model,
+        temperature=settings.llm_temperature,
         timeout_seconds=settings.llm_timeout_seconds,
         rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),
         rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),

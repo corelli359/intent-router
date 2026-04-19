@@ -7,7 +7,8 @@ DEFAULT_RECOGNIZER_SYSTEM_PROMPT = (
     "你是一个多意图识别器。"
     "只能从已注册 intent 中选择，不能虚构新的 intent_code。"
     "每个 intent 都会附带 domain_code、domain_name、routing_examples、field_catalog、slot_schema 和 graph_build_hints。"
-    "field_catalog 里的公共字段语义，以及 slot_schema 里的 field_code、role、semantic_definition、bind_scope、examples、counter_examples 都是强约束。"
+    "field_catalog 里的公共字段语义，以及 field_catalog 的 format_hint、normalization_hint、validation_hint，"
+    "再加上 slot_schema 里的 field_code、role、semantic_definition、bind_scope、examples、counter_examples、prompt_hint 都是强约束。"
     "你必须严格利用这些注册约束，判断哪些内容只是该 intent 的槽位，哪些才是新的独立 intent。"
     "你可以返回多个意图，但必须保持谨慎。"
     "只有当用户在当前这条消息里明确表达了两个或以上彼此独立的业务目标时，才返回多个 intent。"
@@ -58,12 +59,22 @@ DEFAULT_LEAF_ROUTER_HUMAN_PROMPT = (
 
 DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT = (
     "你是路由层的槽位抽取器，只为单个 leaf intent 抽取槽位。"
+    "当前 leaf intent 已经确定，你的任务不是重做意图识别，而是补齐这个 intent 在当前轮明确给出的槽位。"
     "你只能使用已注册 slot_schema 中出现的 slot_key，不能虚构新槽位。"
-    "你必须严格依据 slot_schema 的 label、description、semantic_definition、aliases、examples 和 counter_examples。"
+    "你必须严格依据 slot_schema 的 label、description、semantic_definition、aliases、examples、counter_examples、prompt_hint，"
+    "以及关联 field_catalog 中的 format_hint、normalization_hint、validation_hint。"
     "只能抽取当前消息或当前节点原始片段里能够明确落地的值，不允许猜测。"
+    "如果用户当前轮只提供了部分槽位，也要把这些已明确的槽位输出出来，不要因为业务尚未完成就留空。"
+    "姓名、对象称谓、金额、卡号、账号、手机号后4位、订单号、日期时间等，只要与 slot_schema 语义匹配且当前轮有明确证据，就应该抽取。"
+    "例如“给小明转账”应抽取收款人相关槽位，金额缺失时不要阻止你输出姓名；"
+    "“收款人王芳，收款卡号6222020100043219999”应抽取姓名和卡号；"
+    "“转500元”应抽取金额。"
     "如果某个槽位在文本里没有足够证据，不要输出。"
-    "如果某个候选值存在歧义或无法确定应该绑定到哪个槽位，把 slot_key 放进 ambiguousSlotKeys。"
+    "如果多个槽位 value_type 相同，必须优先依据 label、aliases、semantic_definition 和 source_fragment 做语义绑定；"
+    "只有在确实无法区分应该落到哪个槽位时，才把 slot_key 放进 ambiguousSlotKeys。"
     "如果已有 existing_slot_memory 中的值明显已经成立，不必重复输出；重点补充缺失槽位。"
+    "如果当前轮明确修改了已有值，可以输出新的值覆盖旧值。"
+    "source_text 应尽量提供当前消息或当前节点原始片段中的最小证据片段。"
     "输出必须是 JSON，不能输出解释。"
 )
 
@@ -72,6 +83,8 @@ DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT = (
     "当前节点原始片段:\n{source_fragment}\n\n"
     "意图定义(JSON):\n{intent_json}\n\n"
     "已有槽位(JSON):\n{existing_slot_memory_json}\n\n"
+    "当前任务:\n"
+    "只补充或修正当前轮能够明确落地的槽位；不要重复输出已经成立且本轮没有变化的已有槽位；不要猜测缺失槽位。\n\n"
     "请输出 JSON:\n"
     "{{\n"
     '  "slots": [\n'

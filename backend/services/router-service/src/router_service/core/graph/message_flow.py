@@ -73,6 +73,7 @@ class GraphMessageFlow:
         confirm_pending_graph: Callable[[GraphSessionState, str | None, str | None], Awaitable[None]],
         resume_waiting_node: Callable[[GraphSessionState, GraphNodeState, str], Awaitable[None]],
         cancel_current_node: Callable[[GraphSessionState, str], Awaitable[None]],
+        session_business_limit: int = 5,
     ) -> None:
         """Initialize message-driven routing with graph compilation and control callbacks."""
         self.session_store = session_store
@@ -90,6 +91,22 @@ class GraphMessageFlow:
         self.confirm_pending_graph = confirm_pending_graph
         self.resume_waiting_node = resume_waiting_node
         self.cancel_current_node = cancel_current_node
+        self.session_business_limit = session_business_limit
+
+    def _attach_business(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        *,
+        pending: bool,
+    ) -> None:
+        """Attach a new business object and trim the live workset when possible."""
+        session.attach_business(
+            graph,
+            router_only_mode=session.router_only_mode,
+            pending=pending,
+        )
+        session.enforce_business_limit(self.session_business_limit)
 
     async def handle_user_message(
         self,
@@ -318,19 +335,11 @@ class GraphMessageFlow:
                 return
             if graph.status == GraphStatus.WAITING_CONFIRMATION:
                 graph.touch(GraphStatus.WAITING_CONFIRMATION)
-                session.attach_business(
-                    graph,
-                    router_only_mode=session.router_only_mode,
-                    pending=True,
-                )
+                self._attach_business(session, graph, pending=True)
                 await self.state_sync.publish_pending_graph(session)
                 return
 
-            session.attach_business(
-                graph,
-                router_only_mode=session.router_only_mode,
-                pending=False,
-            )
+            self._attach_business(session, graph, pending=False)
             self.activate_graph(graph)
             await self.state_sync.publish_graph_state(session, "graph.created", "已创建执行图")
             await self.drain_graph(session, graph.source_message)
@@ -354,11 +363,7 @@ class GraphMessageFlow:
             )
             session.candidate_intents = []
             session.last_diagnostics = []
-            session.attach_business(
-                graph,
-                router_only_mode=session.router_only_mode,
-                pending=False,
-            )
+            self._attach_business(session, graph, pending=False)
             self.activate_graph(graph)
             await self.state_sync.publish_graph_state(session, "graph.created", "已根据所选意图创建执行图")
             await self.drain_graph(session, graph.source_message)
@@ -395,19 +400,11 @@ class GraphMessageFlow:
                 return
             if graph.status == GraphStatus.WAITING_CONFIRMATION:
                 graph.touch(GraphStatus.WAITING_CONFIRMATION)
-                session.attach_business(
-                    graph,
-                    router_only_mode=session.router_only_mode,
-                    pending=True,
-                )
+                self._attach_business(session, graph, pending=True)
                 await self.state_sync.publish_pending_graph(session)
                 return
 
-            session.attach_business(
-                graph,
-                router_only_mode=session.router_only_mode,
-                pending=False,
-            )
+            self._attach_business(session, graph, pending=False)
             self.activate_graph(graph)
             await self.state_sync.publish_graph_state(session, "graph.created", "已创建执行图")
             await self.drain_graph(session, graph.source_message)

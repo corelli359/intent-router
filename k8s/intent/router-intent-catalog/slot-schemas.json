@@ -109,8 +109,8 @@
         "field_code": "payee_name",
         "role": "payee_name",
         "label": "收款人姓名",
-        "description": "收款人姓名。",
-        "semantic_definition": "当前转账的收款人姓名。",
+        "description": "收款人姓名，或用户明确说出的昵称、关系称呼。",
+        "semantic_definition": "当前转账的收款对象名称，可以是正式姓名、昵称或明确的关系称呼。",
         "value_type": "string",
         "required": true,
         "allow_from_history": false,
@@ -123,17 +123,22 @@
         ],
         "examples": [
           "小红",
-          "张三",
-          "李四"
+          "王芳",
+          "李晓东",
+          "欧阳娜娜",
+          "我妈",
+          "阿杰"
         ],
         "counter_examples": [
           "1234",
-          "人民币"
+          "人民币",
+          "招商银行",
+          "6222020100043219999"
         ],
         "bind_scope": "node_input",
         "confirmation_policy": "when_ambiguous",
         "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "只有用户明确给出收款人姓名时才提取，不要把卡号填到 payee_name。"
+        "prompt_hint": "当用户在转账动作中说“给小明转账”“转给王芳”“给我妈转200”“帮我打给欧阳娜娜”等时，即使没有正式实名、只出现昵称/关系称呼/两到四字中文姓名，也应提取到 payee_name；保留用户原文称呼，不要把卡号、银行名、卡备注填到 payee_name。"
       },
       {
         "slot_key": "payee_card_no",
