@@ -3,6 +3,15 @@ import type {
   InteractionCard,
   IntentDefinition,
   IntentInput,
+  PerfFailureSample,
+  PerfMetrics,
+  PerfRunProgress,
+  PerfStageResult,
+  PerfTestCase,
+  PerfTestRunCreateInput,
+  PerfTestRunDetail,
+  PerfTestRunSummary,
+  PerfTestStepInput,
   RouterSnapshot,
   RouterSseEvent,
   SessionActionInput,
@@ -139,6 +148,190 @@ interface BackendIntent {
   updated_at?: string;
 }
 
+interface BackendPerfMetrics {
+  total_requests?: number | string | null;
+  totalRequests?: number | string | null;
+  success_count?: number | string | null;
+  successCount?: number | string | null;
+  failure_count?: number | string | null;
+  failureCount?: number | string | null;
+  success_rate?: number | string | null;
+  successRate?: number | string | null;
+  rps?: number | string | null;
+  avg_ms?: number | string | null;
+  avgMs?: number | string | null;
+  p50_ms?: number | string | null;
+  p50Ms?: number | string | null;
+  p95_ms?: number | string | null;
+  p95Ms?: number | string | null;
+  p99_ms?: number | string | null;
+  p99Ms?: number | string | null;
+  max_ms?: number | string | null;
+  maxMs?: number | string | null;
+  timeout_count?: number | string | null;
+  timeoutCount?: number | string | null;
+  status_code_breakdown?: Record<string, number | string>;
+  statusCodeBreakdown?: Record<string, number | string>;
+  error_type_breakdown?: Record<string, number | string>;
+  errorTypeBreakdown?: Record<string, number | string>;
+}
+
+interface BackendPerfExpectation {
+  session_status_code?: number | string | null;
+  sessionStatusCode?: number | string | null;
+  message_status_code?: number | string | null;
+  messageStatusCode?: number | string | null;
+  required_graph_status?: string | null;
+  requiredGraphStatus?: string | null;
+  required_message_contains?: string[];
+  requiredMessageContains?: string[];
+  required_primary_intent_code?: string | null;
+  requiredPrimaryIntentCode?: string | null;
+  required_slot_keys?: string[];
+  requiredSlotKeys?: string[];
+  required_slot_values?: Record<string, unknown>;
+  requiredSlotValues?: Record<string, unknown>;
+}
+
+interface BackendPerfStep {
+  name?: string;
+  concurrency?: number | string;
+  duration_sec?: number | string;
+  durationSec?: number | string;
+  warmup_sec?: number | string | null;
+  warmupSec?: number | string | null;
+  request_limit?: number | string | null;
+  requestLimit?: number | string | null;
+  cooldown_sec?: number | string | null;
+  cooldownSec?: number | string | null;
+  timeout_ms?: number | string | null;
+  timeoutMs?: number | string | null;
+}
+
+interface BackendPerfFailureSample {
+  sample_id?: string;
+  sampleId?: string;
+  id?: string;
+  stage_name?: string | null;
+  stageName?: string | null;
+  step_index?: number | string | null;
+  stepIndex?: number | string | null;
+  status_code?: number | string | null;
+  statusCode?: number | string | null;
+  error_type?: string | null;
+  errorType?: string | null;
+  message?: string;
+  latency_ms?: number | string | null;
+  latencyMs?: number | string | null;
+  request_summary?: string | null;
+  requestSummary?: string | null;
+  occurred_at?: string | null;
+  occurredAt?: string | null;
+}
+
+interface BackendPerfCase {
+  case_id?: string;
+  caseId?: string;
+  id?: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  target_route?: string;
+  targetRoute?: string;
+  session_request?: Record<string, unknown>;
+  sessionRequest?: Record<string, unknown>;
+  message_request?: Record<string, unknown>;
+  messageRequest?: Record<string, unknown>;
+  expectations?: BackendPerfExpectation;
+  default_steps?: BackendPerfStep[];
+  defaultSteps?: BackendPerfStep[];
+  ladder_steps?: BackendPerfStep[];
+  ladderSteps?: BackendPerfStep[];
+  notes?: string[];
+}
+
+interface BackendPerfProgress {
+  completed_stages?: number | string | null;
+  completedStages?: number | string | null;
+  total_stages?: number | string | null;
+  totalStages?: number | string | null;
+  current_stage_index?: number | string | null;
+  currentStageIndex?: number | string | null;
+  current_stage_name?: string | null;
+  currentStageName?: string | null;
+  elapsed_sec?: number | string | null;
+  elapsedSec?: number | string | null;
+  last_heartbeat_at?: string | null;
+  lastHeartbeatAt?: string | null;
+}
+
+interface BackendPerfStageResult {
+  stage_id?: string;
+  stageId?: string;
+  step_index?: number | string;
+  stepIndex?: number | string;
+  name?: string;
+  status?: PerfStageResult["status"];
+  concurrency?: number | string;
+  duration_sec?: number | string;
+  durationSec?: number | string;
+  warmup_sec?: number | string | null;
+  warmupSec?: number | string | null;
+  request_limit?: number | string | null;
+  requestLimit?: number | string | null;
+  cooldown_sec?: number | string | null;
+  cooldownSec?: number | string | null;
+  timeout_ms?: number | string | null;
+  timeoutMs?: number | string | null;
+  started_at?: string | null;
+  startedAt?: string | null;
+  finished_at?: string | null;
+  finishedAt?: string | null;
+  metrics?: BackendPerfMetrics;
+  failure_samples?: BackendPerfFailureSample[];
+  failureSamples?: BackendPerfFailureSample[];
+}
+
+interface BackendPerfRun {
+  run_id?: string;
+  runId?: string;
+  case_id?: string;
+  caseId?: string;
+  case_name?: string;
+  caseName?: string;
+  created_at?: string | null;
+  createdAt?: string | null;
+  target_base_url?: string | null;
+  targetBaseUrl?: string | null;
+  session_request?: Record<string, unknown>;
+  sessionRequest?: Record<string, unknown>;
+  message_request?: Record<string, unknown>;
+  messageRequest?: Record<string, unknown>;
+  expectations?: BackendPerfExpectation;
+  ladder_steps?: BackendPerfStep[];
+  ladderSteps?: BackendPerfStep[];
+  status: PerfTestRunSummary["status"];
+  started_at?: string | null;
+  startedAt?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+  finished_at?: string | null;
+  finishedAt?: string | null;
+  current_stage_index?: number | string | null;
+  currentStageIndex?: number | string | null;
+  total_stages?: number | string | null;
+  totalStages?: number | string | null;
+  aggregate_metrics?: BackendPerfMetrics;
+  aggregateMetrics?: BackendPerfMetrics;
+  progress?: BackendPerfProgress;
+  step_results?: BackendPerfStageResult[];
+  stepResults?: BackendPerfStageResult[];
+  error_samples?: BackendPerfFailureSample[];
+  errorSamples?: BackendPerfFailureSample[];
+}
+
 const defaultOptions: Required<ApiClientOptions> = {
   routerBaseUrl: process.env.NEXT_PUBLIC_ROUTER_BASE_URL ?? "/api/router",
   adminBaseUrl: process.env.NEXT_PUBLIC_ADMIN_BASE_URL ?? "/api/admin"
@@ -151,6 +344,291 @@ async function readError(response: Response): Promise<string> {
     return payload.detail ?? payload.message ?? JSON.stringify(payload);
   }
   return await response.text();
+}
+
+function getArrayPayload<T>(payload: unknown, keys: string[]): T[] {
+  if (Array.isArray(payload)) {
+    return payload as T[];
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  for (const key of keys) {
+    const value = (payload as Record<string, unknown>)[key];
+    if (Array.isArray(value)) {
+      return value as T[];
+    }
+  }
+
+  return [];
+}
+
+function getObjectPayload<T>(payload: unknown, keys: string[]): T | null {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const record = payload as Record<string, unknown>;
+    const directRunId = record.runId ?? record.run_id;
+    const directCaseId = record.caseId ?? record.case_id;
+    if (typeof directRunId === "string" || typeof directCaseId === "string") {
+      return payload as T;
+    }
+
+    for (const key of keys) {
+      const value = record[key];
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return value as T;
+      }
+    }
+  }
+
+  return null;
+}
+
+function readString(...values: Array<unknown>): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readNumber(...values: Array<unknown>): number | undefined {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function mapNumberRecord(input: Record<string, number | string> | undefined): Record<string, number> | undefined {
+  if (!input) {
+    return undefined;
+  }
+
+  const mapped = Object.entries(input).reduce<Record<string, number>>((result, [key, value]) => {
+    const next = readNumber(value);
+    if (typeof next === "number") {
+      result[key] = next;
+    }
+    return result;
+  }, {});
+
+  return Object.keys(mapped).length > 0 ? mapped : undefined;
+}
+
+function mapPerfMetrics(metrics: BackendPerfMetrics | undefined): PerfMetrics {
+  if (!metrics) {
+    return {};
+  }
+
+  return {
+    totalRequests: readNumber(metrics.totalRequests, metrics.total_requests),
+    successCount: readNumber(metrics.successCount, metrics.success_count),
+    failureCount: readNumber(metrics.failureCount, metrics.failure_count),
+    successRate: readNumber(metrics.successRate, metrics.success_rate),
+    rps: readNumber(metrics.rps),
+    avgMs: readNumber(metrics.avgMs, metrics.avg_ms),
+    p50Ms: readNumber(metrics.p50Ms, metrics.p50_ms),
+    p95Ms: readNumber(metrics.p95Ms, metrics.p95_ms),
+    p99Ms: readNumber(metrics.p99Ms, metrics.p99_ms),
+    maxMs: readNumber(metrics.maxMs, metrics.max_ms),
+    timeoutCount: readNumber(metrics.timeoutCount, metrics.timeout_count),
+    statusCodeBreakdown: mapNumberRecord(metrics.statusCodeBreakdown ?? metrics.status_code_breakdown),
+    errorTypeBreakdown: mapNumberRecord(metrics.errorTypeBreakdown ?? metrics.error_type_breakdown)
+  };
+}
+
+function mapPerfExpectation(expectation: BackendPerfExpectation | undefined) {
+  if (!expectation) {
+    return undefined;
+  }
+
+  return {
+    sessionStatusCode: readNumber(expectation.sessionStatusCode, expectation.session_status_code),
+    messageStatusCode: readNumber(expectation.messageStatusCode, expectation.message_status_code),
+    requiredGraphStatus: readString(expectation.requiredGraphStatus, expectation.required_graph_status) ?? null,
+    requiredMessageContains: Array.isArray(expectation.requiredMessageContains ?? expectation.required_message_contains)
+      ? (expectation.requiredMessageContains ?? expectation.required_message_contains)?.filter(
+          (fragment): fragment is string => typeof fragment === "string"
+        )
+      : undefined,
+    requiredPrimaryIntentCode:
+      readString(expectation.requiredPrimaryIntentCode, expectation.required_primary_intent_code) ?? null,
+    requiredSlotKeys: Array.isArray(expectation.requiredSlotKeys ?? expectation.required_slot_keys)
+      ? (expectation.requiredSlotKeys ?? expectation.required_slot_keys)?.filter(
+          (slotKey): slotKey is string => typeof slotKey === "string"
+        )
+      : undefined,
+    requiredSlotValues:
+      expectation.requiredSlotValues && typeof expectation.requiredSlotValues === "object"
+        ? expectation.requiredSlotValues
+        : expectation.required_slot_values && typeof expectation.required_slot_values === "object"
+          ? expectation.required_slot_values
+          : undefined
+  };
+}
+
+function mapPerfStep(step: BackendPerfStep | undefined, index: number): PerfTestStepInput {
+  return {
+    name: readString(step?.name) ?? `阶段 ${index + 1}`,
+    concurrency: readNumber(step?.concurrency) ?? 0,
+    durationSec: readNumber(step?.durationSec, step?.duration_sec) ?? 60,
+    warmupSec: readNumber(step?.warmupSec, step?.warmup_sec),
+    requestLimit: readNumber(step?.requestLimit, step?.request_limit),
+    cooldownSec: readNumber(step?.cooldownSec, step?.cooldown_sec),
+    timeoutMs: readNumber(step?.timeoutMs, step?.timeout_ms)
+  };
+}
+
+function mapPerfFailureSample(sample: BackendPerfFailureSample, index: number): PerfFailureSample {
+  return {
+    sampleId: readString(sample.sampleId, sample.sample_id, sample.id) ?? `sample-${index + 1}`,
+    stageName: readString(sample.stageName, sample.stage_name),
+    stepIndex: readNumber(sample.stepIndex, sample.step_index),
+    statusCode:
+      typeof sample.statusCode === "number" || typeof sample.statusCode === "string"
+        ? sample.statusCode
+        : typeof sample.status_code === "number" || typeof sample.status_code === "string"
+          ? sample.status_code
+          : null,
+    errorType: readString(sample.errorType, sample.error_type) ?? null,
+    message: readString(sample.message) ?? "未知错误",
+    latencyMs: readNumber(sample.latencyMs, sample.latency_ms),
+    requestSummary: readString(sample.requestSummary, sample.request_summary) ?? null,
+    occurredAt: readString(sample.occurredAt, sample.occurred_at) ?? null
+  };
+}
+
+function mapPerfStageResult(stage: BackendPerfStageResult, index: number): PerfStageResult {
+  return {
+    stageId: readString(stage.stageId, stage.stage_id) ?? `stage-${index + 1}`,
+    stepIndex: readNumber(stage.stepIndex, stage.step_index) ?? index,
+    name: readString(stage.name) ?? `阶段 ${index + 1}`,
+    status: stage.status ?? "pending",
+    concurrency: readNumber(stage.concurrency) ?? 0,
+    durationSec: readNumber(stage.durationSec, stage.duration_sec) ?? 0,
+    warmupSec: readNumber(stage.warmupSec, stage.warmup_sec),
+    requestLimit: readNumber(stage.requestLimit, stage.request_limit),
+    cooldownSec: readNumber(stage.cooldownSec, stage.cooldown_sec),
+    timeoutMs: readNumber(stage.timeoutMs, stage.timeout_ms),
+    startedAt: readString(stage.startedAt, stage.started_at) ?? null,
+    finishedAt: readString(stage.finishedAt, stage.finished_at) ?? null,
+    metrics: mapPerfMetrics(stage.metrics),
+    failureSamples: (stage.failureSamples ?? stage.failure_samples ?? []).map(mapPerfFailureSample)
+  };
+}
+
+function mapPerfProgress(
+  progress: BackendPerfProgress | undefined,
+  stepResults: PerfStageResult[],
+  ladderSteps: PerfTestStepInput[],
+  fallbackStageIndex?: number,
+  fallbackTotalStages?: number
+): PerfRunProgress {
+  const totalStages = readNumber(progress?.totalStages, progress?.total_stages, fallbackTotalStages) ?? ladderSteps.length;
+  const currentStageIndex = readNumber(
+    progress?.currentStageIndex,
+    progress?.current_stage_index,
+    fallbackStageIndex
+  );
+  const completedFromStages = stepResults.filter((step) => step.status === "completed").length;
+
+  return {
+    completedStages: readNumber(progress?.completedStages, progress?.completed_stages, completedFromStages) ?? 0,
+    totalStages,
+    currentStageIndex,
+    currentStageName:
+      readString(progress?.currentStageName, progress?.current_stage_name) ??
+      (typeof currentStageIndex === "number" ? stepResults[currentStageIndex]?.name ?? null : null),
+    elapsedSec: readNumber(progress?.elapsedSec, progress?.elapsed_sec) ?? null,
+    lastHeartbeatAt: readString(progress?.lastHeartbeatAt, progress?.last_heartbeat_at) ?? null
+  };
+}
+
+function mapPerfCase(item: BackendPerfCase): PerfTestCase {
+  const defaultSteps =
+    item.defaultSteps ?? item.default_steps ?? item.ladderSteps ?? item.ladder_steps ?? [];
+
+  return {
+    caseId: readString(item.caseId, item.case_id, item.id) ?? "unknown-case",
+    name: readString(item.name, item.title, item.caseId, item.case_id, item.id) ?? "未命名用例",
+    description: readString(item.description),
+    category: readString(item.category),
+    tags: Array.isArray(item.tags) ? item.tags.filter((tag) => typeof tag === "string") : undefined,
+    targetRoute: readString(item.targetRoute, item.target_route),
+    sessionRequest:
+      item.sessionRequest && typeof item.sessionRequest === "object"
+        ? item.sessionRequest
+        : item.session_request && typeof item.session_request === "object"
+          ? item.session_request
+          : undefined,
+    messageRequest:
+      item.messageRequest && typeof item.messageRequest === "object"
+        ? item.messageRequest
+        : item.message_request && typeof item.message_request === "object"
+          ? item.message_request
+          : undefined,
+    expectations: mapPerfExpectation(item.expectations),
+    defaultSteps: defaultSteps.map(mapPerfStep),
+    notes: Array.isArray(item.notes) ? item.notes.filter((note) => typeof note === "string") : undefined
+  };
+}
+
+function mapPerfRunSummary(run: BackendPerfRun): PerfTestRunSummary {
+  const ladderSteps = run.ladderSteps ?? run.ladder_steps ?? [];
+  const stepResults = run.stepResults ?? run.step_results ?? [];
+
+  return {
+    runId: readString(run.runId, run.run_id) ?? "unknown-run",
+    caseId: readString(run.caseId, run.case_id) ?? "unknown-case",
+    caseName: readString(run.caseName, run.case_name),
+    status: run.status,
+    createdAt: readString(run.createdAt, run.created_at) ?? null,
+    startedAt: readString(run.startedAt, run.started_at) ?? null,
+    updatedAt: readString(run.updatedAt, run.updated_at) ?? null,
+    finishedAt: readString(run.finishedAt, run.finished_at) ?? null,
+    currentStageIndex: readNumber(run.currentStageIndex, run.current_stage_index),
+    totalStages: readNumber(run.totalStages, run.total_stages, ladderSteps.length, stepResults.length),
+    aggregateMetrics: mapPerfMetrics(run.aggregateMetrics ?? run.aggregate_metrics)
+  };
+}
+
+function mapPerfRunDetail(run: BackendPerfRun): PerfTestRunDetail {
+  const ladderSteps = (run.ladderSteps ?? run.ladder_steps ?? []).map(mapPerfStep);
+  const stepResults = (run.stepResults ?? run.step_results ?? []).map(mapPerfStageResult);
+  const errorSamples = (run.errorSamples ?? run.error_samples ?? []).map(mapPerfFailureSample);
+  const summary = mapPerfRunSummary(run);
+
+  return {
+    ...summary,
+    targetBaseUrl: readString(run.targetBaseUrl, run.target_base_url) ?? null,
+    sessionRequest:
+      run.sessionRequest && typeof run.sessionRequest === "object"
+        ? run.sessionRequest
+        : run.session_request && typeof run.session_request === "object"
+          ? run.session_request
+          : undefined,
+    messageRequest:
+      run.messageRequest && typeof run.messageRequest === "object"
+        ? run.messageRequest
+        : run.message_request && typeof run.message_request === "object"
+          ? run.message_request
+          : undefined,
+    expectations: mapPerfExpectation(run.expectations),
+    progress: mapPerfProgress(run.progress, stepResults, ladderSteps, summary.currentStageIndex ?? undefined, summary.totalStages ?? undefined),
+    ladderSteps,
+    stepResults,
+    errorSamples
+  };
 }
 
 function mapSnapshot(snapshot: BackendSnapshot): RouterSnapshot {
@@ -630,5 +1108,98 @@ export class IntentRouterApiClient {
       throw new Error(await response.text());
     }
     return mapIntent((await response.json()) as BackendIntent);
+  }
+
+  async listPerfTestCases(): Promise<PerfTestCase[]> {
+    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/cases`);
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const payload = await response.json();
+    return getArrayPayload<BackendPerfCase>(payload, ["items", "cases"]).map(mapPerfCase);
+  }
+
+  async listPerfTestRuns(): Promise<PerfTestRunSummary[]> {
+    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs`);
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const payload = await response.json();
+    return getArrayPayload<BackendPerfRun>(payload, ["items", "runs"]).map(mapPerfRunSummary);
+  }
+
+  async createPerfTestRun(input: PerfTestRunCreateInput): Promise<PerfTestRunSummary> {
+    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        case_id: input.caseId,
+        ladder_steps: input.ladderSteps.map((step) => ({
+          name: step.name,
+          concurrency: step.concurrency,
+          duration_sec: step.durationSec,
+          warmup_sec: step.warmupSec,
+          request_limit: step.requestLimit,
+          cooldown_sec: step.cooldownSec,
+          timeout_ms: step.timeoutMs
+        })),
+        case_override: input.caseOverride
+          ? {
+              session_request: input.caseOverride.sessionRequest,
+              message_request: input.caseOverride.messageRequest,
+              expectations: input.caseOverride.expectations
+                ? {
+                    session_status_code: input.caseOverride.expectations.sessionStatusCode,
+                    message_status_code: input.caseOverride.expectations.messageStatusCode,
+                    required_graph_status: input.caseOverride.expectations.requiredGraphStatus,
+                    required_message_contains: input.caseOverride.expectations.requiredMessageContains,
+                    required_primary_intent_code: input.caseOverride.expectations.requiredPrimaryIntentCode,
+                    required_slot_keys: input.caseOverride.expectations.requiredSlotKeys,
+                    required_slot_values: input.caseOverride.expectations.requiredSlotValues
+                  }
+                : undefined
+            }
+          : undefined
+      })
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const payload = await response.json();
+    const run = getObjectPayload<BackendPerfRun>(payload, ["item", "run"]);
+    if (!run) {
+      throw new Error("压测任务创建成功，但返回体缺少 run 信息");
+    }
+    return mapPerfRunSummary(run);
+  }
+
+  async cancelPerfTestRun(runId: string): Promise<PerfTestRunDetail> {
+    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST"
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const payload = await response.json();
+    const run = getObjectPayload<BackendPerfRun>(payload, ["item", "run"]);
+    if (!run) {
+      throw new Error("压测任务取消成功，但返回体缺少 run 信息");
+    }
+    return mapPerfRunDetail(run);
+  }
+
+  async getPerfTestRun(runId: string): Promise<PerfTestRunDetail> {
+    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs/${encodeURIComponent(runId)}`);
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+    const payload = await response.json();
+    const run = getObjectPayload<BackendPerfRun>(payload, ["item", "run"]);
+    if (!run) {
+      throw new Error("压测任务详情返回格式不正确");
+    }
+    return mapPerfRunDetail(run);
   }
 }

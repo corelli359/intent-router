@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -9,24 +11,34 @@ from typing import Any
 import pytest
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from router_core.agent_client import StreamingAgentClient  # noqa: E402
-from router_core.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
-from router_core.domain import IntentMatch  # noqa: E402
-from router_core.llm_client import (  # noqa: E402
+from router_service.core.support.agent_client import RequestPayloadBuilder, StreamingAgentClient  # noqa: E402
+from router_service.core.shared.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
+from router_service.core.shared.domain import IntentMatch  # noqa: E402
+from router_service.core.support.llm_client import (  # noqa: E402
     IntentRecognitionMatchPayload,
     IntentRecognitionPayload,
     LangChainLLMClient,
+    extract_json_value,
 )
-from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer, RecognitionResult  # noqa: E402
-from router_core.v2_domain import ExecutionGraphState, GraphNodeState  # noqa: E402
-from router_core.v2_planner import (  # noqa: E402
+from router_service.core.support.jwt_utils import AuthHTTPClient  # noqa: E402
+from router_service.core.recognition.recognizer import (  # noqa: E402
+    LLMIntentRecognizer,
+    NullIntentRecognizer,
+    RecognitionResult,
+    recognition_intents_json,
+)
+from router_service.core.shared.graph_domain import (  # noqa: E402
+    ExecutionGraphState,
+    GraphNodeState,
+    ProactiveRecommendationItem,
+    ProactiveRecommendationPayload,
+    ProactiveRecommendationRouteMode,
+)
+from router_service.core.graph.planner import (  # noqa: E402
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
 )
+from router_service.core.graph.recommendation_router import LLMProactiveRecommendationRouter  # noqa: E402
 from langchain_core.prompts import ChatPromptTemplate  # noqa: E402
 
 
@@ -51,6 +63,18 @@ class FakeLangChainClient:
         if on_delta is not None:
             await on_delta('{"matches":')
         return self.recognition_response.model_dump()
+
+
+class _AsyncByteStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        return None
 
 
 def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
@@ -146,6 +170,8 @@ def test_llm_intent_recognizer_can_fail_closed_without_regex_fallback() -> None:
 
         assert result.primary == []
         assert result.candidates == []
+        assert result.diagnostics
+        assert result.diagnostics[0].code == "RECOGNIZER_LLM_FAILED"
 
     asyncio.run(run())
 
@@ -205,8 +231,8 @@ def test_langchain_llm_client_retries_rate_limited_requests_once() -> None:
             )
             self.calls = 0
 
-        async def _stream_once(self, prompt, variables, *, model=None, on_delta=None) -> str:
-            del prompt, variables, model, on_delta
+        async def _invoke_once(self, prompt, variables, *, model=None) -> str:
+            del prompt, variables, model
             self.calls += 1
             if self.calls == 1:
                 raise _FakeRateLimitError()
@@ -223,6 +249,462 @@ def test_langchain_llm_client_retries_rate_limited_requests_once() -> None:
         assert client.calls == 2
 
     asyncio.run(run())
+
+
+def test_langchain_llm_client_logs_elapsed_time_for_completed_call(caplog) -> None:
+    class _LoggingClient(LangChainLLMClient):
+        async def _stream_prompt(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        client = _LoggingClient(
+            base_url="https://example.com",
+            default_model="test-model",
+        )
+        client_logger = logging.getLogger("router_service.core.support.llm_client")
+        original_handlers = list(client_logger.handlers)
+        original_level = client_logger.level
+        original_propagate = client_logger.propagate
+        client_logger.handlers = [caplog.handler]
+        client_logger.setLevel(logging.DEBUG)
+        client_logger.propagate = False
+        try:
+            payload = await client.run_json(
+                prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                variables={"message": "hi"},
+            )
+        finally:
+            client_logger.handlers = original_handlers
+            client_logger.setLevel(original_level)
+            client_logger.propagate = original_propagate
+
+        assert payload == {"matches": []}
+
+    asyncio.run(run())
+
+    assert "LLM call completed" in caplog.text
+    assert "LLM call request" in caplog.text
+    assert "LLM call response" in caplog.text
+    assert "model=test-model" in caplog.text
+    assert "elapsed_ms=" in caplog.text
+    assert "variable_keys=message" in caplog.text
+    assert '"content":"hi"' in caplog.text or '"content": "hi"' in caplog.text
+    assert 'response_text={"matches":[]}' in caplog.text
+
+
+def test_langchain_llm_client_logs_elapsed_time_for_failed_call(caplog) -> None:
+    class _InvalidJsonClient(LangChainLLMClient):
+        async def _stream_prompt(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            return "not-json"
+
+    async def run() -> None:
+        client = _InvalidJsonClient(
+            base_url="https://example.com",
+            default_model="test-model",
+        )
+        client_logger = logging.getLogger("router_service.core.support.llm_client")
+        original_handlers = list(client_logger.handlers)
+        original_level = client_logger.level
+        original_propagate = client_logger.propagate
+        client_logger.handlers = [caplog.handler]
+        client_logger.setLevel(logging.DEBUG)
+        client_logger.propagate = False
+        try:
+            with pytest.raises(ValueError):
+                await client.run_json(
+                    prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                    variables={"message": "hi"},
+                )
+        finally:
+            client_logger.handlers = original_handlers
+            client_logger.setLevel(original_level)
+            client_logger.propagate = original_propagate
+
+    asyncio.run(run())
+
+    assert "LLM call failed" in caplog.text
+    assert "LLM call request" in caplog.text
+    assert "model=test-model" in caplog.text
+    assert "elapsed_ms=" in caplog.text
+
+
+def test_extract_json_value_parses_first_json_fragment_from_text() -> None:
+    payload = extract_json_value('prefix {"matches":[{"intent_code":"transfer_money","confidence":0.9}]} suffix')
+    assert payload == {"matches": [{"intent_code": "transfer_money", "confidence": 0.9}]}
+
+
+def test_langchain_llm_client_uses_non_streaming_path_without_on_delta() -> None:
+    class _DualPathClient(LangChainLLMClient):
+        def __init__(self) -> None:
+            super().__init__(
+                base_url="https://example.com",
+                default_model="test-model",
+            )
+            self.stream_calls = 0
+            self.invoke_calls = 0
+
+        async def _stream_once(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            self.stream_calls += 1
+            return '{"matches":[]}'
+
+        async def _invoke_once(self, prompt, variables, *, model=None) -> str:
+            del prompt, variables, model
+            self.invoke_calls += 1
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        client = _DualPathClient()
+        payload = await client.run_json(
+            prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+            variables={},
+        )
+
+        assert payload == {"matches": []}
+        assert client.invoke_calls == 1
+        assert client.stream_calls == 0
+
+    asyncio.run(run())
+
+
+def test_langchain_llm_client_keeps_streaming_path_when_on_delta_is_provided() -> None:
+    class _DualPathClient(LangChainLLMClient):
+        def __init__(self) -> None:
+            super().__init__(
+                base_url="https://example.com",
+                default_model="test-model",
+            )
+            self.stream_calls = 0
+            self.invoke_calls = 0
+
+        async def _stream_once(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model
+            self.stream_calls += 1
+            if on_delta is not None:
+                await on_delta('{"matches":')
+            return '{"matches":[]}'
+
+        async def _invoke_once(self, prompt, variables, *, model=None) -> str:
+            del prompt, variables, model
+            self.invoke_calls += 1
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        deltas: list[str] = []
+        client = _DualPathClient()
+
+        async def on_delta(delta: str) -> None:
+            deltas.append(delta)
+
+        payload = await client.run_json(
+            prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+            variables={},
+            on_delta=on_delta,
+        )
+
+        assert payload == {"matches": []}
+        assert client.stream_calls == 1
+        assert client.invoke_calls == 0
+        assert deltas == ['{"matches":']
+
+    asyncio.run(run())
+
+
+def test_langchain_llm_client_uses_bearer_auth_with_plain_httpx_client() -> None:
+    async def run() -> None:
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["url"] = str(request.url)
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["content_type"] = request.headers.get("content-type")
+            captured["body"] = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"matches":[]}',
+                            }
+                        }
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as plain_client:
+            client = LangChainLLMClient(
+                base_url="https://example.com/v1",
+                api_key="plain-api-key",
+                default_model="test-model",
+                http_async_client=plain_client,
+            )
+            payload = await client.run_json(
+                prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                variables={},
+            )
+
+        assert payload == {"matches": []}
+        assert captured["url"] == "https://example.com/v1/chat/completions"
+        assert captured["authorization"] == "Bearer plain-api-key"
+        assert captured["content_type"] == "application/json"
+        assert captured["body"]["model"] == "test-model"
+        assert captured["body"]["stream"] is False
+
+    asyncio.run(run())
+
+
+def test_langchain_llm_client_uses_auth_http_client_for_per_request_jwt_headers() -> None:
+    async def run() -> None:
+        captured: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["x_app_id"] = request.headers.get("x-app-id")
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"matches":[]}',
+                            }
+                        }
+                    ]
+                },
+            )
+
+        async with AuthHTTPClient(transport=httpx.MockTransport(handler)) as auth_client:
+            client = LangChainLLMClient(
+                base_url="https://example.com/v1",
+                api_key=None,
+                default_model="test-model",
+                http_async_client=auth_client,
+            )
+            payload = await client.run_json(
+                prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                variables={},
+            )
+
+        assert payload == {"matches": []}
+        assert isinstance(captured["authorization"], str)
+        assert captured["authorization"]
+        assert captured["x_app_id"] == "app-test"
+
+
+def test_langchain_llm_client_parses_streaming_chunks_from_openai_compatible_sse() -> None:
+    class _AsyncByteStream(httpx.AsyncByteStream):
+        def __init__(self, chunks: list[bytes]) -> None:
+            self._chunks = chunks
+
+        async def __aiter__(self):
+            for chunk in self._chunks:
+                yield chunk
+
+        async def aclose(self) -> None:
+            return None
+
+    async def run() -> None:
+        captured_body: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_body.update(json.loads(request.content.decode("utf-8")))
+            return httpx.Response(
+                200,
+                stream=_AsyncByteStream(
+                    [
+                        b'data: {"choices":[{"delta":{"content":"{\\"matches\\":"}}]}\n\n',
+                        b'data: {"choices":[{"delta":{"content":"[]}"}}]}\n\n',
+                        b"data: [DONE]\n\n",
+                    ]
+                ),
+            )
+
+        deltas: list[str] = []
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as plain_client:
+            client = LangChainLLMClient(
+                base_url="https://example.com/v1",
+                default_model="test-model",
+                http_async_client=plain_client,
+            )
+
+            async def on_delta(delta: str) -> None:
+                deltas.append(delta)
+
+            payload = await client.run_json(
+                prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                variables={},
+                on_delta=on_delta,
+            )
+
+        assert payload == {"matches": []}
+        assert captured_body["stream"] is True
+        assert deltas == ['{"matches":', '[]}']
+
+
+def test_langchain_llm_client_skips_prompt_render_logging_when_debug_is_disabled() -> None:
+    class _LoggingClient(LangChainLLMClient):
+        def __init__(self) -> None:
+            super().__init__(
+                base_url="https://example.com",
+                default_model="test-model",
+            )
+            self.render_calls = 0
+
+        def _render_prompt_messages(self, prompt, variables) -> str:
+            del prompt, variables
+            self.render_calls += 1
+            return "[]"
+
+        async def _stream_prompt(self, prompt, variables, *, model=None, on_delta=None) -> str:
+            del prompt, variables, model, on_delta
+            return '{"matches":[]}'
+
+    async def run() -> None:
+        client = _LoggingClient()
+        client_logger = logging.getLogger("router_service.core.support.llm_client")
+        original_level = client_logger.level
+        try:
+            client_logger.setLevel(logging.INFO)
+            payload = await client.run_json(
+                prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                variables={"message": "hi"},
+            )
+        finally:
+            client_logger.setLevel(original_level)
+
+        assert payload == {"matches": []}
+        assert client.render_calls == 0
+
+    asyncio.run(run())
+
+
+def test_recognition_intents_json_reuses_cached_serialization_for_same_intent_instances() -> None:
+    intents = [
+        IntentDefinition(
+            intent_code="transfer_money",
+            name="转账",
+            description="执行转账",
+            examples=["给张三转 200 元"],
+            keywords=["转账"],
+            agent_url="https://agent.example.com/transfer",
+        )
+    ]
+
+    first = recognition_intents_json(intents)
+    second = recognition_intents_json(intents)
+
+    assert first is second
+
+
+def test_request_payload_builder_supports_config_variables_and_slots_data_mappings() -> None:
+    task = Task(
+        session_id="session_003",
+        intent_code="transfer_money",
+        agent_url="https://agent.example.com/transfer",
+        intent_name="转账",
+        intent_description="执行转账",
+        intent_examples=["给小明转账 200 元"],
+        confidence=0.91,
+        request_schema={"type": "object", "required": ["session_id", "txt", "stream", "config_variables"]},
+        field_mapping={
+            "session_id": "$session.id",
+            "txt": "$message.current",
+            "stream": "true",
+            "config_variables.custID": "$session.cust_id",
+            "config_variables.currentDisplay": "",
+            "config_variables.intent": "$intent",
+            "config_variables.recent_messages": "$context.recent_messages",
+            "config_variables.long_term_memory": "$context.long_term_memory",
+            "config_variables.approval_required": "$slot_memory.approval_required",
+            "config_variables.retry_count": "$slot_memory.retry_count",
+            "config_variables.exchange_rate": "$slot_memory.exchange_rate",
+            "config_variables.memo": "$slot_memory.memo",
+            "config_variables.routing": "$slot_memory.routing",
+            "config_variables.tags": "$slot_memory.tags",
+            "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+            "config_variables.slots_data.amount": "$slot_memory.amount",
+        },
+        input_context={
+            "cust_id": "cust_003",
+            "recent_messages": ["user: 给小明转账"],
+            "long_term_memory": ["常用收款人: 小明"],
+        },
+        slot_memory={
+            "payee_name": "小明",
+            "amount": 200,
+            "approval_required": True,
+            "retry_count": 2,
+            "exchange_rate": 6.8,
+            "memo": None,
+            "routing": {"channel": "fast"},
+            "tags": ["vip", "mobile"],
+        },
+    )
+
+    payload = RequestPayloadBuilder().build(task, "给小明转账 200 元")
+
+    assert payload["session_id"] == "session_003"
+    assert payload["txt"] == "给小明转账 200 元"
+    assert payload["stream"] is True
+    assert "intent" not in payload
+
+    config_variables = {item["name"]: item["value"] for item in payload["config_variables"]}
+    assert config_variables["custID"] == "cust_003"
+    assert config_variables["currentDisplay"] == ""
+    assert json.loads(config_variables["intent"]) == {
+        "code": "transfer_money",
+        "name": "转账",
+        "description": "执行转账",
+        "examples": ["给小明转账 200 元"],
+    }
+    assert json.loads(config_variables["recent_messages"]) == ["user: 给小明转账"]
+    assert json.loads(config_variables["long_term_memory"]) == ["常用收款人: 小明"]
+    assert config_variables["approval_required"] == "true"
+    assert config_variables["retry_count"] == "2"
+    assert config_variables["exchange_rate"] == "6.8"
+    assert config_variables["memo"] == "null"
+    assert json.loads(config_variables["routing"]) == {"channel": "fast"}
+    assert json.loads(config_variables["tags"]) == ["vip", "mobile"]
+    assert json.loads(config_variables["slots_data"]) == {"payee_name": "小明", "amount": 200}
+
+
+def test_request_payload_builder_keeps_legacy_default_payload_for_unmapped_intents() -> None:
+    task = Task(
+        session_id="session_legacy",
+        intent_code="query_order_status",
+        agent_url="https://agent.example.com/order/stream",
+        intent_name="查询订单状态",
+        intent_description="查询订单和物流状态",
+        intent_examples=["帮我查订单 123"],
+        confidence=0.88,
+        input_context={"recent_messages": ["user: 帮我查订单"], "long_term_memory": ["订单 123 常查"]},
+        slot_memory={"order_id": "123"},
+    )
+
+    payload = RequestPayloadBuilder().build(task, "帮我查订单 123")
+
+    assert payload == {
+        "sessionId": "session_legacy",
+        "taskId": task.task_id,
+        "intentCode": "query_order_status",
+        "input": "帮我查订单 123",
+        "intent": {
+            "code": "query_order_status",
+            "name": "查询订单状态",
+            "description": "查询订单和物流状态",
+            "examples": ["帮我查订单 123"],
+        },
+        "context": {
+            "recentMessages": ["user: 帮我查订单"],
+            "longTermMemory": ["订单 123 常查"],
+        },
+        "slots": {"order_id": "123"},
+    }
 
 
 def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
@@ -271,6 +753,150 @@ def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
         assert len(chunks) == 1
         assert chunks[0].status == TaskStatus.COMPLETED
         assert chunks[0].payload["order_id"] == "123"
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_supports_sse_json_payloads() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_sse",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream(
+                    [
+                        b'event: message\ndata: {"event":"final","content":"\xe5\xb7\xb2\xe5\xae\x8c\xe6\x88\x90","ishandover":true,"status":"completed","payload":{"receipt_id":"txn_001"}}\n\n',
+                        b"event: done\ndata: [DONE]\n\n",
+                    ]
+                ),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "已完成"
+        assert chunks[0].status == TaskStatus.COMPLETED
+        assert chunks[0].ishandover is True
+        assert chunks[0].payload == {"receipt_id": "txn_001"}
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_nested",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                json={
+                    "additional_kwargs": {
+                        "node_output": {
+                            "output": json.dumps(
+                                {
+                                "event": "final",
+                                "data": [{"answer": "已向小明转账 200 CNY，转账成功"}],
+                                "isHandOver": True,
+                                "status": "completed",
+                                "slot_memory": {"payee_name": "小明", "amount": "200"},
+                                "payload": {"receipt_id": "txn_123"},
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "已向小明转账 200 CNY，转账成功"
+        assert chunks[0].status == TaskStatus.COMPLETED
+        assert chunks[0].ishandover is True
+        assert chunks[0].payload == {
+            "receipt_id": "txn_123",
+            "slot_memory": {"payee_name": "小明", "amount": "200"},
+        }
+        assert task.slot_memory == {"payee_name": "小明", "amount": "200"}
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_reports_invalid_json_stream_payloads() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_invalid_stream",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream([b"data: not-json\n\n"]),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].status == TaskStatus.FAILED
+        assert "invalid JSON stream payload" in chunks[0].content
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_reports_empty_streams() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_empty_stream",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream([b"data: [DONE]\n\n"]),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].status == TaskStatus.FAILED
+        assert chunks[0].content == "Agent returned no stream events"
 
     asyncio.run(run())
 
@@ -461,5 +1087,88 @@ def test_llm_turn_interpreter_uses_structured_llm_decision() -> None:
 
         assert decision.action == "replan"
         assert decision.target_intent_code == "query_account_balance"
+
+    asyncio.run(run())
+
+
+def test_llm_graph_planner_falls_back_when_llm_call_fails() -> None:
+    class FailingPlannerClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, variables, model, on_delta
+            raise RuntimeError("planner unavailable")
+
+    async def run() -> None:
+        planner = LLMIntentGraphPlanner(FailingPlannerClient(), model="graph-planner-model")
+        intents = {
+            "query_account_balance": IntentDefinition(
+                intent_code="query_account_balance",
+                name="查询账户余额",
+                description="查询账户余额",
+                examples=["查余额"],
+                agent_url="https://agent.example.com/balance",
+            ),
+        }
+        graph = await planner.plan(
+            message="帮我查一下余额",
+            matches=[IntentMatch(intent_code="query_account_balance", confidence=0.97, reason="fixed")],
+            intents_by_code=intents,
+            recent_messages=[],
+            long_term_memory=[],
+        )
+
+        assert [node.intent_code for node in graph.nodes] == ["query_account_balance"]
+        assert any(item.code == "GRAPH_PLANNER_LLM_FAILED_FALLBACK" for item in graph.diagnostics or [])
+        assert any(item.details.get("error_type") == "RuntimeError" for item in graph.diagnostics or [])
+
+    asyncio.run(run())
+
+
+def test_llm_turn_interpreter_falls_back_when_llm_call_fails() -> None:
+    class FailingTurnClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, variables, model, on_delta
+            raise RuntimeError("turn interpreter unavailable")
+
+    async def run() -> None:
+        interpreter = LLMGraphTurnInterpreter(FailingTurnClient(), model="turn-model")
+        decision = await interpreter.interpret_waiting_node(
+            message="继续",
+            waiting_node=GraphNodeState(
+                intent_code="transfer_money",
+                title="转账",
+                confidence=0.9,
+            ),
+            current_graph=ExecutionGraphState(source_message="帮我转账"),
+            recognition=RecognitionResult(primary=[], candidates=[]),
+        )
+
+        assert decision.action == "resume_current"
+
+    asyncio.run(run())
+
+
+def test_llm_proactive_recommendation_router_falls_back_when_llm_call_fails() -> None:
+    class FailingRecommendationClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, variables, model, on_delta
+            raise RuntimeError("recommendation unavailable")
+
+    async def run() -> None:
+        router = LLMProactiveRecommendationRouter(FailingRecommendationClient(), model="recommendation-model")
+        decision = await router.decide(
+            message="先不处理这些推荐",
+            proactive_recommendation=ProactiveRecommendationPayload(
+                introText="这里有推荐事项",
+                items=[
+                    ProactiveRecommendationItem(
+                        recommendationItemId="rec-transfer",
+                        intentCode="transfer_money",
+                        title="给妈妈转账",
+                    )
+                ],
+            ),
+        )
+
+        assert decision.route_mode == ProactiveRecommendationRouteMode.SWITCH_TO_FREE_DIALOG
 
     asyncio.run(run())

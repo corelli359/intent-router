@@ -28,3 +28,20 @@ Default ports:
 - Chat web: `http://localhost:3000`
 - Admin web: `http://localhost:3001`
 
+## Target Build
+
+For test or target clusters, the repository can generate standalone Next.js bundles under
+`../prod_target/` via:
+
+```bash
+cd ..
+./scripts/build_prod_target.sh
+```
+
+Important build-time parameters:
+
+- `CHAT_BASE_PATH`
+- `ADMIN_BASE_PATH`
+- `ROUTER_API_EXTERNAL_PATH`
+- `ADMIN_API_EXTERNAL_PATH`
+- `INGRESS_HOST`

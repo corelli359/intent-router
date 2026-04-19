@@ -137,7 +137,7 @@ type DisplayEntry =
       items: ProactiveRecommendationItemTemplate[];
     };
 
-const API_BASE = "/api/router/v2";
+const API_BASE = "/api/router";
 const DEFAULT_CUST_ID = "cust_demo";
 const BOOT_MESSAGE: BackendMessage = {
   role: "assistant",

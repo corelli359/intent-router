@@ -22,6 +22,14 @@ Current agent split:
 - `intent-gas-bill-agent` handles `pay_gas_bill`
 - `intent-forex-agent` handles `exchange_forex`
 
+Current source of truth:
+
+- `intent-order-agent` starts from `backend/services/agents/account-balance-agent/src/account_balance_agent`
+- `intent-appointment-agent` starts from `backend/services/agents/transfer-money-agent/src/transfer_money_agent`
+- `intent-credit-card-agent` starts from `backend/services/agents/credit-card-repayment-agent/src/credit_card_repayment_agent`
+- `intent-gas-bill-agent` starts from `backend/services/agents/gas-bill-agent/src/gas_bill_agent`
+- `intent-forex-agent` starts from `backend/services/agents/forex-agent/src/forex_agent`
+
 Key boundary:
 
 - Router performs intent recognition, task orchestration, and dispatch only.
@@ -64,9 +72,25 @@ Reason:
 ## Operational Notes
 
 - Source is mounted into Minikube node at `/mnt/intent-router`.
-- Pods still install runtime dependencies on startup with `pip install /workspace`, but they now delete `/workspace/build` and `/workspace/backend/src/intent_router.egg-info` first.
-- This avoids concurrent wheel builds writing stale artifacts into the shared mounted source tree during rollout.
+- Router runtime config is mounted from ConfigMap `intent-router-api-env` to `/etc/intent-router/.env.local`.
+- Router file-mode catalog is mounted from ConfigMap `intent-router-intent-catalog` to `/etc/intent-router/catalog/`.
+- The deploy script generates that ConfigMap from the repo-root `.env.local` on the mounted workspace.
+- The deploy script also exports the current sqlite intent snapshot to `k8s/intent/router-intent-catalog/` and regenerates the router catalog ConfigMap before rollout.
+- The repo now keeps a generated catalog ConfigMap snapshot at `k8s/intent/router-intent-catalog-configmap.yaml`.
+- For non-Minikube target clusters with different external hosts or path prefixes, generate
+  `prod_target/k8s/intent/*.yaml` via `scripts/build_prod_target.sh` and deploy those rendered manifests instead.
+- Pods now install only their own local service package on startup.
+- Deployment startup no longer depends on `backend/src` or the monorepo root package.
 - New financial agents are deployed one by one instead of piggybacking on the legacy two-agent topology.
 - If cluster resources become tight later, the deployment script is the place to stop after the last healthy standalone rollout.
-- Router reads active intent registry from admin-owned storage and refreshes cache periodically.
+- Router can read active intent registry either from admin-owned storage or from the mounted JSON catalog file, and refreshes cache periodically.
 - Ingress should keep sticky affinity for SSE sessions when router is scaled.
+
+## Perf Overlay
+
+- `scripts/minikube_deploy_intent.sh` still deploys the default manifests one file at a time. It does not apply overlays.
+- The perf-only deployment lives at `k8s/intent/overlays/perf` and should be applied separately with `kubectl apply -k k8s/intent/overlays/perf`.
+- The perf overlay is intended to be applied on top of the normal `intent` namespace deployment. It adds `router-api-test`, points `intent-admin-api` at `http://router-api-test.intent.svc.cluster.local:8000`, and scales all agent deployments in that namespace to `0`.
+- The perf overlay also adds `intent-fake-llm`, and `router-api-test` calls it through `ROUTER_LLM_API_BASE_URL=http://intent-fake-llm.intent.svc.cluster.local:8000/v1`.
+- `router-api-test` still mounts the intent catalog from an overlay-generated ConfigMap, so it does not depend on `.env.local` for the perf target itself.
+- The normal deployment path stays unchanged until you explicitly apply the perf overlay. A practical sequence is: deploy the base stack first, then apply the overlay before running ladder tests.

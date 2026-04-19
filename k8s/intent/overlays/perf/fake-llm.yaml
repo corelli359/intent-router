@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intent-fake-llm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intent-fake-llm
+  template:
+    metadata:
+      labels:
+        app: intent-fake-llm
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: intent-fake-llm
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              set -e
+              python -m pip install --no-cache-dir /workspace/backend/services/fake-llm-service
+              python -m uvicorn fake_llm_service.api.app:app --host 0.0.0.0 --port 8000 --no-access-log --log-level warning
+          ports:
+            - containerPort: 8000
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: repo
+              mountPath: /workspace
+      volumes:
+        - name: repo
+          hostPath:
+            path: /mnt/intent-router
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intent-fake-llm
+spec:
+  selector:
+    app: intent-fake-llm
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+  type: ClusterIP

@@ -1,0 +1,210 @@
+{
+  "field_catalogs": {
+    "AG_MENU_6": [],
+    "AG_PAYMENT": [],
+    "AG_MENU_8": [],
+    "AG_MENU_9": [],
+    "AG_MENU_10": [],
+    "AG_MENU_11": [],
+    "AG_MENU_12": [],
+    "AG_MENU_13": [],
+    "AG_MENU_14": [],
+    "AG_MENU_15": [],
+    "AG_MENU_16": [],
+    "AG_MENU_17": [],
+    "AG_MENU_18": [],
+    "AG_MENU_19": [],
+    "AG_TRANS": [
+      {
+        "field_code": "amount",
+        "label": "金额",
+        "semantic_definition": "本次转账实际金额。",
+        "value_type": "currency",
+        "aliases": [
+          "金额",
+          "转账金额",
+          "汇款金额"
+        ],
+        "examples": [
+          "500",
+          "2000.50"
+        ],
+        "counter_examples": [
+          "银行卡号",
+          "币种"
+        ],
+        "format_hint": "输出数字字符串，不保留货币单位。",
+        "normalization_hint": "去掉元、块、人民币等单位。",
+        "validation_hint": "必须是正数金额。"
+      },
+      {
+        "field_code": "payer_card_no",
+        "label": "付款卡卡号/尾号",
+        "semantic_definition": "本次转账使用的付款卡卡号或卡尾号。",
+        "value_type": "string",
+        "aliases": [
+          "付款卡",
+          "付款卡号",
+          "付款卡尾号"
+        ],
+        "examples": [
+          "6222020100043219999",
+          "8888"
+        ],
+        "counter_examples": [
+          "收款人姓名",
+          "转账金额"
+        ],
+        "format_hint": "",
+        "normalization_hint": "",
+        "validation_hint": ""
+      },
+      {
+        "field_code": "payer_card_remark",
+        "label": "付款卡备注",
+        "semantic_definition": "本次转账付款卡对应的备注名称。",
+        "value_type": "string",
+        "aliases": [
+          "付款卡备注",
+          "付款账户备注"
+        ],
+        "examples": [
+          "工资卡",
+          "日常卡"
+        ],
+        "counter_examples": [],
+        "format_hint": "",
+        "normalization_hint": "",
+        "validation_hint": ""
+      },
+      {
+        "field_code": "payee_name",
+        "label": "收款人姓名",
+        "semantic_definition": "本次转账对应的收款对象名称，可以是正式姓名、昵称或明确的关系称呼。",
+        "value_type": "string",
+        "aliases": [
+          "收款人姓名",
+          "收款人",
+          "对方姓名"
+        ],
+        "examples": [
+          "小红",
+          "王芳",
+          "李晓东",
+          "欧阳娜娜",
+          "我妈",
+          "阿杰"
+        ],
+        "counter_examples": [
+          "6222020100043219999",
+          "500",
+          "招商银行",
+          "工资卡"
+        ],
+        "format_hint": "输出用户原文中的人名、昵称或关系称呼，不要补全、改写或添加尊称。",
+        "normalization_hint": "保留用户原文称呼，不要把 我妈/妈妈/弟弟/小明 擅自改写成实名；原文是什么就输出什么。",
+        "validation_hint": "优先识别转账动作中由 给/转给/汇给/打给/付给 引出的收款对象；不要把金额、卡号、银行名、卡备注识别为 payee_name。"
+      },
+      {
+        "field_code": "payee_card_no",
+        "label": "收款卡卡号/尾号",
+        "semantic_definition": "本次转账对应的收款卡卡号或卡尾号。",
+        "value_type": "string",
+        "aliases": [
+          "收款卡号",
+          "收款卡尾号",
+          "收款卡卡号/尾号",
+          "对方卡号",
+          "对方卡尾号"
+        ],
+        "examples": [
+          "6217000012345678901",
+          "5566"
+        ],
+        "counter_examples": [
+          "李四",
+          "工资卡",
+          "转账金额"
+        ],
+        "format_hint": "",
+        "normalization_hint": "",
+        "validation_hint": ""
+      },
+      {
+        "field_code": "payee_card_remark",
+        "label": "收款卡备注",
+        "semantic_definition": "收款卡的备注名称。",
+        "value_type": "string",
+        "aliases": [
+          "收款卡备注",
+          "收款账户备注"
+        ],
+        "examples": [
+          "房租卡",
+          "家用卡"
+        ],
+        "counter_examples": [],
+        "format_hint": "",
+        "normalization_hint": "",
+        "validation_hint": ""
+      },
+      {
+        "field_code": "payee_card_bank",
+        "label": "收款卡银行",
+        "semantic_definition": "收款卡所属银行名称。",
+        "value_type": "string",
+        "aliases": [
+          "收款银行",
+          "收款卡银行"
+        ],
+        "examples": [
+          "招商银行",
+          "中国银行"
+        ],
+        "counter_examples": [],
+        "format_hint": "",
+        "normalization_hint": "",
+        "validation_hint": ""
+      },
+      {
+        "field_code": "payee_phone",
+        "label": "收款手机号/尾号",
+        "semantic_definition": "收款人手机号或手机号尾号。",
+        "value_type": "string",
+        "aliases": [
+          "收款手机号",
+          "收款手机号尾号",
+          "收款手机号/尾号"
+        ],
+        "examples": [
+          "13800138000",
+          "1234"
+        ],
+        "counter_examples": [],
+        "format_hint": "",
+        "normalization_hint": "",
+        "validation_hint": ""
+      }
+    ],
+    "AG_MENU_21": [],
+    "AG_MENU_22": [],
+    "AG_MENU_23": [],
+    "AG_MENU_24": [],
+    "AG_MENU_25": [],
+    "AG_MENU_26": [],
+    "AG_MENU_27": [],
+    "AG_ZIXUN": [],
+    "AG_MENU_29": [],
+    "AG_MENU_30": [],
+    "AG_MARKET": [],
+    "AG_PRODUCT_32": [],
+    "AG_PRODUCT_33": [],
+    "AG_FUND": [],
+    "AG_DIALOG_35": [],
+    "AG_DIALOG_36": [],
+    "AG_CLIENTSERVICE_37": [],
+    "AG_CLIENTSERVICE_38": [],
+    "AG_CLIENTSERVICE_39": [],
+    "AG_ASK": []
+  }
+}

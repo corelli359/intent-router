@@ -12,6 +12,7 @@ MOUNT_CONTAINER="${MOUNT_CONTAINER:-intent-router-mount}"
 PROXY_CONTAINER="${PROXY_CONTAINER:-intent-router-ingress-http}"
 INGRESS_HOST="${INGRESS_HOST:-intent-router.kkrrc-359.top}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-$(docker inspect "${MINIKUBE_PROFILE}" --format '{{.Config.Image}}')}"
+INTENT_CATALOG_SOURCE_DIR="${INTENT_CATALOG_SOURCE_DIR:-${ROOT_DIR}/k8s/intent/router-intent-catalog}"
 
 minikube_cmd() {
   MINIKUBE_HOME="${MINIKUBE_HOME_ROOT}" minikube "$@"
@@ -75,11 +76,40 @@ ensure_ingress() {
 
 ensure_ingress
 node_kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=5m || true
+
+python "${ROOT_DIR}/scripts/sync_router_intents_from_csv.py" \
+  --catalog-dir "${INTENT_CATALOG_SOURCE_DIR}" \
+  --output-dir "${INTENT_CATALOG_SOURCE_DIR}"
+
 start_mount_container
 wait_for_mount
 node_kubectl -n "${NAMESPACE}" delete ingress intent-router-chat --ignore-not-found || true
 node_kubectl -n "${NAMESPACE}" delete service intent-backend --ignore-not-found || true
 node_kubectl -n "${NAMESPACE}" delete deployment intent-backend --ignore-not-found || true
+
+minikube_cmd ssh --profile "${MINIKUBE_PROFILE}" "
+  set -e
+  if [ ! -f '${TARGET_PATH}/.env.local' ]; then
+    echo 'Missing ${TARGET_PATH}/.env.local for router ConfigMap generation' >&2
+    exit 1
+  fi
+  KCTL=\$(echo /var/lib/minikube/binaries/*/kubectl)
+  sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" -n '${NAMESPACE}' create configmap intent-router-api-env \
+    --from-file=.env.local='${TARGET_PATH}/.env.local' \
+    --dry-run=client -o yaml | sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" apply -f -
+"
+
+minikube_cmd ssh --profile "${MINIKUBE_PROFILE}" "
+  set -e
+  if [ ! -d '${TARGET_PATH}/k8s/intent/router-intent-catalog' ]; then
+    echo 'Missing ${TARGET_PATH}/k8s/intent/router-intent-catalog for router intent catalog ConfigMap generation' >&2
+    exit 1
+  fi
+  KCTL=\$(echo /var/lib/minikube/binaries/*/kubectl)
+  sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" -n '${NAMESPACE}' create configmap intent-router-intent-catalog \
+    --from-file='${TARGET_PATH}/k8s/intent/router-intent-catalog' \
+    --dry-run=client -o yaml | sudo KUBECONFIG=/var/lib/minikube/kubeconfig \"\$KCTL\" apply -f -
+"
 
 manifests=(
   namespace.yaml
@@ -90,6 +120,7 @@ manifests=(
   credit-card-repayment-agent.yaml
   gas-bill-agent.yaml
   forex-agent.yaml
+  fallback-agent.yaml
   chat-web.yaml
   admin-web.yaml
   ingress.yaml
@@ -107,6 +138,7 @@ for deployment in \
   intent-credit-card-agent \
   intent-gas-bill-agent \
   intent-forex-agent \
+  intent-fallback-agent \
   intent-chat-web \
   intent-admin-web
 do

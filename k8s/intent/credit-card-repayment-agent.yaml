@@ -20,8 +20,6 @@ spec:
           imagePullPolicy: IfNotPresent
           workingDir: /workspace
           env:
-            - name: PYTHONPATH
-              value: /workspace/backend/src
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
           command:
@@ -30,9 +28,8 @@ spec:
           args:
             - |
               set -e
-              rm -rf /workspace/build /workspace/backend/src/intent_router.egg-info
-              python -m pip install --no-cache-dir /workspace
-              python -m uvicorn intent_agents.credit_card_repayment_app:app --app-dir /workspace/backend/src --host 0.0.0.0 --port 8000
+              python -m pip install --no-cache-dir /workspace/backend/services/agents/credit-card-repayment-agent
+              python -m uvicorn credit_card_repayment_agent.app:app --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
               name: http

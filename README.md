@@ -4,8 +4,16 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 
 ## Project Structure
 
-- `backend/`: FastAPI services, router core, admin API, tests
+- `backend/services/admin-service`: admin service source of truth
+- `backend/services/router-service`: router service source of truth
+- `backend/services/agents/account-balance-agent`: account balance agent source of truth
+- `backend/services/agents/transfer-money-agent`: transfer money agent source of truth
+- `backend/services/agents/credit-card-repayment-agent`: credit card repayment agent source of truth
+- `backend/services/agents/gas-bill-agent`: gas bill payment agent source of truth
+- `backend/services/agents/forex-agent`: forex exchange agent source of truth
+- `backend/services/agents/fallback-agent`: fallback agent source of truth
 - `frontend/`: chat web, admin web, shared packages
+- `prod_target/`: generated target-cluster frontend artifacts and rendered manifests
 - `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
 - `scripts/`: local verification and cluster helper scripts
@@ -31,6 +39,13 @@ Critical boundary:
 - Router does not execute business intent logic itself.
 - When no active business intent matches, router dispatches to fallback agent.
 - The default Minikube stack ships built-in demo agents for order status and appointment cancellation; register/deploy fallback separately when needed.
+
+Current phase note:
+
+- This branch has completed the physical backend split.
+- `admin_service` and `router_service` are the canonical service packages.
+- Built-in agents now have canonical per-service source trees under `backend/services/agents/*-agent/src`.
+- Services are physically isolated; there is no shared legacy `backend/src` package, shared contracts package, or aggregate agent shim package.
 
 ## Ingress Path Rules
 
@@ -60,8 +75,8 @@ Connection secrets must stay in local env files or shell env vars. This repo ign
 
 Router and agents support OpenAI-compatible model access via `langchain`:
 
-- Router recognizer: `router_core`
-- Built-in agents: `intent_agents.account_balance_app`, `intent_agents.transfer_money_app`, `intent_agents.credit_card_repayment_app`, `intent_agents.gas_bill_payment_app`, `intent_agents.forex_exchange_app`, `intent_agents.fallback_app`
+- Router recognizer: `router_service.core`
+- Built-in agents now live under per-service directories in `backend/services/agents/*-agent/src`.
 
 Minimum runtime env:
 
@@ -70,8 +85,9 @@ Minimum runtime env:
    - `ROUTER_LLM_API_BASE_URL`
    - `ROUTER_LLM_API_KEY`
    - `ROUTER_LLM_MODEL`
-   - `ADMIN_REPOSITORY_BACKEND=database`
-   - `ADMIN_DATABASE_URL` (SQLite or MySQL DSN)
+   - one catalog backend mode:
+     - `ROUTER_INTENT_CATALOG_BACKEND=database` plus `ROUTER_INTENT_CATALOG_DATABASE_URL` or `ADMIN_DATABASE_URL`
+     - or `ROUTER_INTENT_CATALOG_BACKEND=file` plus `ROUTER_INTENT_CATALOG_FILE`
 3. Set recognizer backend with `ROUTER_RECOGNIZER_BACKEND=llm`.
 
 Supported `agent_url`:
@@ -84,6 +100,8 @@ Intent lifecycle:
 - Admin activates/deactivates intents explicitly.
 - Router recognizes only active non-fallback intents.
 - Fallback intent is excluded from recognizer candidates and dispatched only when no match is selected.
+- Shared field semantics can now be managed in Admin under `/api/admin/fields`; intent registration may reference these global fields through `slot_schema[].field_code`.
+- When `ROUTER_INTENT_CATALOG_BACKEND=file`, router loads intents, domains, field catalogs, and slot schemas directly from the mounted JSON file and does not depend on admin/sqlite at runtime.
 
 ## Deployment Requirements
 
@@ -100,28 +118,36 @@ Rationale:
 
 ## Local Development
 
-Install backend dependencies:
+Install repo-level test tooling:
 
 ```bash
 python -m pip install -e .[dev]
 ```
 
-Run split backend services:
+Run admin/router as independently installable services:
 
 ```bash
-uvicorn admin_entry:app --app-dir backend/src --reload --port 8011
-uvicorn router_entry:app --app-dir backend/src --reload --port 8012
+python -m pip install -e backend/services/admin-service -e backend/services/router-service
+python -m uvicorn admin_service.api.app:app --reload --port 8011
+python -m uvicorn router_service.api.app:app --reload --port 8012
 ```
 
-Run built-in agents:
+Run built-in agents as independently installable services:
 
 ```bash
-uvicorn intent_agents.account_balance_app:app --app-dir backend/src --reload --port 8101
-uvicorn intent_agents.transfer_money_app:app --app-dir backend/src --reload --port 8102
-uvicorn intent_agents.credit_card_repayment_app:app --app-dir backend/src --reload --port 8103
-uvicorn intent_agents.gas_bill_payment_app:app --app-dir backend/src --reload --port 8104
-uvicorn intent_agents.forex_exchange_app:app --app-dir backend/src --reload --port 8105
-uvicorn intent_agents.fallback_app:app --app-dir backend/src --reload --port 8106
+python -m pip install -e backend/services/agents/account-balance-agent
+python -m pip install -e backend/services/agents/transfer-money-agent
+python -m pip install -e backend/services/agents/credit-card-repayment-agent
+python -m pip install -e backend/services/agents/gas-bill-agent
+python -m pip install -e backend/services/agents/forex-agent
+python -m pip install -e backend/services/agents/fallback-agent
+
+python -m uvicorn account_balance_agent.app:app --reload --port 8101
+python -m uvicorn transfer_money_agent.app:app --reload --port 8102
+python -m uvicorn credit_card_repayment_agent.app:app --reload --port 8103
+python -m uvicorn gas_bill_agent.app:app --reload --port 8104
+python -m uvicorn forex_agent.app:app --reload --port 8105
+python -m uvicorn fallback_agent.app:app --reload --port 8106
 ```
 
 Run tests:
@@ -130,10 +156,7 @@ Run tests:
 pytest
 ```
 
-Compatibility note:
-
-- `backend/src/app.py` still exists as an aggregate app for local integration tests.
-- Deployment entrypoints should use `admin_entry:app` and `router_entry:app`.
+Independent deployments should install and start canonical packages directly from their service directories.
 
 Run frontends:
 
@@ -148,3 +171,38 @@ Chat entries after startup:
 
 - V1: `http://127.0.0.1:3000/chat`
 - V2: `http://127.0.0.1:3000/chat/v2`
+
+## Target Cluster Frontend Build
+
+For target or test clusters where hostname and external path prefixes differ from local Minikube,
+generate standalone frontend artifacts plus rendered manifests into `prod_target/`:
+
+```bash
+./scripts/build_prod_target.sh
+```
+
+Common overrides:
+
+```bash
+INGRESS_HOST=test.example.com \
+CHAT_BASE_PATH=/intent-test/chat \
+ADMIN_BASE_PATH=/intent-test/admin \
+ROUTER_API_EXTERNAL_PATH=/intent-test/api/router \
+ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
+./scripts/build_prod_target.sh
+```
+
+The generated web deployments run directly from `prod_target/chat-web` and `prod_target/admin-web`
+instead of rebuilding Next.js inside the cluster.
+
+## Router-Only Verification
+
+To verify intent recognition and slot filling without dispatching downstream agents, call:
+
+- `POST /api/router/v2/sessions/{session_id}/messages` with `"executionMode": "router_only"`
+
+Helper script:
+
+```bash
+python scripts/verify_router_understanding.py --base-url http://127.0.0.1:8000
+```

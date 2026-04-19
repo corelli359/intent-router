@@ -1,0 +1,62 @@
+[
+  {
+    "case_id": "transfer-intent-slot-router-only",
+    "name": "Transfer Intent And Slot Router-Only",
+    "description": "Single transfer utterance routed without agent dispatch. Validates primary intent recognition and slot extraction output from the router-only handover boundary.",
+    "category": "router_only",
+    "tags": [
+      "transfer",
+      "router_only",
+      "intent_recognition",
+      "slot_extraction",
+      "no_agent"
+    ],
+    "target_route": "/api/router/v2/sessions/{session_id}/messages",
+    "notes": [
+      "只保留一个转账输入，直接校验意图和提槽结果。",
+      "通过 admin-api 使用 svc 访问 router-api-test，不走浏览器直连。",
+      "压测期间 agent 副本保持 0，避免执行链路干扰结果。"
+    ],
+    "session_request": {
+      "cust_id": "perf_transfer_router_only_case"
+    },
+    "message_request": {
+      "content": "给小明转500元",
+      "executionMode": "router_only"
+    },
+    "default_steps": [
+      {
+        "concurrency": 10,
+        "duration_sec": 15,
+        "warmup_sec": 3,
+        "timeout_ms": 10000
+      },
+      {
+        "concurrency": 30,
+        "duration_sec": 15,
+        "warmup_sec": 3,
+        "timeout_ms": 10000
+      },
+      {
+        "concurrency": 60,
+        "duration_sec": 15,
+        "warmup_sec": 3,
+        "timeout_ms": 10000
+      }
+    ],
+    "expectations": {
+      "session_status_code": 201,
+      "message_status_code": 200,
+      "required_graph_status": "ready_for_dispatch",
+      "required_primary_intent_code": "AG_TRANS",
+      "required_slot_keys": [
+        "payee_name",
+        "amount"
+      ],
+      "required_slot_values": {
+        "payee_name": "小明",
+        "amount": "500"
+      }
+    }
+  }
+]

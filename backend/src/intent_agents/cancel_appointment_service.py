@@ -1,5 +1,0 @@
-from __future__ import annotations
-
-from intent_agents.transfer_money_service import TransferMoneyAgentRequest as CancelAppointmentAgentRequest
-from intent_agents.transfer_money_service import TransferMoneyAgentService as CancelAppointmentAgentService
-from intent_agents.transfer_money_service import TransferMoneyResolution as CancelAppointmentResolution

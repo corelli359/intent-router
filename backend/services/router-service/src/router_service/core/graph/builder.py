@@ -1,0 +1,619 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import logging
+from typing import Any, Iterable, Literal, Protocol
+
+from pydantic import BaseModel, Field
+
+from router_service.models.intent import GraphConfirmPolicy
+from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.shared.diagnostics import (
+    RouterDiagnostic,
+    RouterDiagnosticCode,
+    diagnostic,
+    merge_diagnostics,
+)
+from router_service.core.support.json_codec import json_dumps
+from router_service.core.support.llm_client import AsyncDeltaCallback, JsonLLMClient, llm_exception_is_retryable
+from router_service.core.prompts.prompt_templates import (
+    DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+    DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
+    build_unified_graph_builder_prompt,
+)
+from router_service.core.recognition.recognizer import (
+    IntentRecognizer,
+    NullIntentRecognizer,
+    RecognitionResult,
+    recognition_intents_json,
+)
+from router_service.core.slots.grounding import normalize_slot_memory
+from router_service.core.shared.graph_domain import (
+    ExecutionGraphState,
+    GraphAction,
+    GraphCondition,
+    GraphEdge,
+    GraphEdgeType,
+    GraphNodeState,
+    GraphStatus,
+    SlotBindingSource,
+    SlotBindingState,
+)
+from router_service.core.graph.planner import IntentGraphPlanner, SequentialIntentGraphPlanner
+
+
+logger = logging.getLogger(__name__)
+
+
+class GraphDraftIntentPayload(BaseModel):
+    """Unified-builder payload for one recognized intent candidate."""
+
+    intent_code: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str = "llm returned a match"
+
+
+class GraphDraftConditionPayload(BaseModel):
+    """Unified-builder payload for one conditional edge expression."""
+
+    expected_statuses: list[str] = Field(default_factory=lambda: ["completed"])
+    left_key: str | None = None
+    operator: Literal[">", ">=", "==", "<", "<="] | None = None
+    right_value: float | int | str | bool | None = None
+
+
+class GraphDraftNodePayload(BaseModel):
+    """Unified-builder payload for one graph node."""
+
+    intent_code: str
+    title: str = ""
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    source_fragment: str | None = None
+    slot_memory: dict[str, Any] = Field(default_factory=dict)
+    slot_bindings: list["GraphDraftSlotBindingPayload"] = Field(default_factory=list)
+
+
+class GraphDraftSlotBindingPayload(BaseModel):
+    """Unified-builder payload for one slot binding attached to a node."""
+
+    slot_key: str
+    value: Any | None = None
+    source: SlotBindingSource = SlotBindingSource.USER_MESSAGE
+    source_text: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class GraphDraftEdgePayload(BaseModel):
+    """Unified-builder payload for one graph edge."""
+
+    source_index: int = Field(ge=0)
+    target_index: int = Field(ge=0)
+    relation_type: GraphEdgeType = GraphEdgeType.SEQUENTIAL
+    label: str | None = None
+    condition: GraphDraftConditionPayload | None = None
+
+
+class UnifiedGraphDraftPayload(BaseModel):
+    """Structured output expected from the unified graph builder model."""
+
+    summary: str = ""
+    needs_confirmation: bool = False
+    primary_intents: list[GraphDraftIntentPayload] = Field(default_factory=list)
+    candidate_intents: list[GraphDraftIntentPayload] = Field(default_factory=list)
+    nodes: list[GraphDraftNodePayload] = Field(default_factory=list)
+    edges: list[GraphDraftEdgePayload] = Field(default_factory=list)
+
+
+GraphDraftNodePayload.model_rebuild()
+
+
+@dataclass(slots=True)
+class GraphBuildResult:
+    """Unified graph builder output containing recognition plus the proposed graph."""
+
+    recognition: RecognitionResult
+    graph: ExecutionGraphState
+    diagnostics: list[RouterDiagnostic] | None = None
+
+
+class IntentGraphBuilder(Protocol):
+    """Protocol for components that can build a graph directly from one message."""
+
+    async def build(
+        self,
+        *,
+        message: str,
+        intents: Iterable[IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        recognition: RecognitionResult | None = None,
+        on_delta: AsyncDeltaCallback | None = None,
+    ) -> GraphBuildResult:
+        """Build a graph directly from one user message."""
+        ...
+
+
+class GraphDraftNormalizer:
+    """Normalize unified-builder payloads into runtime recognition and graph objects."""
+
+    def normalize(
+        self,
+        *,
+        payload: UnifiedGraphDraftPayload,
+        message: str,
+        intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str] | None = None,
+        long_term_memory: list[str] | None = None,
+    ) -> GraphBuildResult:
+        """Convert unified-builder output into runtime-safe recognition and graph state."""
+        recognition = self._normalize_recognition(payload=payload, intents_by_code=intents_by_code)
+        graph = self._normalize_graph(
+            payload=payload,
+            message=message,
+            recognition=recognition,
+            intents_by_code=intents_by_code,
+            recent_messages=recent_messages or [],
+            long_term_memory=long_term_memory or [],
+        )
+        return GraphBuildResult(
+            recognition=recognition,
+            graph=graph,
+            diagnostics=merge_diagnostics(recognition.diagnostics, graph.diagnostics),
+        )
+
+    def _normalize_recognition(
+        self,
+        *,
+        payload: UnifiedGraphDraftPayload,
+        intents_by_code: dict[str, IntentDefinition],
+    ) -> RecognitionResult:
+        """Normalize unified-builder recognition buckets with threshold enforcement."""
+        primary: list[IntentMatch] = []
+        candidates: list[IntentMatch] = []
+        seen_codes: set[str] = set()
+
+        for item in payload.primary_intents:
+            intent = intents_by_code.get(item.intent_code)
+            if intent is None or item.intent_code in seen_codes:
+                continue
+            confidence = round(min(0.99, max(0.0, float(item.confidence))), 2)
+            if confidence >= intent.primary_threshold:
+                primary.append(
+                    IntentMatch(intent_code=item.intent_code, confidence=confidence, reason=item.reason or "unified_builder")
+                )
+                seen_codes.add(item.intent_code)
+                continue
+            if confidence >= intent.candidate_threshold:
+                candidates.append(
+                    IntentMatch(intent_code=item.intent_code, confidence=confidence, reason=item.reason or "unified_builder")
+                )
+                seen_codes.add(item.intent_code)
+
+        for item in payload.candidate_intents:
+            intent = intents_by_code.get(item.intent_code)
+            if intent is None or item.intent_code in seen_codes:
+                continue
+            confidence = round(min(0.99, max(0.0, float(item.confidence))), 2)
+            if confidence < intent.candidate_threshold:
+                continue
+            candidates.append(
+                IntentMatch(intent_code=item.intent_code, confidence=confidence, reason=item.reason or "unified_builder")
+            )
+            seen_codes.add(item.intent_code)
+
+        def _sort_key(match: IntentMatch) -> tuple[int, float]:
+            """Sort higher-priority and higher-confidence matches first."""
+            intent = intents_by_code[match.intent_code]
+            return (intent.dispatch_priority, match.confidence)
+
+        primary.sort(key=_sort_key, reverse=True)
+        candidates.sort(key=_sort_key, reverse=True)
+        return RecognitionResult(primary=primary, candidates=candidates, diagnostics=[])
+
+    def _normalize_graph(
+        self,
+        *,
+        payload: UnifiedGraphDraftPayload,
+        message: str,
+        recognition: RecognitionResult,
+        intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+    ) -> ExecutionGraphState:
+        """Normalize unified-builder graph payload into executable graph state."""
+        confidence_by_code = {match.intent_code: match.confidence for match in recognition.primary}
+        allowed_intents = set(confidence_by_code)
+
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary=payload.summary,
+            status=GraphStatus.DRAFT,
+            actions=[],
+        )
+        history_slot_usage: list[tuple[str, list[str]]] = []
+        for index, node_payload in enumerate(payload.nodes):
+            if node_payload.intent_code not in allowed_intents:
+                continue
+            intent = intents_by_code.get(node_payload.intent_code)
+            if intent is None:
+                continue
+            slot_memory, history_slots = normalize_slot_memory(
+                slot_memory=node_payload.slot_memory,
+                slot_schema=intent.slot_schema,
+                grounding_text=f"{message}\n{node_payload.source_fragment or ''}",
+                history_texts=[*recent_messages, *long_term_memory],
+            )
+            graph.nodes.append(
+                GraphNodeState(
+                    intent_code=node_payload.intent_code,
+                    title=node_payload.title or intent.name,
+                    confidence=(
+                        node_payload.confidence
+                        if node_payload.confidence is not None
+                        else confidence_by_code.get(node_payload.intent_code, 0.0)
+                    ),
+                    position=index,
+                    source_fragment=node_payload.source_fragment or message,
+                    slot_memory=slot_memory,
+                    slot_bindings=self._normalize_slot_bindings(
+                        node_payload=node_payload,
+                        intent=intent,
+                        slot_memory=slot_memory,
+                        history_slot_keys=history_slots,
+                        default_confidence=(
+                            node_payload.confidence
+                            if node_payload.confidence is not None
+                            else confidence_by_code.get(node_payload.intent_code, 0.0)
+                        ),
+                    ),
+                    history_slot_keys=history_slots,
+                )
+            )
+            if history_slots:
+                history_slot_usage.append((graph.nodes[-1].title, history_slots))
+
+        for edge_payload in payload.edges:
+            if edge_payload.source_index >= len(graph.nodes) or edge_payload.target_index >= len(graph.nodes):
+                continue
+            source = graph.nodes[edge_payload.source_index]
+            target = graph.nodes[edge_payload.target_index]
+            if source.node_id not in target.depends_on:
+                target.depends_on.append(source.node_id)
+            target.relation_reason = edge_payload.label
+            graph.edges.append(
+                GraphEdge(
+                    source_node_id=source.node_id,
+                    target_node_id=target.node_id,
+                    relation_type=edge_payload.relation_type,
+                    label=edge_payload.label,
+                    condition=(
+                        GraphCondition(
+                            source_node_id=source.node_id,
+                            expected_statuses=edge_payload.condition.expected_statuses,
+                            left_key=edge_payload.condition.left_key,
+                            operator=edge_payload.condition.operator,
+                            right_value=edge_payload.condition.right_value,
+                        )
+                        if edge_payload.condition is not None
+                        else None
+                    ),
+                )
+            )
+
+        needs_confirmation = self._resolve_confirmation_needed(
+            payload=payload,
+            graph=graph,
+            intents_by_code=intents_by_code,
+            history_slot_usage=history_slot_usage,
+        )
+        graph.status = GraphStatus.WAITING_CONFIRMATION if needs_confirmation else GraphStatus.DRAFT
+        graph.actions = (
+            [
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ]
+            if needs_confirmation
+            else []
+        )
+        if not graph.summary:
+            graph.summary = (
+                f"识别到 {len(graph.nodes)} 个事项，已生成执行图"
+                if len(graph.nodes) > 1
+                else f"识别到事项：{graph.nodes[0].title}" if graph.nodes else "未识别到明确事项"
+            )
+        if history_slot_usage:
+            history_notes = "；".join(
+                f"{title} 复用历史槽位 {', '.join(slot_keys)}"
+                for title, slot_keys in history_slot_usage
+            )
+            summary_prefix = graph.summary.strip()
+            graph.summary = (
+                f"{summary_prefix}。检测到历史信息复用：{history_notes}，请确认后执行"
+                if summary_prefix
+                else f"检测到历史信息复用：{history_notes}，请确认后执行"
+            )
+        return graph
+
+    def _normalize_slot_bindings(
+        self,
+        *,
+        node_payload: GraphDraftNodePayload,
+        intent: IntentDefinition,
+        slot_memory: dict[str, Any],
+        history_slot_keys: list[str],
+        default_confidence: float,
+    ) -> list[SlotBindingState]:
+        """Normalize node slot bindings while preserving history-derived provenance."""
+        if not slot_memory:
+            return []
+
+        allowed_slot_keys = {slot.slot_key for slot in intent.slot_schema}
+        normalized_by_key: dict[str, SlotBindingState] = {}
+
+        for binding in node_payload.slot_bindings:
+            if binding.slot_key not in allowed_slot_keys or binding.slot_key not in slot_memory:
+                continue
+            normalized_by_key[binding.slot_key] = SlotBindingState(
+                slot_key=binding.slot_key,
+                value=slot_memory[binding.slot_key],
+                source=(
+                    SlotBindingSource.HISTORY
+                    if binding.slot_key in history_slot_keys
+                    else binding.source
+                ),
+                source_text=binding.source_text,
+                confidence=binding.confidence if binding.confidence is not None else default_confidence,
+            )
+
+        for slot_key, value in slot_memory.items():
+            if slot_key in normalized_by_key:
+                continue
+            normalized_by_key[slot_key] = SlotBindingState(
+                slot_key=slot_key,
+                value=value,
+                source=(
+                    SlotBindingSource.HISTORY
+                    if slot_key in history_slot_keys
+                    else SlotBindingSource.USER_MESSAGE
+                ),
+                confidence=default_confidence,
+            )
+
+        ordered_slot_keys = [slot.slot_key for slot in intent.slot_schema if slot.slot_key in normalized_by_key]
+        return [normalized_by_key[slot_key] for slot_key in ordered_slot_keys]
+
+    def _resolve_confirmation_needed(
+        self,
+        *,
+        payload: UnifiedGraphDraftPayload,
+        graph: ExecutionGraphState,
+        intents_by_code: dict[str, IntentDefinition],
+        history_slot_usage: list[tuple[str, list[str]]],
+    ) -> bool:
+        """Decide whether the normalized graph should wait for explicit confirmation."""
+        if not graph.nodes:
+            return False
+        confirm_policies = {
+            intents_by_code[node.intent_code].graph_build_hints.confirm_policy
+            for node in graph.nodes
+            if node.intent_code in intents_by_code
+        }
+        if GraphConfirmPolicy.ALWAYS in confirm_policies:
+            return True
+        if len(graph.nodes) > 1 and GraphConfirmPolicy.MULTI_NODE_ONLY in confirm_policies:
+            return True
+        if confirm_policies == {GraphConfirmPolicy.NEVER}:
+            return False
+        if history_slot_usage:
+            return True
+        return payload.needs_confirmation or len(graph.nodes) > 1
+
+class LLMIntentGraphBuilder:
+    """LLM-backed builder that jointly recognizes intents and produces a graph draft."""
+
+    def __init__(
+        self,
+        llm_client: JsonLLMClient,
+        *,
+        model: str | None = None,
+        fallback_recognizer: IntentRecognizer | None = None,
+        fallback_planner: IntentGraphPlanner | None = None,
+        normalizer: GraphDraftNormalizer | None = None,
+        system_prompt_template: str = DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
+        human_prompt_template: str = DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
+    ) -> None:
+        """Initialize the unified graph builder with fallback recognizer and planner."""
+        self.llm_client = llm_client
+        self.model = model
+        self.fallback_recognizer = fallback_recognizer or NullIntentRecognizer()
+        self.fallback_planner = fallback_planner or SequentialIntentGraphPlanner()
+        self.normalizer = normalizer or GraphDraftNormalizer()
+        self.prompt = build_unified_graph_builder_prompt(
+            system_prompt=system_prompt_template,
+            human_prompt=human_prompt_template,
+        )
+
+    async def _build_via_legacy_chain_with_diagnostic(
+        self,
+        *,
+        message: str,
+        intents: list[IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        recognition: RecognitionResult | None,
+        on_delta: AsyncDeltaCallback | None,
+        diagnostic_message: str,
+        diagnostic_details: dict[str, Any],
+    ) -> GraphBuildResult:
+        """Build through the legacy recognize+plan chain and append one diagnostic."""
+        result = await self._build_via_legacy_chain(
+            message=message,
+            intents=intents,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+            recognition=recognition,
+            on_delta=on_delta,
+        )
+        diagnostics = merge_diagnostics(
+            result.diagnostics,
+            [
+                diagnostic(
+                    RouterDiagnosticCode.GRAPH_BUILDER_LLM_FAILED_LEGACY_CHAIN,
+                    source="graph_builder",
+                    message=diagnostic_message,
+                    details=diagnostic_details,
+                )
+            ],
+        )
+        result.graph.diagnostics = merge_diagnostics(result.graph.diagnostics, diagnostics)
+        result.diagnostics = diagnostics
+        return result
+
+    async def build(
+        self,
+        *,
+        message: str,
+        intents: Iterable[IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        recognition: RecognitionResult | None = None,
+        on_delta: AsyncDeltaCallback | None = None,
+    ) -> GraphBuildResult:
+        """Build a graph from one message, degrading to legacy recognize+plan when needed."""
+        active_intents = [intent for intent in intents if intent.status == "active"]
+        if not active_intents:
+            return GraphBuildResult(
+                recognition=RecognitionResult(primary=[], candidates=[], diagnostics=[]),
+                graph=ExecutionGraphState(source_message=message),
+                diagnostics=[],
+            )
+
+        intents_by_code = {intent.intent_code: intent for intent in active_intents}
+        try:
+            raw_payload = await self.llm_client.run_json(
+                prompt=self.prompt,
+                variables={
+                    "message": message,
+                    "recent_messages_json": json_dumps(recent_messages),
+                    "long_term_memory_json": json_dumps(long_term_memory),
+                    "recognition_hint_json": json_dumps(
+                        {
+                            "primary": [match.model_dump(mode="json") for match in (recognition.primary if recognition else [])],
+                            "candidates": [
+                                match.model_dump(mode="json") for match in (recognition.candidates if recognition else [])
+                            ],
+                        }
+                    ),
+                    "intents_json": recognition_intents_json(active_intents),
+                },
+                model=self.model,
+                on_delta=on_delta,
+            )
+        except Exception as exc:
+            if llm_exception_is_retryable(exc):
+                raise
+            logger.debug("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
+            return await self._build_via_legacy_chain_with_diagnostic(
+                message=message,
+                intents=active_intents,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+                recognition=recognition,
+                on_delta=on_delta,
+                diagnostic_message="统一编图 LLM 失败，已降级到识别+规划链路",
+                diagnostic_details={
+                    "error_type": type(exc).__name__,
+                },
+            )
+
+        try:
+            payload = UnifiedGraphDraftPayload.model_validate(raw_payload)
+        except Exception as exc:
+            logger.debug("Unified graph builder failed, degrading to legacy recognize+plan flow", exc_info=True)
+            result = await self._build_via_legacy_chain(
+                message=message,
+                intents=active_intents,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+                recognition=recognition,
+                on_delta=on_delta,
+            )
+            diagnostics = merge_diagnostics(
+                result.diagnostics,
+                [
+                    diagnostic(
+                        RouterDiagnosticCode.GRAPH_BUILDER_INVALID_PAYLOAD_LEGACY_CHAIN,
+                        source="graph_builder",
+                        message="统一编图返回结构非法，已降级到识别+规划链路",
+                        details={"error_type": type(exc).__name__},
+                    )
+                ],
+            )
+            result.graph.diagnostics = merge_diagnostics(result.graph.diagnostics, diagnostics)
+            result.diagnostics = diagnostics
+            return result
+
+        result = self.normalizer.normalize(
+            payload=payload,
+            message=message,
+            intents_by_code=intents_by_code,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+        )
+        if result.recognition.primary and not result.graph.nodes:
+            fallback_graph = await self.fallback_planner.plan(
+                message=message,
+                matches=result.recognition.primary,
+                intents_by_code=intents_by_code,
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+            )
+            diagnostics = merge_diagnostics(
+                result.diagnostics,
+                [
+                    diagnostic(
+                        RouterDiagnosticCode.GRAPH_BUILDER_EMPTY_GRAPH_FALLBACK_PLANNER,
+                        source="graph_builder",
+                        message="统一编图未产出可执行节点，已降级到兜底规划器",
+                        details={"fallback": type(self.fallback_planner).__name__},
+                    )
+                ],
+            )
+            fallback_graph.diagnostics = merge_diagnostics(fallback_graph.diagnostics, diagnostics)
+            return GraphBuildResult(
+                recognition=result.recognition,
+                graph=fallback_graph,
+                diagnostics=diagnostics,
+            )
+        return result
+
+    async def _build_via_legacy_chain(
+        self,
+        *,
+        message: str,
+        intents: list[IntentDefinition],
+        recent_messages: list[str],
+        long_term_memory: list[str],
+        recognition: RecognitionResult | None,
+        on_delta: AsyncDeltaCallback | None,
+    ) -> GraphBuildResult:
+        """Fallback to separate recognition and planning when unified building fails."""
+        resolved_recognition = recognition or await self.fallback_recognizer.recognize(
+            message=message,
+            intents=intents,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+            on_delta=on_delta,
+        )
+        intents_by_code = {intent.intent_code: intent for intent in intents}
+        matches = [match for match in resolved_recognition.primary if match.intent_code in intents_by_code]
+        graph = await self.fallback_planner.plan(
+            message=message,
+            matches=matches,
+            intents_by_code=intents_by_code,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+        )
+        diagnostics = merge_diagnostics(resolved_recognition.diagnostics, graph.diagnostics)
+        graph.diagnostics = merge_diagnostics(graph.diagnostics, diagnostics)
+        return GraphBuildResult(recognition=resolved_recognition, graph=graph, diagnostics=diagnostics)

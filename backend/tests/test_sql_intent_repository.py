@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
 from pathlib import Path
 
-
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from models.intent import IntentPayload, IntentStatus  # noqa: E402
-from persistence.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
+from admin_service.models.intent import IntentPayload, IntentStatus  # noqa: E402
+from admin_service.storage.sql_intent_repository import DatabaseIntentRepository  # noqa: E402
 
 
 def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, is_fallback: bool = False) -> IntentPayload:
@@ -18,6 +12,11 @@ def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, 
         intent_code=intent_code,
         name=f"{intent_code} name",
         description=f"{intent_code} description",
+        domain_code="finance",
+        domain_name="Finance",
+        domain_description="Financial domain intents",
+        is_leaf_intent=True,
+        parent_intent_code="",
         examples=[f"{intent_code} example"],
         agent_url=f"https://agent.example.com/{intent_code}",
         status=status,
@@ -25,23 +24,30 @@ def _payload(intent_code: str, *, status: IntentStatus = IntentStatus.INACTIVE, 
         dispatch_priority=100,
         request_schema={"type": "object", "required": ["input"]},
         field_mapping={"input": "$message.current"},
+        field_catalog=[
+            {
+                "field_code": "free_text_input",
+                "label": "输入文本",
+                "semantic_definition": "当前意图接收的一段自由文本输入",
+                "value_type": "string",
+                "examples": ["foo"],
+            }
+        ],
         slot_schema=[
             {
                 "slot_key": "input",
+                "field_code": "free_text_input",
+                "role": "primary_input",
                 "label": "输入",
                 "description": "必填输入参数",
+                "semantic_definition": "当前意图的主输入文本",
                 "value_type": "string",
                 "required": True,
                 "aliases": ["输入"],
                 "examples": ["foo"],
             }
         ],
-        graph_build_hints={
-            "intent_scope_rule": "默认单节点执行。",
-            "planner_notes": "除非用户明确表达多个动作，否则不要拆图。",
-            "confirm_policy": "auto",
-            "max_nodes_per_message": 4,
-        },
+        routing_examples=[f"{intent_code} routing"],
         resume_policy="resume_same_task",
     )
 
@@ -59,8 +65,13 @@ def test_database_repository_persists_records_across_instances(tmp_path: Path) -
     assert [intent.intent_code for intent in all_intents] == ["query_order_status", "fallback_general"]
     assert [intent.intent_code for intent in active_intents] == ["query_order_status", "fallback_general"]
     assert reloaded.get_intent("fallback_general").is_fallback is True
+    assert reloaded.get_intent("query_order_status").field_catalog[0].field_code == "free_text_input"
     assert reloaded.get_intent("query_order_status").slot_schema[0].slot_key == "input"
-    assert reloaded.get_intent("query_order_status").graph_build_hints.max_nodes_per_message == 4
+    assert reloaded.get_intent("query_order_status").slot_schema[0].field_code == "free_text_input"
+    assert reloaded.get_intent("query_order_status").slot_schema[0].role == "primary_input"
+    assert reloaded.get_intent("query_order_status").domain_code == "finance"
+    assert reloaded.get_intent("query_order_status").domain_name == "Finance"
+    assert reloaded.get_intent("query_order_status").routing_examples == ["query_order_status routing"]
 
 
 def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Path) -> None:
@@ -115,4 +126,10 @@ def test_database_repository_auto_adds_v21_columns_for_legacy_table(tmp_path: Pa
     record = repository.get_intent("transfer_money")
 
     assert record.slot_schema == []
-    assert record.graph_build_hints.confirm_policy.value == "auto"
+    assert record.field_catalog == []
+    assert record.domain_code == ""
+    assert record.domain_name == ""
+    assert record.domain_description == ""
+    assert record.is_leaf_intent is True
+    assert record.parent_intent_code == ""
+    assert record.routing_examples == []

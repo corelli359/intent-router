@@ -35,4 +35,12 @@ node_modules/
 
 # Local build / workspace artifacts
 /build/
+/backend/services/**/build/
 /.codex
+*.ipynb
+/prod_target/*
+!/prod_target/.gitignore
+!/prod_target/README.md
+zip_abc
+*.zip
+*.csv

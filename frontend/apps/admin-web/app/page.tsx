@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { IntentRouterApiClient } from "@intent-router/api-client";
 import type { IntentDefinition, IntentInput } from "@intent-router/shared-types";
@@ -486,6 +487,9 @@ export default function AdminPage() {
           <button className="primary-button" onClick={beginCreateIntent} type="button">
             新建意图
           </button>
+          <Link className="secondary-button" href="/perf-tests">
+            性能压测
+          </Link>
           <button className="ghost-button" onClick={() => void refresh({ source: "manual" })} type="button">
             刷新清单
           </button>

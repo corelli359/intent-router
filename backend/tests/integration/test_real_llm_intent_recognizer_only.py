@@ -2,20 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
-from pathlib import Path
 
 import pytest
 
-
-BACKEND_SRC = Path(__file__).resolve().parents[2] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from config.settings import Settings  # noqa: E402
-from router_core.domain import IntentDefinition  # noqa: E402
-from router_core.llm_client import LangChainLLMClient  # noqa: E402
-from router_core.recognizer import LLMIntentRecognizer, NullIntentRecognizer  # noqa: E402
+from router_service.settings import Settings  # noqa: E402
+from router_service.core.shared.domain import IntentDefinition  # noqa: E402
+from router_service.core.support.llm_client import LangChainLLMClient  # noqa: E402
+from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer  # noqa: E402
 
 
 def test_real_llm_intent_recognizer_only() -> None:

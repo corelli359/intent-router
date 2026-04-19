@@ -22,6 +22,8 @@ Document the chosen command set in `README.md` and make CI use the same entry po
 ## Coding Style & Naming Conventions
 Match conventions to the primary language once it is selected, but keep naming consistent from the start. Use `kebab-case` for shell scripts and folder names, `snake_case` for Python modules, and `PascalCase` for classes or UI components. Use 2-space indentation for JSON, YAML, and JavaScript/TypeScript; use 4 spaces for Python. Add formatter and linter configs early and run them before opening a PR.
 
+Do not hardcode regular expressions directly into functional business logic. If pattern matching is required for intent or slot behavior, drive it from structured configuration, catalog/schema metadata, or a clearly isolated infrastructure utility rather than embedding regex rules inside runtime feature logic.
+
 ## Testing Guidelines
 Place tests under `tests/` and keep file names framework-appropriate, such as `*.test.ts`, `*.spec.ts`, or `test_*.py`. New features should ship with tests, and bug fixes should include a regression test. If you add a test runner, document coverage expectations and the exact command used to execute tests locally.
 

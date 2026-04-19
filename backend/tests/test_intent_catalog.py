@@ -1,25 +1,29 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from router_service.models.intent import IntentPayload, IntentStatus  # noqa: E402
+from router_service.catalog.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
+from router_service.core.support.intent_catalog import RepositoryIntentCatalog  # noqa: E402
 
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
-
-from models.intent import IntentPayload, IntentStatus  # noqa: E402
-from persistence.in_memory_intent_repository import InMemoryIntentRepository  # noqa: E402
-from router_core.intent_catalog import RepositoryIntentCatalog  # noqa: E402
-
-
-def _payload(*, intent_code: str, status: IntentStatus) -> IntentPayload:
+def _payload(
+    *,
+    intent_code: str,
+    status: IntentStatus,
+    domain_code: str = "",
+    domain_name: str = "",
+    domain_description: str = "",
+    routing_examples: list[str] | None = None,
+) -> IntentPayload:
     return IntentPayload(
         intent_code=intent_code,
         name=intent_code,
         description=f"description for {intent_code}",
+        domain_code=domain_code,
+        domain_name=domain_name,
+        domain_description=domain_description,
         examples=[f"example for {intent_code}"],
         agent_url=f"http://agent.example.com/{intent_code}",
+        routing_examples=routing_examples or [],
         status=status,
         dispatch_priority=100,
         request_schema={"type": "object"},
@@ -64,12 +68,15 @@ def test_catalog_keeps_cached_snapshot_until_refresh_now() -> None:
 
     assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
     assert catalog.priorities() == {"query_order_status": 100}
+    assert catalog.active_intents_by_code()["query_order_status"].intent_code == "query_order_status"
 
     assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
 
     catalog.refresh_now()
     assert catalog.list_active() == []
     assert catalog.priorities() == {}
+
+    assert catalog.active_intents_by_code() == {}
 
 
 def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_dispatch() -> None:
@@ -88,6 +95,7 @@ def test_catalog_excludes_fallback_from_recognition_but_keeps_it_available_for_d
     assert catalog.get_fallback_intent() is not None
     assert catalog.get_fallback_intent().intent_code == "fallback_general"
     assert catalog.priorities()["fallback_general"] == 1
+    assert "fallback_general" not in catalog.active_intents_by_code()
 
 
 def test_catalog_reads_cached_snapshot_without_sync_refresh() -> None:
@@ -104,3 +112,85 @@ def test_catalog_reads_cached_snapshot_without_sync_refresh() -> None:
     assert [intent.intent_code for intent in catalog.list_active()] == ["transfer_money"]
     catalog.refresh_now()
     assert catalog.list_active() == []
+
+
+def test_catalog_groups_leaf_intents_into_domains() -> None:
+    repository = InMemoryIntentRepository()
+    repository.create_intent(
+        _payload(
+            intent_code="pay_electricity",
+            status=IntentStatus.ACTIVE,
+            domain_code="payment",
+            domain_name="缴费",
+            routing_examples=["交电费"],
+        )
+    )
+    repository.create_intent(
+        _payload(
+            intent_code="pay_gas",
+            status=IntentStatus.ACTIVE,
+            domain_code="payment",
+            domain_name="缴费",
+            routing_examples=["交燃气费"],
+        )
+    )
+    repository.create_intent(
+        _payload(
+            intent_code="transfer_money",
+            status=IntentStatus.ACTIVE,
+            domain_code="transfer",
+            domain_name="转账",
+            routing_examples=["转账"],
+        )
+    )
+    catalog = RepositoryIntentCatalog(repository)
+    catalog.refresh_now()
+    domains = {domain.domain_code: domain for domain in catalog.list_active_domains()}
+    assert set(domains) == {"payment", "transfer"}
+    payment_domain = domains["payment"]
+    assert payment_domain.domain_name == "缴费"
+    assert len(payment_domain.leaf_intents) == 2
+    assert "交电费" in payment_domain.routing_examples
+    assert payment_domain.leaf_intents[0].domain_code == "payment"
+    assert payment_domain.leaf_intents[0].is_leaf_intent is True
+    assert catalog.list_active_leaf_intents("payment")
+    assert not catalog.list_active_leaf_intents("missing")
+
+
+def test_catalog_excludes_non_leaf_intents_from_routable_snapshot() -> None:
+    repository = InMemoryIntentRepository()
+    repository.create_intent(
+        _payload(
+            intent_code="payment_domain",
+            status=IntentStatus.ACTIVE,
+            domain_code="payment",
+            domain_name="缴费",
+        ).model_copy(update={"is_leaf_intent": False})
+    )
+    repository.create_intent(
+        _payload(
+            intent_code="pay_electricity",
+            status=IntentStatus.ACTIVE,
+            domain_code="payment",
+            domain_name="缴费",
+            routing_examples=["交电费"],
+        )
+    )
+    catalog = RepositoryIntentCatalog(repository)
+    catalog.refresh_now()
+
+    assert [intent.intent_code for intent in catalog.list_active()] == ["pay_electricity"]
+    assert [intent.intent_code for intent in catalog.list_active_leaf_intents("payment")] == ["pay_electricity"]
+
+
+def test_catalog_active_intent_lookup_methods() -> None:
+    repository = InMemoryIntentRepository()
+    repository.create_intent(_payload(intent_code="pay_water", status=IntentStatus.ACTIVE))
+    repository.create_intent(_payload(intent_code="transfer_money", status=IntentStatus.ACTIVE))
+    catalog = RepositoryIntentCatalog(repository)
+    catalog.refresh_now()
+
+    index = catalog.active_intents_by_code()
+    assert set(index) == {"pay_water", "transfer_money"}
+    assert catalog.get_active_intent("transfer_money") is index["transfer_money"]
+    assert catalog.get_active_intent("unknown") is None

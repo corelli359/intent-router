@@ -3,19 +3,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_SRC = ROOT / "backend" / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
+PYTHON_PATHS = [
+    ROOT / "backend" / "services" / "router-service" / "src",
+]
+for path in PYTHON_PATHS:
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
 
-from config.settings import Settings  # noqa: E402
-from router_core.llm_client import LangChainLLMClient  # noqa: E402
-from router_core.domain import IntentDefinition  # noqa: E402
-from router_core.recognizer import LLMIntentRecognizer  # noqa: E402
+from router_service.settings import Settings  # noqa: E402
+from router_service.core.support.llm_client import LangChainLLMClient  # noqa: E402
+from router_service.core.shared.domain import IntentDefinition  # noqa: E402
+from router_service.core.recognition.recognizer import LLMIntentRecognizer  # noqa: E402
 
 
 def _masked_key(api_key: str | None) -> str | None:
@@ -27,9 +32,12 @@ def _masked_key(api_key: str | None) -> str | None:
 
 
 async def _run() -> None:
+    os_env_file = ROOT / ".env.local"
+
+    os.environ.setdefault("ROUTER_ENV_FILE", str(os_env_file))
     settings = Settings.from_env()
     if not settings.llm_connection_ready or not settings.llm_api_key:
-        raise RuntimeError("ROUTER_LLM_* env is incomplete. Please fill .env.local first.")
+        raise RuntimeError("ROUTER_LLM_* env is incomplete. Please fill the file pointed to by ROUTER_ENV_FILE.")
 
     client = LangChainLLMClient(
         base_url=settings.llm_api_base_url or "",

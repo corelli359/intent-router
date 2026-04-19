@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 import httpx
+import pytest
 import sys
 from pathlib import Path
 
-from router_api.app import create_router_app
-from router_api.dependencies import get_event_broker_v2, get_orchestrator_v2
-from router_api.sse.broker import EventBroker
+from router_service.api.app import create_router_app
+from router_service.api.dependencies import (
+    get_event_broker,
+    get_event_broker_v2,
+    get_orchestrator,
+    get_orchestrator_v2,
+)
+from router_service.api.sse.broker import EventBroker
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -16,10 +24,10 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from tests.support.mock_agent_client import MockStreamingAgentClient
-from router_core.agent_client import StreamingAgentClient
-from router_core.domain import IntentDefinition, IntentMatch
-from router_core.recognizer import RecognitionResult
-from router_core.v2_domain import (
+from router_service.core.support.agent_client import StreamingAgentClient
+from router_service.core.shared.domain import AgentStreamChunk, IntentDefinition, IntentMatch, Task, TaskStatus
+from router_service.core.recognition.recognizer import RecognitionResult
+from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphAction,
     GraphCondition,
@@ -30,9 +38,12 @@ from router_core.v2_domain import (
     ProactiveRecommendationPayload,
     ProactiveRecommendationRouteDecision,
     ProactiveRecommendationRouteMode,
+    SlotBindingSource,
+    SlotBindingState,
 )
-from router_core.v2_orchestrator import GraphRouterOrchestrator
-from router_core.v2_planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
+from router_service.core.graph.orchestrator import GraphRouterOrchestrator
+from router_service.core.graph.planner import BasicTurnInterpreter, SequentialIntentGraphPlanner
+from router_service.core.slots.understanding_validator import UnderstandingValidationResult
 
 
 class _StaticCatalog:
@@ -42,8 +53,314 @@ class _StaticCatalog:
     def list_active(self) -> list[IntentDefinition]:
         return list(self._intents)
 
+    def active_intents_by_code(self) -> Mapping[str, IntentDefinition]:
+        return {intent.intent_code: intent for intent in self._intents if not intent.is_fallback}
+
+    def get_active_intent(self, intent_code: str) -> IntentDefinition | None:
+        return self.active_intents_by_code().get(intent_code)
+
     def get_fallback_intent(self) -> IntentDefinition | None:
         return next((intent for intent in self._intents if intent.is_fallback), None)
+
+
+def _ag_trans_intent() -> IntentDefinition:
+    return IntentDefinition(
+        intent_code="AG_TRANS",
+        name="立即发起一笔转账交易",
+        description="执行转账，需要收款人姓名和金额。",
+        examples=["给小明转账", "我要转账"],
+        keywords=["转账", "转钱", "汇款"],
+        agent_url="http://test-agent/ag_trans",
+        dispatch_priority=100,
+        primary_threshold=0.72,
+        candidate_threshold=0.5,
+        slot_schema=[
+            {
+                "slot_key": "payee_name",
+                "field_code": "payee_name",
+                "label": "收款人姓名",
+                "description": "当前转账的收款人姓名",
+                "aliases": ["收款人", "对方姓名"],
+                "value_type": "string",
+                "required": True,
+            },
+            {
+                "slot_key": "amount",
+                "field_code": "amount",
+                "label": "金额",
+                "description": "当前转账金额",
+                "value_type": "currency",
+                "required": True,
+            },
+        ],
+        request_schema={
+            "type": "object",
+            "required": ["session_id", "txt", "stream", "config_variables"],
+        },
+        field_mapping={
+            "session_id": "$session.id",
+            "txt": "$message.current",
+            "stream": "true",
+            "config_variables.custID": "$session.cust_id",
+            "config_variables.currentDisplay": "",
+            "config_variables.intent": "$intent",
+            "config_variables.recent_messages": "$context.recent_messages",
+            "config_variables.long_term_memory": "$context.long_term_memory",
+            "config_variables.slots_data.amount": "$slot_memory.amount",
+            "config_variables.slots_data.payer_card_no": "$slot_memory.payer_card_no",
+            "config_variables.slots_data.payer_card_remark": "$slot_memory.payer_card_remark",
+            "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+            "config_variables.slots_data.payee_card_no": "$slot_memory.payee_card_no",
+            "config_variables.slots_data.payee_card_remark": "$slot_memory.payee_card_remark",
+            "config_variables.slots_data.payee_card_bank": "$slot_memory.payee_card_bank",
+            "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone",
+        },
+        graph_build_hints={"provides_context_keys": ["amount", "business_status"]},
+    )
+
+
+class _TransferOnlyRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del intents, recent_messages, long_term_memory, on_delta
+        if "转账" in message:
+            return RecognitionResult(
+                primary=[IntentMatch(intent_code="AG_TRANS", confidence=0.97, reason="fixed transfer contract")],
+                candidates=[],
+            )
+        return RecognitionResult(primary=[], candidates=[])
+
+
+@dataclass
+class _ContractTransferUnderstandingValidator:
+    def _bindings(self, slot_memory: dict[str, str], *, source_text: str) -> list[SlotBindingState]:
+        return [
+            SlotBindingState(
+                slot_key=slot_key,
+                value=value,
+                source=SlotBindingSource.USER_MESSAGE,
+                source_text=source_text,
+                confidence=0.95,
+            )
+            for slot_key, value in slot_memory.items()
+        ]
+
+    async def validate_node(
+        self,
+        *,
+        intent,
+        node,
+        graph_source_message,
+        current_message,
+        long_term_memory=None,
+    ) -> UnderstandingValidationResult:
+        del intent, graph_source_message, long_term_memory
+        slot_memory = dict(node.slot_memory)
+        if "小明" in current_message:
+            slot_memory["payee_name"] = "小明"
+        digits = "".join(character for character in current_message if character.isdigit())
+        if digits:
+            slot_memory["amount"] = digits
+        missing_required_slots: list[str] = []
+        if "amount" not in slot_memory:
+            missing_required_slots.append("amount")
+        if "payee_name" not in slot_memory:
+            missing_required_slots.append("payee_name")
+        prompt_message = {
+            ("amount", "payee_name"): "请提供金额、收款人姓名",
+            ("amount",): "请提供金额",
+            ("payee_name",): "请提供收款人姓名",
+        }.get(tuple(missing_required_slots))
+        return UnderstandingValidationResult(
+            slot_memory=slot_memory,
+            slot_bindings=self._bindings(slot_memory, source_text=current_message),
+            history_slot_keys=[],
+            missing_required_slots=missing_required_slots,
+            ambiguous_slot_keys=[],
+            invalid_slot_keys=[],
+            needs_confirmation=False,
+            can_dispatch=not missing_required_slots,
+            prompt_message=prompt_message,
+            diagnostics=[],
+        )
+
+
+class _TrailingTerminalChunkAgentClient:
+    def __init__(self) -> None:
+        self.tasks: list[Task] = []
+
+    async def stream(self, task: Task, user_input: str):
+        del user_input
+        self.tasks.append(task)
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content="转账已受理",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            payload={"phase": "accepted"},
+        )
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content="转账成功",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            payload={"phase": "settled"},
+        )
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        del session_id, task_id, agent_url
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+@dataclass(frozen=True)
+class _RouterOnlyTurnExpectation:
+    user_input: str
+    graph_status: str
+    node_status: str
+    slot_memory: dict[str, str]
+    assistant_reply: str
+
+
+@dataclass(frozen=True)
+class _RouterOnlyContractScenario:
+    name: str
+    turns: tuple[_RouterOnlyTurnExpectation, ...]
+    final_shared_slot_memory: dict[str, str]
+
+
+_TRANSFER_ROUTER_ONLY_CONTRACT_SCENARIOS = (
+    _RouterOnlyContractScenario(
+        name="named_first_turn_then_amount",
+        turns=(
+            _RouterOnlyTurnExpectation(
+                user_input="给小明转账",
+                graph_status="waiting_user_input",
+                node_status="waiting_user_input",
+                slot_memory={"payee_name": "小明"},
+                assistant_reply="请提供金额",
+            ),
+            _RouterOnlyTurnExpectation(
+                user_input="200",
+                graph_status="ready_for_dispatch",
+                node_status="ready_for_dispatch",
+                slot_memory={"payee_name": "小明", "amount": "200"},
+                assistant_reply="路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+            ),
+        ),
+        final_shared_slot_memory={"payee_name": "小明", "amount": "200"},
+    ),
+    _RouterOnlyContractScenario(
+        name="generic_then_name_then_amount",
+        turns=(
+            _RouterOnlyTurnExpectation(
+                user_input="我要转账",
+                graph_status="waiting_user_input",
+                node_status="waiting_user_input",
+                slot_memory={},
+                assistant_reply="请提供金额、收款人姓名",
+            ),
+            _RouterOnlyTurnExpectation(
+                user_input="给小明",
+                graph_status="waiting_user_input",
+                node_status="waiting_user_input",
+                slot_memory={"payee_name": "小明"},
+                assistant_reply="请提供金额",
+            ),
+            _RouterOnlyTurnExpectation(
+                user_input="200",
+                graph_status="ready_for_dispatch",
+                node_status="ready_for_dispatch",
+                slot_memory={"payee_name": "小明", "amount": "200"},
+                assistant_reply="路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+            ),
+        ),
+        final_shared_slot_memory={"payee_name": "小明", "amount": "200"},
+    ),
+    _RouterOnlyContractScenario(
+        name="generic_then_amount_then_name",
+        turns=(
+            _RouterOnlyTurnExpectation(
+                user_input="我要转账",
+                graph_status="waiting_user_input",
+                node_status="waiting_user_input",
+                slot_memory={},
+                assistant_reply="请提供金额、收款人姓名",
+            ),
+            _RouterOnlyTurnExpectation(
+                user_input="200",
+                graph_status="waiting_user_input",
+                node_status="waiting_user_input",
+                slot_memory={"amount": "200"},
+                assistant_reply="请提供收款人姓名",
+            ),
+            _RouterOnlyTurnExpectation(
+                user_input="给小明",
+                graph_status="ready_for_dispatch",
+                node_status="ready_for_dispatch",
+                slot_memory={"amount": "200", "payee_name": "小明"},
+                assistant_reply="路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+            ),
+        ),
+        final_shared_slot_memory={"payee_name": "小明", "amount": "200"},
+    ),
+    _RouterOnlyContractScenario(
+        name="all_slots_in_single_turn",
+        turns=(
+            _RouterOnlyTurnExpectation(
+                user_input="给小明转账200元",
+                graph_status="ready_for_dispatch",
+                node_status="ready_for_dispatch",
+                slot_memory={"payee_name": "小明", "amount": "200"},
+                assistant_reply="路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+            ),
+        ),
+        final_shared_slot_memory={"payee_name": "小明", "amount": "200"},
+    ),
+    _RouterOnlyContractScenario(
+        name="first_turn_has_name_only_variant",
+        turns=(
+            _RouterOnlyTurnExpectation(
+                user_input="我要给小明转账",
+                graph_status="waiting_user_input",
+                node_status="waiting_user_input",
+                slot_memory={"payee_name": "小明"},
+                assistant_reply="请提供金额",
+            ),
+            _RouterOnlyTurnExpectation(
+                user_input="200",
+                graph_status="ready_for_dispatch",
+                node_status="ready_for_dispatch",
+                slot_memory={"payee_name": "小明", "amount": "200"},
+                assistant_reply="路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+            ),
+        ),
+        final_shared_slot_memory={"payee_name": "小明", "amount": "200"},
+    ),
+    _RouterOnlyContractScenario(
+        name="first_turn_has_amount_only_variant",
+        turns=(
+            _RouterOnlyTurnExpectation(
+                user_input="我要转账200元",
+                graph_status="waiting_user_input",
+                node_status="waiting_user_input",
+                slot_memory={"amount": "200"},
+                assistant_reply="请提供收款人姓名",
+            ),
+            _RouterOnlyTurnExpectation(
+                user_input="给小明",
+                graph_status="ready_for_dispatch",
+                node_status="ready_for_dispatch",
+                slot_memory={"amount": "200", "payee_name": "小明"},
+                assistant_reply="路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+            ),
+        ),
+        final_shared_slot_memory={"payee_name": "小明", "amount": "200"},
+    ),
+)
 
 
 def _mock_intents() -> list[IntentDefinition]:
@@ -407,6 +724,16 @@ class _ProactiveFreeDialogRecognizer:
         )
 
 
+class _DirectTransferRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del intents, recent_messages, long_term_memory, on_delta
+        assert message == "给小红转200"
+        return RecognitionResult(
+            primary=[IntentMatch(intent_code="transfer_money", confidence=0.98, reason="fixed")],
+            candidates=[],
+        )
+
+
 class _StaticRecommendationRouter:
     def __init__(self, decision: ProactiveRecommendationRouteDecision) -> None:
         self._decision = decision
@@ -517,20 +844,26 @@ def _test_v2_app(
     planner=None,
     turn_interpreter=None,
     recommendation_router=None,
+    intents: list[IntentDefinition] | None = None,
+    understanding_validator=None,
+    agent_client=None,
 ) -> tuple[object, GraphRouterOrchestrator]:
     broker = EventBroker()
     orchestrator = GraphRouterOrchestrator(
         publish_event=broker.publish,
-        intent_catalog=_StaticCatalog(_mock_intents()),
+        intent_catalog=_StaticCatalog(intents or _mock_intents()),
         recognizer=recognizer or _MessageRecognizer(),
         graph_builder=graph_builder,
         planner=planner or SequentialIntentGraphPlanner(),
         turn_interpreter=turn_interpreter or BasicTurnInterpreter(),
         recommendation_router=recommendation_router,
-        agent_client=MockStreamingAgentClient(),
+        agent_client=agent_client or MockStreamingAgentClient(),
+        understanding_validator=understanding_validator,
     )
     app = create_router_app()
+    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
     app.dependency_overrides[get_orchestrator_v2] = lambda: orchestrator
+    app.dependency_overrides[get_event_broker] = lambda: broker
     app.dependency_overrides[get_event_broker_v2] = lambda: broker
     return app, orchestrator
 
@@ -764,6 +1097,37 @@ class _HistoryConditionalGraphBuilder:
         )()
 
 
+class _MissingSlotGraphBuilder:
+    async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
+        del intents, recent_messages, long_term_memory, recognition, on_delta
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="识别到天然气缴费事项，等待补全槽位",
+            status=GraphStatus.DRAFT,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="pay_gas_bill",
+                title="缴纳天然气费",
+                confidence=0.95,
+                position=0,
+                source_fragment=message,
+                slot_memory={},
+            )
+        )
+        return type(
+            "GraphBuildResult",
+            (),
+            {
+                "recognition": RecognitionResult(
+                    primary=[IntentMatch(intent_code="pay_gas_bill", confidence=0.95, reason="fixed")],
+                    candidates=[],
+                ),
+                "graph": graph,
+            },
+        )()
+
+
 class _RateLimitedGraphBuilder:
     async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
         del message, intents, recent_messages, long_term_memory, recognition, on_delta
@@ -885,6 +1249,30 @@ class _HistoryConditionalGraphBuilder:
         )()
 
 
+def test_v2_main_prefix_alias_matches_primary_graph_runtime() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/sessions/{session_id}/messages",
+                json={"content": "先查余额，再给张三转账 200 元，卡号 6222020100049999999，尾号 1234"},
+            )
+            assert response.status_code == 200
+            pending_graph = response.json()["snapshot"]["pending_graph"]
+            assert pending_graph is not None
+            assert pending_graph["status"] == "waiting_confirmation"
+
+            alias_response = await client.get(f"/api/router/v2/sessions/{session_id}")
+            assert alias_response.status_code == 200
+            assert alias_response.json()["pending_graph"]["graph_id"] == pending_graph["graph_id"]
+
+    asyncio.run(run())
+
+
 def test_v2_multi_intent_graph_requires_confirmation_and_runs_sequentially() -> None:
     async def run() -> None:
         app, _ = _test_v2_app()
@@ -975,11 +1363,8 @@ def test_v2_new_graph_planning_ignores_assistant_execution_messages_in_recent_co
             assert second_turn.status_code == 200
 
             assert len(builder.calls) == 2
-            assert builder.calls[0] == ["user: 帮我处理一下这个事项"]
-            assert builder.calls[1] == [
-                "user: 帮我处理一下这个事项",
-                "user: 帮我处理一下这个事项",
-            ]
+            assert builder.calls[0] == []
+            assert builder.calls[1] == ["user: 帮我处理一下这个事项"]
             assert all(not entry.startswith("assistant:") for entry in builder.calls[1])
 
     asyncio.run(run())
@@ -1233,6 +1618,12 @@ def test_v2_runtime_fails_closed_for_mock_scheme_agent_url() -> None:
                 )
             ]
 
+        def active_intents_by_code(self) -> Mapping[str, IntentDefinition]:
+            return {intent.intent_code: intent for intent in self.list_active()}
+
+        def get_active_intent(self, intent_code: str) -> IntentDefinition | None:
+            return self.active_intents_by_code().get(intent_code)
+
         def get_fallback_intent(self) -> IntentDefinition | None:
             return None
 
@@ -1247,7 +1638,9 @@ def test_v2_runtime_fails_closed_for_mock_scheme_agent_url() -> None:
             agent_client=StreamingAgentClient(),
         )
         app = create_router_app()
+        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
         app.dependency_overrides[get_orchestrator_v2] = lambda: orchestrator
+        app.dependency_overrides[get_event_broker] = lambda: broker
         app.dependency_overrides[get_event_broker_v2] = lambda: broker
 
         async with httpx.AsyncClient(
@@ -1486,6 +1879,80 @@ def test_v2_implicit_balance_condition_inserts_hidden_node_instead_of_skipping()
             ]
             assert all(node["skip_reason_code"] is None for node in current_graph["nodes"])
             assert "因条件未满足未执行" not in snapshot["messages"][-1]["content"]
+
+    asyncio.run(run())
+
+
+def test_v2_repeating_same_conditional_message_keeps_graph_shape_and_condition() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            graph_builder=_ImplicitBalanceAfterTransferGraphBuilder(),
+            turn_interpreter=BasicTurnInterpreter(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            message = "我想给小明转账1000元，如果卡里余额还剩超过2000，我就换100美元"
+
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": message},
+            )
+            first_pending_graph = first_turn.json()["snapshot"]["pending_graph"]
+            assert [node["intent_code"] for node in first_pending_graph["nodes"]] == [
+                "transfer_money",
+                "query_account_balance",
+                "exchange_forex",
+            ]
+
+            await client.post(
+                f"/api/router/v2/sessions/{session_id}/actions",
+                json={
+                    "task_id": first_pending_graph["graph_id"],
+                    "source": "router",
+                    "action_code": "confirm_graph",
+                    "confirm_token": first_pending_graph["confirm_token"],
+                },
+            )
+            resume_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "收款卡号 6222020100049999999，手机号后四位1234；我的卡号 6222021234567890，尾号1234"},
+            )
+            assert resume_turn.status_code == 200
+            assert resume_turn.json()["snapshot"]["current_graph"]["status"] == "completed"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": message},
+            )
+            assert second_turn.status_code == 200
+            second_pending_graph = second_turn.json()["snapshot"]["pending_graph"]
+            assert second_pending_graph is not None
+            assert second_pending_graph["status"] == "waiting_confirmation"
+            assert [node["intent_code"] for node in second_pending_graph["nodes"]] == [
+                "transfer_money",
+                "query_account_balance",
+                "exchange_forex",
+            ]
+
+            conditional_edge = next(
+                edge
+                for edge in second_pending_graph["edges"]
+                if edge["relation_type"] == "conditional"
+            )
+            assert conditional_edge["condition"] == {
+                "source_node_id": conditional_edge["source_node_id"],
+                "expected_statuses": ["completed"],
+                "left_key": "balance",
+                "operator": ">",
+                "right_value": 2000,
+            }
+            query_balance_node = next(
+                node for node in second_pending_graph["nodes"] if node["intent_code"] == "query_account_balance"
+            )
+            assert conditional_edge["source_node_id"] == query_balance_node["node_id"]
 
     asyncio.run(run())
 
@@ -1774,6 +2241,8 @@ def test_v2_proactive_recommendation_switch_to_free_dialog_reuses_existing_recog
             assert snapshot["pending_graph"] is None
             assert snapshot["current_graph"]["nodes"][0]["intent_code"] == "exchange_forex"
             assert snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert snapshot["current_graph"]["nodes"][0]["status"] == "waiting_user_input"
+            assert snapshot["messages"][-1]["content"] == "请提供卖出币种、买入币种、金额"
 
     asyncio.run(run())
 
@@ -1928,5 +2397,536 @@ def test_v2_proactive_recommendation_hidden_balance_query_reuses_shared_account_
             ]
             assert all("请提供卡号" not in message["content"] for message in snapshot["messages"])
             assert snapshot["messages"][-1]["content"] == "已向我妈妈转账 3000 元，转账成功"
+
+    asyncio.run(run())
+
+
+def test_v2_router_pre_dispatch_gate_waits_before_dispatching_missing_slots() -> None:
+    async def run() -> None:
+        builder = _MissingSlotGraphBuilder()
+        app, orchestrator = _test_v2_app(graph_builder=builder)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我缴天然气费"},
+            )
+            assert first_turn.status_code == 200
+            snapshot = first_turn.json()["snapshot"]
+            assert snapshot["current_graph"] is not None
+            node = snapshot["current_graph"]["nodes"][0]
+            assert node["status"] == "waiting_user_input"
+            assert node["task_id"] is None
+            session = orchestrator.session_store.get(session_id)
+            assert not session.tasks
+
+    asyncio.run(run())
+
+
+def test_v2_router_completes_after_slots_are_filled() -> None:
+    async def run() -> None:
+        builder = _MissingSlotGraphBuilder()
+        app, _ = _test_v2_app(graph_builder=builder)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "帮我缴天然气费"},
+            )
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "给燃气户号88001234交88元"},
+            )
+            assert second_turn.status_code == 200
+            snapshot = second_turn.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "completed"
+            assert snapshot["messages"][-1]["content"] == "已为燃气户号 88001234 缴费 88 元"
+
+    asyncio.run(run())
+
+
+def test_v2_router_guided_selection_with_prefilled_slots_dispatches() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "帮我缴天然气费",
+                    "guidedSelection": {
+                        "selectedIntents": [
+                            {
+                                "intentCode": "pay_gas_bill",
+                                "title": "缴纳天然气费",
+                                "slotMemory": {
+                                    "gas_account_number": "88001234",
+                                    "amount": "88",
+                                },
+                            }
+                        ]
+                    },
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "completed"
+            assert snapshot["messages"][-1]["content"] == "已为燃气户号 88001234 缴费 88 元"
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_router_only_returns_pending_graph_with_slots_and_conditions_without_execution() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(planner=_ConditionalPlanner())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "先查余额，再给我媳妇儿转账，然后再给我弟弟转账",
+                    "executionMode": "router_only",
+                },
+            )
+            assert response.status_code == 200
+            payload = response.json()["snapshot"]["pending_graph"]
+            assert payload["status"] == "waiting_confirmation"
+            assert [node["intent_code"] for node in payload["nodes"]] == [
+                "query_account_balance",
+                "transfer_money",
+                "transfer_money",
+            ]
+            assert payload["nodes"][1]["slot_memory"] == {"recipient_name": "我媳妇儿", "amount": "1000"}
+            assert payload["nodes"][2]["slot_memory"] == {"recipient_name": "我弟弟", "amount": "1000"}
+            conditional_edges = [edge for edge in payload["edges"] if edge["condition"] is not None]
+            assert len(conditional_edges) == 2
+            assert conditional_edges[0]["condition"]["left_key"] == "balance"
+            assert conditional_edges[0]["condition"]["right_value"] == 8000
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is not None
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_execution_mode_router_only_waits_for_missing_slots() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "帮我查询一下余额",
+                    "executionMode": "router_only",
+                },
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert snapshot["current_graph"]["nodes"][0]["status"] == "waiting_user_input"
+            assert "卡号" in snapshot["messages"][-1]["content"]
+            assert "手机号后4位" in snapshot["messages"][-1]["content"]
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.router_only_mode is True
+            assert session.tasks == []
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_execution_mode_router_only_stops_before_agent_dispatch() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(recognizer=_FirstMatchThenRateLimitedRecognizer())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "帮我查一下余额",
+                    "executionMode": "router_only",
+                },
+            )
+            assert first_turn.status_code == 200
+            assert first_turn.json()["snapshot"]["current_graph"]["status"] == "waiting_user_input"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "卡号 6222021234567890，尾号1234",
+                    "executionMode": "router_only",
+                },
+            )
+            assert second_turn.status_code == 200
+            snapshot = second_turn.json()["snapshot"]
+            assert snapshot["current_graph"]["status"] == "ready_for_dispatch"
+            assert snapshot["current_graph"]["nodes"][0]["status"] == "ready_for_dispatch"
+            assert snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "card_number": "6222021234567890",
+                "phone_last_four": "1234",
+            }
+            assert "路由识别完成" in snapshot["messages"][-1]["content"]
+            assert "未调用执行 agent" in snapshot["messages"][-1]["content"]
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is None
+            assert session.shared_slot_memory == {
+                "card_number": "6222021234567890",
+                "phone_last_four": "1234",
+            }
+            assert session.business_memory_digests[-1].status == "ready_for_dispatch"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    _TRANSFER_ROUTER_ONLY_CONTRACT_SCENARIOS,
+    ids=lambda scenario: scenario.name,
+)
+def test_v2_router_only_transfer_contract_matrix(scenario: _RouterOnlyContractScenario) -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+
+            for turn_index, expectation in enumerate(scenario.turns, start=1):
+                response = await client.post(
+                    f"/api/router/v2/sessions/{session_id}/messages",
+                    json={
+                        "content": expectation.user_input,
+                        "executionMode": "router_only",
+                    },
+                )
+                assert response.status_code == 200
+                snapshot = response.json()["snapshot"]
+                current_graph = snapshot["current_graph"]
+                assert current_graph["status"] == expectation.graph_status
+                assert current_graph["nodes"][0]["intent_code"] == "AG_TRANS"
+                assert current_graph["nodes"][0]["status"] == expectation.node_status
+                assert current_graph["nodes"][0]["slot_memory"] == expectation.slot_memory
+                assert snapshot["messages"][-1]["content"] == expectation.assistant_reply
+
+                session = orchestrator.session_store.get(session_id)
+                if turn_index < len(scenario.turns):
+                    assert session.shared_slot_memory == {}
+                    assert session.current_graph is not None
+                else:
+                    assert session.shared_slot_memory == scenario.final_shared_slot_memory
+                    assert session.current_graph is None
+                    assert session.pending_graph is None
+
+    asyncio.run(run())
+
+
+def test_v2_router_only_transfer_contract_keeps_payee_name_and_collects_amount_across_turns() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "给小明转账",
+                    "executionMode": "router_only",
+                },
+            )
+            assert first_turn.status_code == 200
+            first_snapshot = first_turn.json()["snapshot"]
+            assert first_snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert first_snapshot["current_graph"]["nodes"][0]["intent_code"] == "AG_TRANS"
+            assert first_snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "payee_name": "小明",
+            }
+            assert first_snapshot["messages"][-1]["content"] == "请提供金额"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "200",
+                    "executionMode": "router_only",
+                },
+            )
+            assert second_turn.status_code == 200
+            second_snapshot = second_turn.json()["snapshot"]
+            assert second_snapshot["current_graph"]["status"] == "ready_for_dispatch"
+            assert second_snapshot["current_graph"]["nodes"][0]["status"] == "ready_for_dispatch"
+            assert second_snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "payee_name": "小明",
+                "amount": "200",
+            }
+            assert "路由识别完成" in second_snapshot["messages"][-1]["content"]
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.shared_slot_memory == {
+                "payee_name": "小明",
+                "amount": "200",
+            }
+
+    asyncio.run(run())
+
+
+def test_v2_router_only_transfer_contract_from_generic_request_fills_payee_then_amount() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "我要转账",
+                    "executionMode": "router_only",
+                },
+            )
+            assert first_turn.status_code == 200
+            first_snapshot = first_turn.json()["snapshot"]
+            assert first_snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert first_snapshot["current_graph"]["nodes"][0]["slot_memory"] == {}
+            assert first_snapshot["messages"][-1]["content"] == "请提供金额、收款人姓名"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "给小明",
+                    "executionMode": "router_only",
+                },
+            )
+            assert second_turn.status_code == 200
+            second_snapshot = second_turn.json()["snapshot"]
+            assert second_snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert second_snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "payee_name": "小明",
+            }
+            assert second_snapshot["messages"][-1]["content"] == "请提供金额"
+
+            third_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "200",
+                    "executionMode": "router_only",
+                },
+            )
+            assert third_turn.status_code == 200
+            third_snapshot = third_turn.json()["snapshot"]
+            assert third_snapshot["current_graph"]["status"] == "ready_for_dispatch"
+            assert third_snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "payee_name": "小明",
+                "amount": "200",
+            }
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.shared_slot_memory == {
+                "payee_name": "小明",
+                "amount": "200",
+            }
+
+    asyncio.run(run())
+
+
+def test_v2_router_only_transfer_contract_from_generic_request_fills_amount_then_payee() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "我要转账",
+                    "executionMode": "router_only",
+                },
+            )
+            assert first_turn.status_code == 200
+            first_snapshot = first_turn.json()["snapshot"]
+            assert first_snapshot["messages"][-1]["content"] == "请提供金额、收款人姓名"
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "200",
+                    "executionMode": "router_only",
+                },
+            )
+            assert second_turn.status_code == 200
+            second_snapshot = second_turn.json()["snapshot"]
+            assert second_snapshot["current_graph"]["status"] == "waiting_user_input"
+            assert second_snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "amount": "200",
+            }
+            assert second_snapshot["messages"][-1]["content"] == "请提供收款人姓名"
+
+            third_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "给小明",
+                    "executionMode": "router_only",
+                },
+            )
+            assert third_turn.status_code == 200
+            third_snapshot = third_turn.json()["snapshot"]
+            assert third_snapshot["current_graph"]["status"] == "ready_for_dispatch"
+            assert third_snapshot["current_graph"]["nodes"][0]["slot_memory"] == {
+                "amount": "200",
+                "payee_name": "小明",
+            }
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.shared_slot_memory == {
+                "payee_name": "小明",
+                "amount": "200",
+            }
+
+    asyncio.run(run())
+
+
+def test_v2_ag_trans_consumes_full_agent_stream_after_first_terminal_chunk() -> None:
+    async def run() -> None:
+        agent_client = _TrailingTerminalChunkAgentClient()
+        app, _ = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "给小明转账200元"},
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert current_graph["nodes"][0]["intent_code"] == "AG_TRANS"
+            assert current_graph["nodes"][0]["status"] == "completed"
+            assert current_graph["nodes"][0]["output_payload"] == {"phase": "settled"}
+
+            assistant_messages = [message["content"] for message in snapshot["messages"] if message["role"] == "assistant"]
+            assert assistant_messages[-2:] == ["转账已受理", "转账成功"]
+
+            assert len(agent_client.tasks) == 1
+            task = agent_client.tasks[0]
+            assert task.agent_url == "http://test-agent/ag_trans"
+            assert task.request_schema["required"] == [
+                "session_id",
+                "txt",
+                "stream",
+                "config_variables",
+            ]
+            assert task.field_mapping["session_id"] == "$session.id"
+            assert task.field_mapping["txt"] == "$message.current"
+            assert task.field_mapping["stream"] == "true"
+            assert task.field_mapping["config_variables.intent"] == "$intent"
+            assert task.field_mapping["config_variables.recent_messages"] == "$context.recent_messages"
+            assert task.field_mapping["config_variables.long_term_memory"] == "$context.long_term_memory"
+            assert task.field_mapping["config_variables.slots_data.amount"] == "$slot_memory.amount"
+            assert task.field_mapping["config_variables.slots_data.payee_name"] == "$slot_memory.payee_name"
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_first_turn_excludes_current_input_from_recent_messages() -> None:
+    async def run() -> None:
+        graph_builder = _RecentMessagesRecordingGraphBuilder()
+        app, _ = _test_v2_app(graph_builder=graph_builder)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "给燃气户号88001234交88元"},
+            )
+            assert response.status_code == 200
+            assert graph_builder.calls == [[]]
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_router_only_extracts_slots_for_single_intent_without_execution() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(graph_builder=_RecentMessagesRecordingGraphBuilder())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "content": "给燃气户号88001234交88元",
+                    "executionMode": "router_only",
+                },
+            )
+            assert response.status_code == 200
+            payload = response.json()["snapshot"]["current_graph"]
+            assert payload["status"] == "ready_for_dispatch"
+            assert [node["intent_code"] for node in payload["nodes"]] == ["pay_gas_bill"]
+            assert payload["nodes"][0]["slot_memory"]["gas_account_number"] == "88001234"
+            assert payload["nodes"][0]["slot_memory"]["amount"] == "88"
+
+            session = orchestrator.session_store.get(session_id)
+            assert session.tasks == []
+            assert session.current_graph is None
+            assert session.pending_graph is None
+            assert session.shared_slot_memory["gas_account_number"] == "88001234"
+            assert session.shared_slot_memory["amount"] == "88"
 
     asyncio.run(run())

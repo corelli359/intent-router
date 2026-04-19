@@ -1,0 +1,1110 @@
+.shell {
+  --panel-bg: rgba(255, 255, 255, 0.82);
+  --panel-border: rgba(16, 23, 34, 0.08);
+  --soft-surface: rgba(245, 249, 252, 0.82);
+  --soft-surface-strong: rgba(255, 255, 255, 0.94);
+  --accent-ring: rgba(13, 108, 145, 0.14);
+  width: min(1560px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 24px clamp(16px, 2.6vw, 30px) 36px;
+  display: grid;
+  gap: 20px;
+}
+
+.pageHeader,
+.contentGrid,
+.sectionHeading,
+.caseHead,
+.stageCardHeader,
+.sampleHead,
+.historyHead,
+.actionBar {
+  min-width: 0;
+}
+
+.pageHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 18px 24px;
+}
+
+.pageTitleBlock {
+  min-width: 0;
+  max-width: 72ch;
+  display: grid;
+  gap: 8px;
+}
+
+.pageEyebrow,
+.eyebrow {
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+}
+
+.pageTitleBlock h1,
+.sectionHeading h2 {
+  margin: 0;
+}
+
+.pageTitleBlock h1 {
+  font-size: clamp(1.65rem, 2.2vw, 2.15rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.pageIntro,
+.caseBox p,
+.runSummaryCard p,
+.emptyState p,
+.sampleRow p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.62;
+}
+
+.pageActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.modeSwitch {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: var(--shadow);
+}
+
+.modeButton,
+.inlineButton,
+.primaryButton,
+.secondaryButton,
+.backLink,
+.historyMain {
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease;
+}
+
+.modeButton {
+  min-width: 116px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.modeButtonActive {
+  color: #f4fbff;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  box-shadow: 0 10px 22px rgba(13, 108, 145, 0.2);
+}
+
+.backLink,
+.inlineButton,
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.backLink,
+.inlineButton {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(16, 23, 34, 0.1);
+}
+
+.primaryButton {
+  color: #f4fbff;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  border-color: rgba(13, 108, 145, 0.2);
+  box-shadow: 0 12px 24px rgba(13, 108, 145, 0.2);
+}
+
+.secondaryButton {
+  color: var(--accent-strong);
+  background: rgba(13, 108, 145, 0.08);
+  border-color: rgba(13, 108, 145, 0.14);
+}
+
+.backLink:hover,
+.modeButton:hover,
+.inlineButton:hover,
+.primaryButton:hover,
+.secondaryButton:hover,
+.historyRow:hover .historyMain {
+  transform: translateY(-1px);
+}
+
+.modeButton:focus-visible,
+.strategyTab:focus-visible,
+.inlineButton:focus-visible,
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.backLink:focus-visible,
+.historyMain:focus-visible,
+.tableInput:focus-visible,
+.jsonEditor:focus-visible,
+.field input:focus-visible,
+.field textarea:focus-visible,
+.field select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--accent-ring);
+}
+
+.alert {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(179, 65, 53, 0.16);
+  background: rgba(179, 65, 53, 0.1);
+  color: #7f2f25;
+}
+
+.contentGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  align-items: start;
+}
+
+.mainStage,
+.sideRail,
+.composePanel,
+.monitorStage,
+.sidePanel,
+.tableWrap,
+.historyMain,
+.comparePanel,
+.runSummaryCard,
+.metricCell,
+.deltaBlock,
+.configStat,
+.caseBox,
+.stageCard,
+.strategySection,
+.scheduleSection,
+.strategyMain,
+.strategyAside {
+  min-width: 0;
+}
+
+.sideRail {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.panel {
+  position: relative;
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border-radius: 24px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+  overflow: hidden;
+  animation: floatUp 280ms ease both;
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(13, 108, 145, 0.2), rgba(13, 108, 145, 0));
+}
+
+.sectionHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.sectionHeading h2 {
+  font-size: 1.12rem;
+  line-height: 1.2;
+}
+
+.sectionHeading small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.eyebrow {
+  margin-bottom: 6px;
+}
+
+.composePanel {
+  gap: 22px;
+}
+
+.configStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.configStat,
+.metricCell,
+.deltaBlock,
+.compareMetricList div,
+.progressStrip div,
+.stageChip {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: linear-gradient(180deg, var(--soft-surface-strong), var(--soft-surface));
+}
+
+.configStat span,
+.metricCell span,
+.deltaBlock span,
+.compareMetricList span,
+.progressStrip span,
+.sampleMeta span,
+.historyMetrics span,
+.breakdownRow span,
+.tableCellMain small,
+.historyMain small,
+.comparePanel small,
+.runSummaryCard span {
+  color: var(--muted);
+}
+
+.configStat strong,
+.metricCell strong,
+.deltaBlock strong,
+.compareMetricList strong,
+.progressStrip strong,
+.runSummaryCard strong,
+.tableCellMain strong,
+.sampleRow strong,
+.historyMain strong,
+.comparePanel strong,
+.caseHead strong,
+.stageCardHeader strong {
+  color: var(--ink);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.configBlock {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.84fr) minmax(0, 1.16fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(16, 23, 34, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease;
+}
+
+.caseBox {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(244, 248, 251, 0.82));
+}
+
+.caseHead,
+.sampleHead,
+.historyHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.inlineMeta,
+.stepActions,
+.headingActions,
+.sampleMeta,
+.historyMetrics,
+.historyActions,
+.compareMeta,
+.actionButtons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inlineMeta span,
+.issueList span,
+.statusPill,
+.stageIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  border-radius: 999px;
+}
+
+.inlineMeta span {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid rgba(13, 108, 145, 0.12);
+  background: rgba(13, 108, 145, 0.08);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.notesList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notesList li {
+  position: relative;
+  padding-left: 16px;
+  color: var(--muted);
+  line-height: 1.58;
+}
+
+.notesList li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.strategySection,
+.scheduleSection {
+  display: grid;
+  gap: 16px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(16, 23, 34, 0.08);
+}
+
+.caseEditorSection {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(245, 249, 252, 0.84));
+}
+
+.editorGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.jsonEditor {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(16, 23, 34, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8rem;
+  line-height: 1.58;
+}
+
+.strategyTabs {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 8px;
+  width: fit-content;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.strategyTab {
+  min-width: 120px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  transition:
+    transform 180ms ease,
+    color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.strategyTab:hover {
+  transform: translateY(-1px);
+}
+
+.strategyTabActive {
+  color: #f4fbff;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  box-shadow: 0 10px 22px rgba(13, 108, 145, 0.18);
+}
+
+.strategyLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.strategyMain,
+.strategyAside {
+  display: grid;
+  gap: 14px;
+}
+
+.parameterGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+  gap: 12px;
+}
+
+.strategyNote {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(13, 108, 145, 0.12);
+  background: rgba(13, 108, 145, 0.08);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.stageSection {
+  display: grid;
+  gap: 16px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(16, 23, 34, 0.08);
+}
+
+.stageList {
+  display: grid;
+  gap: 14px;
+}
+
+.stageCard {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 249, 252, 0.8));
+}
+
+.stageCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.stageIndex {
+  margin-bottom: 6px;
+  padding: 5px 10px;
+  background: rgba(13, 108, 145, 0.1);
+  color: var(--accent-strong);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.stageGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.actionBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(13, 108, 145, 0.12);
+  background: linear-gradient(180deg, rgba(13, 108, 145, 0.06), rgba(255, 255, 255, 0.82));
+}
+
+.actionMeta {
+  display: grid;
+  gap: 6px;
+}
+
+.actionMeta strong {
+  color: var(--ink);
+}
+
+.actionMeta span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.issueList {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.issueList span {
+  padding: 7px 10px;
+  border: 1px solid rgba(179, 65, 53, 0.16);
+  background: rgba(179, 65, 53, 0.1);
+  color: #7f2f25;
+  font-size: 0.78rem;
+}
+
+.monitorStage {
+  display: grid;
+  gap: 18px;
+}
+
+.monitorHeader,
+.stagePanel,
+.failurePanel,
+.sidePanel {
+  gap: 16px;
+}
+
+.overviewGrid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.45fr) repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.runSummaryCard {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(13, 108, 145, 0.12);
+  background: linear-gradient(180deg, rgba(13, 108, 145, 0.08), rgba(255, 255, 255, 0.92));
+}
+
+.runSummaryCard p {
+  overflow-wrap: anywhere;
+}
+
+.metricCell small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.metricToneGood strong,
+.deltaGood strong {
+  color: var(--good);
+}
+
+.metricToneDanger strong,
+.deltaDanger strong {
+  color: var(--danger);
+}
+
+.metricToneDefault strong,
+.deltaNeutral strong {
+  color: var(--ink);
+}
+
+.progressStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compareStrip {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.2fr) repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stageRail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px;
+}
+
+.stageChip {
+  gap: 5px;
+}
+
+.stageChip span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(13, 108, 145, 0.1);
+  color: var(--accent-strong);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.stageChip small {
+  color: var(--muted);
+}
+
+.stageChipActive {
+  border-color: rgba(13, 108, 145, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(13, 108, 145, 0.1);
+  background: linear-gradient(180deg, rgba(13, 108, 145, 0.1), rgba(255, 255, 255, 0.92));
+}
+
+.tableWrap {
+  overflow: auto;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.planTable {
+  min-width: 1160px;
+}
+
+.tableInput {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 12px;
+  border: 1px solid rgba(16, 23, 34, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+}
+
+.rowActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stageTable {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+}
+
+.stageTable th,
+.stageTable td {
+  padding: 13px 14px;
+  border-bottom: 1px solid rgba(16, 23, 34, 0.08);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.stageTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(247, 249, 252, 0.98);
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+}
+
+.stageTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.tableCellMain {
+  display: grid;
+  gap: 5px;
+}
+
+.tableCellMain small {
+  overflow-wrap: anywhere;
+}
+
+.lowerGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 18px;
+}
+
+.sampleList,
+.historyList,
+.breakdownList,
+.breakdownGrid {
+  display: grid;
+  gap: 12px;
+}
+
+.sampleRow,
+.historyRow,
+.comparePanel,
+.breakdownRow {
+  border-radius: 18px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.sampleRow {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.sampleMeta,
+.historyMetrics,
+.compareMeta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.sampleRow code {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 14px;
+  overflow: auto;
+  background: rgba(13, 108, 145, 0.08);
+  color: #17475a;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.breakdownBlock {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 23, 34, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(245, 249, 252, 0.86));
+}
+
+.breakdownRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.historyRow {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.historyRowSelected {
+  border-color: rgba(13, 108, 145, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(13, 108, 145, 0.1);
+}
+
+.historyMain {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+}
+
+.historyActions {
+  justify-content: flex-start;
+}
+
+.comparePanel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.compareMetricList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.emptyState {
+  display: grid;
+  gap: 8px;
+  padding: 4px 2px 2px;
+}
+
+.emptyState strong {
+  color: var(--ink);
+}
+
+.statusPill {
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.statusQueued,
+.statusPending {
+  color: #56616e;
+  background: rgba(108, 117, 125, 0.12);
+  border-color: rgba(108, 117, 125, 0.16);
+}
+
+.statusValidating {
+  color: var(--warn);
+  background: rgba(138, 90, 43, 0.12);
+  border-color: rgba(138, 90, 43, 0.16);
+}
+
+.statusRunning {
+  color: var(--accent-strong);
+  background: rgba(13, 108, 145, 0.12);
+  border-color: rgba(13, 108, 145, 0.16);
+}
+
+.statusCompleted {
+  color: var(--good);
+  background: rgba(31, 122, 87, 0.12);
+  border-color: rgba(31, 122, 87, 0.16);
+}
+
+.statusFailed,
+.statusCancelled {
+  color: var(--danger);
+  background: rgba(179, 65, 53, 0.12);
+  border-color: rgba(179, 65, 53, 0.16);
+}
+
+.inlineButton:disabled,
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.modeButton:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+@keyframes floatUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1380px) {
+  .contentGrid {
+    grid-template-columns: minmax(0, 1fr) 296px;
+  }
+
+  .overviewGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .runSummaryCard {
+    grid-column: 1 / -1;
+  }
+
+  .compareStrip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .compareStrip > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1180px) {
+  .contentGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .sideRail {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .configBlock,
+  .editorGrid,
+  .strategyLayout,
+  .lowerGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .progressStrip,
+  .overviewGrid,
+  .compareStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compareStrip > :first-child,
+  .runSummaryCard {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 860px) {
+  .shell {
+    padding-bottom: 28px;
+  }
+
+  .pageHeader,
+  .actionBar,
+  .stageCardHeader,
+  .sectionHeading,
+  .caseHead,
+  .sampleHead,
+  .historyHead {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .pageActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .modeSwitch {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row;
+  }
+
+  .modeButton {
+    min-width: 0;
+  }
+
+  .strategyTabs {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row;
+  }
+
+  .strategyTab {
+    min-width: 0;
+  }
+
+  .configStrip,
+  .editorGrid,
+  .parameterGrid,
+  .stageGrid,
+  .sideRail,
+  .progressStrip,
+  .overviewGrid,
+  .compareStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compareStrip > :first-child,
+  .runSummaryCard {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    padding: 16px 14px 24px;
+  }
+
+  .panel {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .configStrip,
+  .editorGrid,
+  .parameterGrid,
+  .stageGrid,
+  .sideRail,
+  .progressStrip,
+  .overviewGrid,
+  .compareStrip,
+  .compareMetricList,
+  .stageRail {
+    grid-template-columns: 1fr;
+  }
+
+  .compareStrip > :first-child,
+  .runSummaryCard {
+    grid-column: auto;
+  }
+
+  .actionButtons,
+  .historyActions,
+  .rowActions {
+    width: 100%;
+  }
+
+  .stageTable {
+    min-width: 760px;
+  }
+
+  .planTable {
+    min-width: 980px;
+  }
+}

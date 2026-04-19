@@ -1,0 +1,118 @@
+{
+  "intents": [
+    {
+      "intent_code": "pay_electricity",
+      "name": "缴纳电费",
+      "description": "缴纳家庭或企业电费",
+      "domain_code": "payment",
+      "domain_name": "缴费",
+      "domain_description": "生活缴费类意图",
+      "examples": [
+        "帮我交电费",
+        "缴一下电费"
+      ],
+      "agent_url": "http://intent-electricity-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "is_leaf_intent": true,
+      "parent_intent_code": "",
+      "status": "active",
+      "routing_examples": [
+        "交电费",
+        "电费缴纳"
+      ],
+      "is_fallback": false,
+      "dispatch_priority": 100,
+      "request_schema": {
+        "type": "object",
+        "properties": {
+          "account_number": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string"
+          }
+        }
+      },
+      "field_mapping": {
+        "accountNumber": "$slots.account_number",
+        "amount": "$slots.amount"
+      },
+      "field_catalog": [
+        {
+          "field_code": "utility_account_number",
+          "label": "户号",
+          "semantic_definition": "电费账单上的缴费户号",
+          "value_type": "account_number",
+          "aliases": [
+            "电费户号",
+            "缴费户号"
+          ],
+          "examples": [
+            "100086"
+          ]
+        },
+        {
+          "field_code": "payment_amount",
+          "label": "缴费金额",
+          "semantic_definition": "本次需要缴纳的金额",
+          "value_type": "currency",
+          "aliases": [
+            "金额"
+          ],
+          "examples": [
+            "200元"
+          ]
+        }
+      ],
+      "slot_schema": [
+        {
+          "slot_key": "account_number",
+          "field_code": "utility_account_number",
+          "role": "billing_account",
+          "label": "户号",
+          "description": "电费缴费户号",
+          "semantic_definition": "用于定位电费账单的户号",
+          "value_type": "account_number",
+          "required": true,
+          "aliases": [
+            "户号"
+          ],
+          "examples": [
+            "100086"
+          ]
+        },
+        {
+          "slot_key": "amount",
+          "field_code": "payment_amount",
+          "role": "payment_amount",
+          "label": "金额",
+          "description": "本次缴费金额",
+          "semantic_definition": "用户本次准备支付的金额",
+          "value_type": "currency",
+          "required": true,
+          "aliases": [
+            "金额"
+          ],
+          "examples": [
+            "200元"
+          ]
+        }
+      ],
+      "graph_build_hints": {
+        "intent_scope_rule": "单次消息只表达一个缴费动作时保持单节点。",
+        "planner_notes": "如果同时表达多种生活缴费，拆成多个独立节点。",
+        "single_node_examples": [
+          "帮我交200元电费"
+        ],
+        "multi_node_examples": [
+          "先交电费，再交水费"
+        ],
+        "provides_context_keys": [
+          "payment_receipt"
+        ],
+        "confirm_policy": "auto",
+        "max_nodes_per_message": 4
+      },
+      "resume_policy": "resume_same_task"
+    }
+  ]
+}

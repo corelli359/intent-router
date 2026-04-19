@@ -1,0 +1,2200 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: intent-router-intent-catalog-csv
+data:
+  field-catalogs.json: |
+    {
+      "field_catalogs": {
+        "AG_MENU_6": [],
+        "AG_PAYMENT": [],
+        "AG_MENU_8": [],
+        "AG_MENU_9": [],
+        "AG_MENU_10": [],
+        "AG_MENU_11": [],
+        "AG_MENU_12": [],
+        "AG_MENU_13": [],
+        "AG_MENU_14": [],
+        "AG_MENU_15": [],
+        "AG_MENU_16": [],
+        "AG_MENU_17": [],
+        "AG_MENU_18": [],
+        "AG_MENU_19": [],
+        "AG_TRANS": [
+          {
+            "field_code": "amount",
+            "label": "金额",
+            "semantic_definition": "本次转账实际金额。",
+            "value_type": "currency",
+            "aliases": [
+              "金额",
+              "转账金额",
+              "汇款金额"
+            ],
+            "examples": [
+              "500",
+              "2000.50"
+            ],
+            "counter_examples": [
+              "银行卡号",
+              "币种"
+            ],
+            "format_hint": "输出数字字符串，不保留货币单位。",
+            "normalization_hint": "去掉元、块、人民币等单位。",
+            "validation_hint": "必须是正数金额。"
+          },
+          {
+            "field_code": "payer_card_no",
+            "label": "付款卡卡号/尾号",
+            "semantic_definition": "本次转账使用的付款卡卡号或卡尾号。",
+            "value_type": "string",
+            "aliases": [
+              "付款卡",
+              "付款卡号",
+              "付款卡尾号"
+            ],
+            "examples": [
+              "6222020100043219999",
+              "8888"
+            ],
+            "counter_examples": [
+              "收款人姓名",
+              "转账金额"
+            ],
+            "format_hint": "",
+            "normalization_hint": "",
+            "validation_hint": ""
+          },
+          {
+            "field_code": "payer_card_remark",
+            "label": "付款卡备注",
+            "semantic_definition": "本次转账付款卡对应的备注名称。",
+            "value_type": "string",
+            "aliases": [
+              "付款卡备注",
+              "付款账户备注"
+            ],
+            "examples": [
+              "工资卡",
+              "日常卡"
+            ],
+            "counter_examples": [],
+            "format_hint": "",
+            "normalization_hint": "",
+            "validation_hint": ""
+          },
+          {
+            "field_code": "payee_name",
+            "label": "收款人姓名",
+            "semantic_definition": "本次转账对应的收款人姓名。",
+            "value_type": "string",
+            "aliases": [
+              "收款人姓名",
+              "收款人",
+              "对方姓名"
+            ],
+            "examples": [
+              "小红",
+              "张三",
+              "弟弟"
+            ],
+            "counter_examples": [
+              "6222020100043219999",
+              "500"
+            ],
+            "format_hint": "",
+            "normalization_hint": "",
+            "validation_hint": ""
+          },
+          {
+            "field_code": "payee_card_no",
+            "label": "收款卡卡号/尾号",
+            "semantic_definition": "本次转账对应的收款卡卡号或卡尾号。",
+            "value_type": "string",
+            "aliases": [
+              "收款卡号",
+              "收款卡尾号",
+              "收款卡卡号/尾号",
+              "对方卡号",
+              "对方卡尾号"
+            ],
+            "examples": [
+              "6217000012345678901",
+              "5566"
+            ],
+            "counter_examples": [
+              "李四",
+              "工资卡",
+              "转账金额"
+            ],
+            "format_hint": "",
+            "normalization_hint": "",
+            "validation_hint": ""
+          },
+          {
+            "field_code": "payee_card_remark",
+            "label": "收款卡备注",
+            "semantic_definition": "收款卡的备注名称。",
+            "value_type": "string",
+            "aliases": [
+              "收款卡备注",
+              "收款账户备注"
+            ],
+            "examples": [
+              "房租卡",
+              "家用卡"
+            ],
+            "counter_examples": [],
+            "format_hint": "",
+            "normalization_hint": "",
+            "validation_hint": ""
+          },
+          {
+            "field_code": "payee_card_bank",
+            "label": "收款卡银行",
+            "semantic_definition": "收款卡所属银行名称。",
+            "value_type": "string",
+            "aliases": [
+              "收款银行",
+              "收款卡银行"
+            ],
+            "examples": [
+              "招商银行",
+              "中国银行"
+            ],
+            "counter_examples": [],
+            "format_hint": "",
+            "normalization_hint": "",
+            "validation_hint": ""
+          },
+          {
+            "field_code": "payee_phone",
+            "label": "收款手机号/尾号",
+            "semantic_definition": "收款人手机号或手机号尾号。",
+            "value_type": "string",
+            "aliases": [
+              "收款手机号",
+              "收款手机号尾号",
+              "收款手机号/尾号"
+            ],
+            "examples": [
+              "13800138000",
+              "1234"
+            ],
+            "counter_examples": [],
+            "format_hint": "",
+            "normalization_hint": "",
+            "validation_hint": ""
+          }
+        ],
+        "AG_MENU_21": [],
+        "AG_MENU_22": [],
+        "AG_MENU_23": [],
+        "AG_MENU_24": [],
+        "AG_MENU_25": [],
+        "AG_MENU_26": [],
+        "AG_MENU_27": [],
+        "AG_ZIXUN": [],
+        "AG_MENU_29": [],
+        "AG_MENU_30": [],
+        "AG_MARKET": [],
+        "AG_PRODUCT_32": [],
+        "AG_PRODUCT_33": [],
+        "AG_FUND": [],
+        "AG_DIALOG_35": [],
+        "AG_DIALOG_36": [],
+        "AG_CLIENTSERVICE_37": [],
+        "AG_CLIENTSERVICE_38": [],
+        "AG_CLIENTSERVICE_39": [],
+        "AG_ASK": []
+      }
+    }
+  graph-build-hints.json: |
+    {
+      "graph_build_hints": {
+        "AG_MENU_6": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_PAYMENT": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_8": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_9": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_10": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_11": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_12": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_13": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_14": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_15": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_16": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_17": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_18": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_19": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_TRANS": {
+          "intent_scope_rule": "",
+          "planner_notes": "",
+          "single_node_examples": [],
+          "multi_node_examples": [],
+          "provides_context_keys": [
+            "amount",
+            "business_status"
+          ],
+          "confirm_policy": "auto",
+          "max_nodes_per_message": 4
+        },
+        "AG_MENU_21": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_22": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_23": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_24": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_25": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_26": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_27": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_ZIXUN": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_29": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MENU_30": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_MARKET": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_PRODUCT_32": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_PRODUCT_33": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_FUND": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_DIALOG_35": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_DIALOG_36": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_CLIENTSERVICE_37": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_CLIENTSERVICE_38": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_CLIENTSERVICE_39": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        },
+        "AG_ASK": {
+          "planner_notes": "当前仅启用意图识别，尚未配置专属提槽与执行逻辑。",
+          "confirm_policy": "always",
+          "max_nodes_per_message": 1
+        }
+      }
+    }
+  intents.json: |
+    {
+      "intents": [
+        {
+          "intent_code": "AG_MENU_6",
+          "name": "生活服务",
+          "description": "日常生活相关的非金融服务入口。",
+          "domain_code": "ag_menu_6",
+          "domain_name": "生活服务",
+          "domain_description": "日常生活相关的非金融服务入口。",
+          "examples": [
+            "生活服务",
+            "掌银本地生活",
+            "附近优惠"
+          ],
+          "routing_examples": [
+            "生活服务",
+            "掌银本地生活",
+            "附近优惠"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 1000,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_PAYMENT",
+          "name": "缴纳各种日常生活中的费用",
+          "description": "生活缴费、账单支付等相关服务。",
+          "domain_code": "ag_payment",
+          "domain_name": "缴费支付",
+          "domain_description": "生活缴费、账单支付等相关服务。",
+          "examples": [
+            "交电费",
+            "缴纳水费",
+            "缴燃气费",
+            "交物业费",
+            "生活缴费",
+            "缴话费"
+          ],
+          "routing_examples": [
+            "交电费",
+            "缴纳水费",
+            "缴燃气费",
+            "交物业费",
+            "生活缴费",
+            "缴话费"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 999,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_8",
+          "name": "办理各种付款业务",
+          "description": "各类支付付款功能办理。",
+          "domain_code": "ag_menu_8",
+          "domain_name": "付款业务",
+          "domain_description": "各类支付付款功能办理。",
+          "examples": [
+            "办理付款业务",
+            "扫码支付",
+            "POS支付",
+            "快捷支付设置"
+          ],
+          "routing_examples": [
+            "办理付款业务",
+            "扫码支付",
+            "POS支付",
+            "快捷支付设置"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 998,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_9",
+          "name": "办理存款业务",
+          "description": "各类存款产品办理。",
+          "domain_code": "ag_menu_9",
+          "domain_name": "存款服务",
+          "domain_description": "各类存款产品办理。",
+          "examples": [
+            "存定期",
+            "办理大额存单",
+            "存通知存款",
+            "查看存款利率"
+          ],
+          "routing_examples": [
+            "存定期",
+            "办理大额存单",
+            "存通知存款",
+            "查看存款利率"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 997,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_10",
+          "name": "政务服务",
+          "description": "政府相关便民服务。",
+          "domain_code": "ag_menu_10",
+          "domain_name": "政务服务",
+          "domain_description": "政府相关便民服务。",
+          "examples": [
+            "查公积金",
+            "社保查询",
+            "医保电子凭证",
+            "税务服务",
+            "政务大厅"
+          ],
+          "routing_examples": [
+            "查公积金",
+            "社保查询",
+            "医保电子凭证",
+            "税务服务",
+            "政务大厅"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 996,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_11",
+          "name": "办理外汇业务",
+          "description": "外汇买卖、结售汇、跨境汇款等服务。",
+          "domain_code": "ag_menu_11",
+          "domain_name": "外汇业务",
+          "domain_description": "外汇买卖、结售汇、跨境汇款等服务。",
+          "examples": [
+            "结售汇",
+            "买外汇",
+            "卖美元",
+            "跨境汇款",
+            "外币兑换"
+          ],
+          "routing_examples": [
+            "结售汇",
+            "买外汇",
+            "卖美元",
+            "跨境汇款",
+            "外币兑换"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 995,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_12",
+          "name": "管理支付渠道",
+          "description": "支付渠道设置、限额管理、快捷支付管理。",
+          "domain_code": "ag_menu_12",
+          "domain_name": "支付渠道管理",
+          "domain_description": "支付渠道设置、限额管理、快捷支付管理。",
+          "examples": [
+            "管理支付渠道",
+            "设置支付限额",
+            "绑定快捷支付",
+            "解绑银行卡"
+          ],
+          "routing_examples": [
+            "管理支付渠道",
+            "设置支付限额",
+            "绑定快捷支付",
+            "解绑银行卡"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 994,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_13",
+          "name": "购买投资理财类产品",
+          "description": "各类理财产品购买服务。",
+          "domain_code": "ag_menu_13",
+          "domain_name": "投资理财",
+          "domain_description": "各类理财产品购买服务。",
+          "examples": [
+            "买理财产品",
+            "投资专区",
+            "理财超市",
+            "购买债券"
+          ],
+          "routing_examples": [
+            "买理财产品",
+            "投资专区",
+            "理财超市",
+            "购买债券"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 993,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_14",
+          "name": "办理券商第三方存管开户",
+          "description": "银证转账、第三方存管开户等服务。",
+          "domain_code": "ag_menu_14",
+          "domain_name": "第三方存管",
+          "domain_description": "银证转账、第三方存管开户等服务。",
+          "examples": [
+            "开通第三方存管",
+            "银证转账",
+            "证券账户绑定",
+            "券商开户"
+          ],
+          "routing_examples": [
+            "开通第三方存管",
+            "银证转账",
+            "证券账户绑定",
+            "券商开户"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 992,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_15",
+          "name": "办理信用卡业务",
+          "description": "信用卡全生命周期服务。",
+          "domain_code": "ag_menu_15",
+          "domain_name": "信用卡服务",
+          "domain_description": "信用卡全生命周期服务。",
+          "examples": [
+            "申请信用卡",
+            "信用卡还款",
+            "信用卡分期",
+            "查信用卡账单",
+            "提额申请",
+            "积分兑换"
+          ],
+          "routing_examples": [
+            "申请信用卡",
+            "信用卡还款",
+            "信用卡分期",
+            "查信用卡账单",
+            "提额申请",
+            "积分兑换"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 991,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_16",
+          "name": "查询消息待办",
+          "description": "掌银消息、通知、待办查询。",
+          "domain_code": "ag_menu_16",
+          "domain_name": "消息中心",
+          "domain_description": "掌银消息、通知、待办查询。",
+          "examples": [
+            "查看消息",
+            "待办事项",
+            "动账通知",
+            "我的消息"
+          ],
+          "routing_examples": [
+            "查看消息",
+            "待办事项",
+            "动账通知",
+            "我的消息"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 990,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_17",
+          "name": "办理客户服务业务",
+          "description": "客户信息管理、客户等级维护。",
+          "domain_code": "ag_menu_17",
+          "domain_name": "客户服务",
+          "domain_description": "客户信息管理、客户等级维护。",
+          "examples": [
+            "客户信息维护",
+            "修改手机号",
+            "更新身份证信息",
+            "客户升级"
+          ],
+          "routing_examples": [
+            "客户信息维护",
+            "修改手机号",
+            "更新身份证信息",
+            "客户升级"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 989,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_18",
+          "name": "查询账户信息",
+          "description": "账户详细信息、交易流水查询。",
+          "domain_code": "ag_menu_18",
+          "domain_name": "账户查询",
+          "domain_description": "账户详细信息、交易流水查询。",
+          "examples": [
+            "查账户信息",
+            "交易明细",
+            "开户行查询",
+            "账户详情"
+          ],
+          "routing_examples": [
+            "查账户信息",
+            "交易明细",
+            "开户行查询",
+            "账户详情"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 988,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_19",
+          "name": "查看资产视图",
+          "description": "资产负债总览、资产配置分析。",
+          "domain_code": "ag_menu_19",
+          "domain_name": "资产视图",
+          "domain_description": "资产负债总览、资产配置分析。",
+          "examples": [
+            "查看资产",
+            "我的资产",
+            "总资产多少",
+            "资产负债"
+          ],
+          "routing_examples": [
+            "查看资产",
+            "我的资产",
+            "总资产多少",
+            "资产负债"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 987,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_TRANS",
+          "name": "立即发起一笔转账交易",
+          "description": "实时转账交易执行。",
+          "domain_code": "ag_trans",
+          "domain_name": "转账服务",
+          "domain_description": "实时转账交易执行。",
+          "examples": [
+            "发起转账",
+            "我要转账",
+            "转5000元给朋友",
+            "立即转账"
+          ],
+          "routing_examples": [
+            "发起转账",
+            "我要转账",
+            "转5000元给朋友",
+            "立即转账"
+          ],
+          "agent_url": "http://intent-appointment-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 986,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "session_id",
+              "txt",
+              "stream",
+              "config_variables"
+            ]
+          },
+          "field_mapping": {
+            "session_id": "$session.id",
+            "txt": "$message.current",
+            "stream": "true",
+            "config_variables.custID": "$session.cust_id",
+            "config_variables.currentDisplay": "",
+            "config_variables.intent": "$intent",
+            "config_variables.recent_messages": "$context.recent_messages",
+            "config_variables.long_term_memory": "$context.long_term_memory",
+            "config_variables.slots_data.amount": "$slot_memory.amount",
+            "config_variables.slots_data.payer_card_no": "$slot_memory.payer_card_no",
+            "config_variables.slots_data.payer_card_remark": "$slot_memory.payer_card_remark",
+            "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+            "config_variables.slots_data.payee_card_no": "$slot_memory.payee_card_no",
+            "config_variables.slots_data.payee_card_remark": "$slot_memory.payee_card_remark",
+            "config_variables.slots_data.payee_card_bank": "$slot_memory.payee_card_bank",
+            "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_21",
+          "name": "查询转账相关功能",
+          "description": "转账记录查询、常用收款人管理。",
+          "domain_code": "ag_menu_21",
+          "domain_name": "转账查询",
+          "domain_description": "转账记录查询、常用收款人管理。",
+          "examples": [
+            "查转账记录",
+            "转账限额多少",
+            "常用收款人",
+            "撤销转账"
+          ],
+          "routing_examples": [
+            "查转账记录",
+            "转账限额多少",
+            "常用收款人",
+            "撤销转账"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 985,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_22",
+          "name": "管理APP设置",
+          "description": "掌银APP个性化设置管理。",
+          "domain_code": "ag_menu_22",
+          "domain_name": "APP设置",
+          "domain_description": "掌银APP个性化设置管理。",
+          "examples": [
+            "APP设置",
+            "修改主题",
+            "消息推送设置",
+            "清理缓存",
+            "切换版本"
+          ],
+          "routing_examples": [
+            "APP设置",
+            "修改主题",
+            "消息推送设置",
+            "清理缓存",
+            "切换版本"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 984,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_23",
+          "name": "管理安全设置",
+          "description": "账户安全、认证方式管理。",
+          "domain_code": "ag_menu_23",
+          "domain_name": "安全设置",
+          "domain_description": "账户安全、认证方式管理。",
+          "examples": [
+            "修改密码",
+            "设置指纹登录",
+            "面容识别",
+            "设备管理",
+            "安全中心"
+          ],
+          "routing_examples": [
+            "修改密码",
+            "设置指纹登录",
+            "面容识别",
+            "设备管理",
+            "安全中心"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 983,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_24",
+          "name": "网点服务",
+          "description": "物理网点查询、预约、导航。",
+          "domain_code": "ag_menu_24",
+          "domain_name": "网点服务",
+          "domain_description": "物理网点查询、预约、导航。",
+          "examples": [
+            "附近网点",
+            "排队取号",
+            "预约网点",
+            "找银行"
+          ],
+          "routing_examples": [
+            "附近网点",
+            "排队取号",
+            "预约网点",
+            "找银行"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 982,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_25",
+          "name": "查询存贷款利率",
+          "description": "存贷款基准利率、LPR利率查询。",
+          "domain_code": "ag_menu_25",
+          "domain_name": "利率查询",
+          "domain_description": "存贷款基准利率、LPR利率查询。",
+          "examples": [
+            "存款利率",
+            "贷款利率",
+            "LPR利率",
+            "利率表"
+          ],
+          "routing_examples": [
+            "存款利率",
+            "贷款利率",
+            "LPR利率",
+            "利率表"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 981,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_26",
+          "name": "办理助农金融业务",
+          "description": "三农金融服务、乡村振兴相关服务。",
+          "domain_code": "ag_menu_26",
+          "domain_name": "助农金融",
+          "domain_description": "三农金融服务、乡村振兴相关服务。",
+          "examples": [
+            "惠农e贷",
+            "助农取款",
+            "乡村振兴卡",
+            "三农服务"
+          ],
+          "routing_examples": [
+            "惠农e贷",
+            "助农取款",
+            "乡村振兴卡",
+            "三农服务"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 980,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_27",
+          "name": "预约纪念币兑换",
+          "description": "纪念币预约兑换服务。",
+          "domain_code": "ag_menu_27",
+          "domain_name": "纪念币预约",
+          "domain_description": "纪念币预约兑换服务。",
+          "examples": [
+            "预约纪念币",
+            "兑换纪念钞",
+            "纪念币查询",
+            "预约记录"
+          ],
+          "routing_examples": [
+            "预约纪念币",
+            "兑换纪念钞",
+            "纪念币查询",
+            "预约记录"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 979,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_ZIXUN",
+          "name": "搜索金融市场新闻资讯",
+          "description": "金融市场新闻、行情分析、财经资讯服务。",
+          "domain_code": "ag_zixun",
+          "domain_name": "金融资讯",
+          "domain_description": "金融市场新闻、行情分析、财经资讯服务。",
+          "examples": [
+            "财经新闻",
+            "股市行情",
+            "金融资讯",
+            "市场分析",
+            "理财资讯"
+          ],
+          "routing_examples": [
+            "财经新闻",
+            "股市行情",
+            "金融资讯",
+            "市场分析",
+            "理财资讯"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 978,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_29",
+          "name": "查找优惠活动与权益",
+          "description": "掌银优惠活动、权益领取入口。",
+          "domain_code": "ag_menu_29",
+          "domain_name": "优惠活动",
+          "domain_description": "掌银优惠活动、权益领取入口。",
+          "examples": [
+            "优惠活动",
+            "省钱月卡",
+            "小豆乐园",
+            "消费返现",
+            "本月活动"
+          ],
+          "routing_examples": [
+            "优惠活动",
+            "省钱月卡",
+            "小豆乐园",
+            "消费返现",
+            "本月活动"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 977,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MENU_30",
+          "name": "查找掌银功能入口",
+          "description": "掌银功能入口查找、智能导航。",
+          "domain_code": "ag_menu_30",
+          "domain_name": "功能导航",
+          "domain_description": "掌银功能入口查找、智能导航。",
+          "examples": [
+            "我要找转账",
+            "优惠券在哪",
+            "生活缴费在哪"
+          ],
+          "routing_examples": [
+            "我要找转账",
+            "优惠券在哪",
+            "生活缴费在哪"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 976,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_MARKET",
+          "name": "为用户提供营销活动权益领取使用相关服务",
+          "description": "营销活动、权益领取使用相关服务。",
+          "domain_code": "ag_market",
+          "domain_name": "营销服务",
+          "domain_description": "营销活动、权益领取使用相关服务。",
+          "examples": [
+            "领取权益",
+            "省钱月卡",
+            "参加活动",
+            "小豆兑换",
+            "领优惠券"
+          ],
+          "routing_examples": [
+            "领取权益",
+            "省钱月卡",
+            "参加活动",
+            "小豆兑换",
+            "领优惠券"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 975,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_PRODUCT_32",
+          "name": "用户购买商品",
+          "description": "掌银商城商品购买服务。",
+          "domain_code": "ag_product_32",
+          "domain_name": "商品购买",
+          "domain_description": "掌银商城商品购买服务。",
+          "examples": [
+            "我要买东西",
+            "商城购物",
+            "购买特产",
+            "下单"
+          ],
+          "routing_examples": [
+            "我要买东西",
+            "商城购物",
+            "购买特产",
+            "下单"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 974,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_PRODUCT_33",
+          "name": "用户查询商品特产",
+          "description": "掌银商城商品查询、特产查找。",
+          "domain_code": "ag_product_33",
+          "domain_name": "商品查询",
+          "domain_description": "掌银商城商品查询、特产查找。",
+          "examples": [
+            "查商品",
+            "有什么特产",
+            "搜索商品",
+            "商城搜索"
+          ],
+          "routing_examples": [
+            "查商品",
+            "有什么特产",
+            "搜索商品",
+            "商城搜索"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 973,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_FUND",
+          "name": "基金产品推荐与购买",
+          "description": "基金产品推荐、购买、定投及查询服务。",
+          "domain_code": "ag_fund",
+          "domain_name": "基金服务",
+          "domain_description": "基金产品推荐、购买、定投及查询服务。",
+          "examples": [
+            "买基金",
+            "基金推荐",
+            "基金定投",
+            "查看基金收益",
+            "基金筛选"
+          ],
+          "routing_examples": [
+            "买基金",
+            "基金推荐",
+            "基金定投",
+            "查看基金收益",
+            "基金筛选"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 972,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_DIALOG_35",
+          "name": "问候与闲聊",
+          "description": "闲聊、问候、非业务对话。",
+          "domain_code": "ag_dialog_35",
+          "domain_name": "对话服务",
+          "domain_description": "闲聊、问候、非业务对话。",
+          "examples": [
+            "你好",
+            "在吗",
+            "谢谢你",
+            "再见",
+            "今天天气怎么样"
+          ],
+          "routing_examples": [
+            "你好",
+            "在吗",
+            "谢谢你",
+            "再见",
+            "今天天气怎么样"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 971,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_DIALOG_36",
+          "name": "询问掌上银行服务范围",
+          "description": "掌银功能介绍、服务范围说明、使用指导。",
+          "domain_code": "ag_dialog_36",
+          "domain_name": "对话服务",
+          "domain_description": "掌银功能介绍、服务范围说明、使用指导。",
+          "examples": [
+            "掌银能做什么",
+            "智能助手有什么用",
+            "掌上银行有哪些功能",
+            "农行生活是什么",
+            "怎么使用"
+          ],
+          "routing_examples": [
+            "掌银能做什么",
+            "智能助手有什么用",
+            "掌上银行有哪些功能",
+            "农行生活是什么",
+            "怎么使用"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 970,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_CLIENTSERVICE_37",
+          "name": "办理业务限制异常寻求帮助",
+          "description": "业务办理异常、限制解除、人工客服。",
+          "domain_code": "ag_clientservice_37",
+          "domain_name": "在线客服",
+          "domain_description": "业务办理异常、限制解除、人工客服。",
+          "examples": [
+            "办不了业务",
+            "被限制了",
+            "系统报错",
+            "不能转账",
+            "功能用不了"
+          ],
+          "routing_examples": [
+            "办不了业务",
+            "被限制了",
+            "系统报错",
+            "不能转账",
+            "功能用不了"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 969,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_CLIENTSERVICE_38",
+          "name": "使用掌银技术问题",
+          "description": "掌银技术故障、系统问题人工支持。",
+          "domain_code": "ag_clientservice_38",
+          "domain_name": "技术支持",
+          "domain_description": "掌银技术故障、系统问题人工支持。",
+          "examples": [
+            "页面打不开",
+            "APP闪退",
+            "系统卡了",
+            "登录不了",
+            "白屏"
+          ],
+          "routing_examples": [
+            "页面打不开",
+            "APP闪退",
+            "系统卡了",
+            "登录不了",
+            "白屏"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 968,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_CLIENTSERVICE_39",
+          "name": "金融业务安全问题咨询",
+          "description": "账户安全、风险可疑、诈骗咨询。",
+          "domain_code": "ag_clientservice_39",
+          "domain_name": "安全客服",
+          "domain_description": "账户安全、风险可疑、诈骗咨询。",
+          "examples": [
+            "怀疑诈骗",
+            "账户异常",
+            "安全问题",
+            "被盗刷了",
+            "不明扣款",
+            "风险提醒"
+          ],
+          "routing_examples": [
+            "怀疑诈骗",
+            "账户异常",
+            "安全问题",
+            "被盗刷了",
+            "不明扣款",
+            "风险提醒"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 967,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        },
+        {
+          "intent_code": "AG_ASK",
+          "name": "意图澄清",
+          "description": "多意图识别、意图不明确时的澄清处理。",
+          "domain_code": "ag_ask",
+          "domain_name": "意图澄清",
+          "domain_description": "多意图识别、意图不明确时的澄清处理。",
+          "examples": [
+            "我要办理业务",
+            "帮我查一下",
+            "我要买东西",
+            "查询"
+          ],
+          "routing_examples": [
+            "我要办理业务",
+            "帮我查一下",
+            "我要买东西",
+            "查询"
+          ],
+          "agent_url": "http://intent-fallback-agent.intent.svc.cluster.local:8000/api/agent/run",
+          "is_leaf_intent": true,
+          "parent_intent_code": "",
+          "status": "active",
+          "is_fallback": false,
+          "dispatch_priority": 966,
+          "request_schema": {
+            "type": "object",
+            "required": [
+              "sessionId",
+              "taskId",
+              "input"
+            ]
+          },
+          "field_mapping": {
+            "sessionId": "$session.id",
+            "taskId": "$task.id",
+            "input": "$message.current",
+            "conversation.recentMessages": "$context.recent_messages",
+            "conversation.longTermMemory": "$context.long_term_memory"
+          },
+          "resume_policy": "resume_same_task"
+        }
+      ],
+      "source_csv": "/root/intent-router/intent_table_from_updated_screenshot.csv",
+      "exported_count": 35
+    }
+  slot-schemas.json: |
+    {
+      "slot_schemas": {
+        "AG_MENU_6": [],
+        "AG_PAYMENT": [],
+        "AG_MENU_8": [],
+        "AG_MENU_9": [],
+        "AG_MENU_10": [],
+        "AG_MENU_11": [],
+        "AG_MENU_12": [],
+        "AG_MENU_13": [],
+        "AG_MENU_14": [],
+        "AG_MENU_15": [],
+        "AG_MENU_16": [],
+        "AG_MENU_17": [],
+        "AG_MENU_18": [],
+        "AG_MENU_19": [],
+        "AG_TRANS": [
+          {
+            "slot_key": "amount",
+            "field_code": "amount",
+            "role": "transaction_amount",
+            "label": "金额",
+            "description": "本次转账金额。",
+            "semantic_definition": "转账动作需要执行的金额。",
+            "value_type": "currency",
+            "required": true,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "金额",
+              "转账金额",
+              "汇款金额"
+            ],
+            "examples": [
+              "500",
+              "2000.50"
+            ],
+            "counter_examples": [
+              "1234",
+              "6222020100043219999"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "若当前消息明确包含转账金额，应优先提取到 amount。"
+          },
+          {
+            "slot_key": "payer_card_no",
+            "field_code": "payer_card_no",
+            "role": "payer_account",
+            "label": "付款卡卡号/尾号",
+            "description": "付款卡卡号或尾号。",
+            "semantic_definition": "当前转账使用的付款卡标识。",
+            "value_type": "string",
+            "required": false,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "付款卡",
+              "付款卡号",
+              "付款卡尾号"
+            ],
+            "examples": [
+              "6222020100043219999",
+              "8888"
+            ],
+            "counter_examples": [
+              "小红",
+              "500"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "只有用户明确指向付款卡时才提取，不要把收款卡信息误填到付款卡。"
+          },
+          {
+            "slot_key": "payer_card_remark",
+            "field_code": "payer_card_remark",
+            "role": "payer_account_remark",
+            "label": "付款卡备注",
+            "description": "付款卡备注。",
+            "semantic_definition": "当前转账付款卡的备注名称。",
+            "value_type": "string",
+            "required": false,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "付款卡备注",
+              "付款账户备注"
+            ],
+            "examples": [
+              "工资卡",
+              "日常卡"
+            ],
+            "counter_examples": [
+              "6222020100043219999",
+              "小红"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "只有用户明确说出付款卡备注时才填充该槽位。"
+          },
+          {
+            "slot_key": "payee_name",
+            "field_code": "payee_name",
+            "role": "payee_name",
+            "label": "收款人姓名",
+            "description": "收款人姓名。",
+            "semantic_definition": "当前转账的收款人姓名。",
+            "value_type": "string",
+            "required": true,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "收款人姓名",
+              "收款人",
+              "对方姓名"
+            ],
+            "examples": [
+              "小红",
+              "张三",
+              "李四"
+            ],
+            "counter_examples": [
+              "1234",
+              "人民币"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "只有用户明确给出收款人姓名时才提取，不要把卡号填到 payee_name。"
+          },
+          {
+            "slot_key": "payee_card_no",
+            "field_code": "payee_card_no",
+            "role": "payee_account",
+            "label": "收款卡卡号/尾号",
+            "description": "收款卡卡号或尾号。",
+            "semantic_definition": "当前转账的收款卡标识。",
+            "value_type": "string",
+            "required": false,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "收款卡号",
+              "收款卡尾号",
+              "收款卡卡号/尾号",
+              "对方卡号",
+              "对方卡尾号"
+            ],
+            "examples": [
+              "6222020100043219999",
+              "1234"
+            ],
+            "counter_examples": [
+              "张三",
+              "人民币"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "只有用户明确给出收款卡号或尾号时才提取，不要把收款人姓名填到 payee_card_no。"
+          },
+          {
+            "slot_key": "payee_card_remark",
+            "field_code": "payee_card_remark",
+            "role": "payee_account_remark",
+            "label": "收款卡备注",
+            "description": "收款卡备注。",
+            "semantic_definition": "当前收款卡的备注名称。",
+            "value_type": "string",
+            "required": false,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "收款卡备注",
+              "收款账户备注"
+            ],
+            "examples": [
+              "房租卡",
+              "家用卡"
+            ],
+            "counter_examples": [
+              "小红",
+              "500"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "只有用户明确提供收款卡备注时才填充。"
+          },
+          {
+            "slot_key": "payee_card_bank",
+            "field_code": "payee_card_bank",
+            "role": "payee_bank",
+            "label": "收款卡银行",
+            "description": "收款卡所属银行。",
+            "semantic_definition": "当前收款卡对应的银行名称。",
+            "value_type": "string",
+            "required": false,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "收款银行",
+              "收款卡银行"
+            ],
+            "examples": [
+              "招商银行",
+              "中国银行"
+            ],
+            "counter_examples": [
+              "500",
+              "小红"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "只有用户明确指出收款银行时才填充。"
+          },
+          {
+            "slot_key": "payee_phone",
+            "field_code": "payee_phone",
+            "role": "payee_phone",
+            "label": "收款手机号/尾号",
+            "description": "收款手机号或手机号尾号。",
+            "semantic_definition": "当前收款对象对应的手机号或尾号。",
+            "value_type": "string",
+            "required": false,
+            "allow_from_history": false,
+            "allow_from_recommendation": true,
+            "allow_from_context": false,
+            "aliases": [
+              "收款手机号",
+              "收款手机号尾号",
+              "收款手机号/尾号"
+            ],
+            "examples": [
+              "13800138000",
+              "1234"
+            ],
+            "counter_examples": [
+              "500",
+              "招商银行"
+            ],
+            "bind_scope": "node_input",
+            "confirmation_policy": "when_ambiguous",
+            "overwrite_policy": "overwrite_if_new_nonempty",
+            "prompt_hint": "只有用户明确给出收款手机号或尾号时才填充。"
+          }
+        ],
+        "AG_MENU_21": [],
+        "AG_MENU_22": [],
+        "AG_MENU_23": [],
+        "AG_MENU_24": [],
+        "AG_MENU_25": [],
+        "AG_MENU_26": [],
+        "AG_MENU_27": [],
+        "AG_ZIXUN": [],
+        "AG_MENU_29": [],
+        "AG_MENU_30": [],
+        "AG_MARKET": [],
+        "AG_PRODUCT_32": [],
+        "AG_PRODUCT_33": [],
+        "AG_FUND": [],
+        "AG_DIALOG_35": [],
+        "AG_DIALOG_36": [],
+        "AG_CLIENTSERVICE_37": [],
+        "AG_CLIENTSERVICE_38": [],
+        "AG_CLIENTSERVICE_39": [],
+        "AG_ASK": []
+      }
+    }

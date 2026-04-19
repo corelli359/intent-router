@@ -5,31 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "intent-router"
 version = "0.1.0"
-description = "Intent router MVP with serial task orchestration and SSE updates"
+description = "Repository-level regression workspace for intent-router"
 readme = "AGENTS.md"
 requires-python = ">=3.12"
-dependencies = [
-  "fastapi>=0.115,<1.0",
-  "uvicorn>=0.30,<1.0",
-  "pydantic>=2.8,<3.0",
-  "httpx>=0.27,<1.0",
-  "sqlalchemy>=2.0,<3.0",
-  "pymysql>=1.1,<2.0",
-  "langchain>=1.2,<2.0",
-  "langchain-core>=1.2,<2.0",
-  "langchain-openai>=1.1,<2.0",
-]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3,<9.0",
 ]
-
-[tool.setuptools]
-package-dir = {"" = "backend/src"}
-
-[tool.setuptools.packages.find]
-where = ["backend/src"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

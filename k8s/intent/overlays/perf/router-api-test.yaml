@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router-api-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: router-api-test
+  template:
+    metadata:
+      labels:
+        app: router-api-test
+        intent-role: perf-target
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: router-api-test
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: ROUTER_INTENT_CATALOG_BACKEND
+              value: "file"
+            - name: ROUTER_INTENT_CATALOG_FILE
+              value: /etc/intent-router/catalog/intents.json
+            - name: ROUTER_INTENT_FIELD_CATALOG_FILE
+              value: /etc/intent-router/catalog/field-catalogs.json
+            - name: ROUTER_INTENT_SLOT_SCHEMA_FILE
+              value: /etc/intent-router/catalog/slot-schemas.json
+            - name: ROUTER_INTENT_GRAPH_BUILD_HINTS_FILE
+              value: /etc/intent-router/catalog/graph-build-hints.json
+            - name: ROUTER_LLM_API_BASE_URL
+              value: "http://intent-fake-llm.intent.svc.cluster.local:8000/v1"
+            - name: ROUTER_LLM_MODEL
+              value: "fake-router-llm"
+            - name: ROUTER_LLM_FAST_FAKE_ENABLED
+              value: "true"
+            - name: ROUTER_AGENT_BARRIER_ENABLED
+              value: "true"
+            - name: ROUTER_LOG_LEVEL
+              value: "WARNING"
+            - name: ROUTER_ASYNC_LOGGING_ENABLED
+              value: "true"
+            - name: ROUTER_INTENT_REFRESH_INTERVAL_SECONDS
+              value: "3600"
+            - name: ROUTER_SESSION_CLEANUP_ENABLED
+              value: "false"
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              set -e
+              python -m pip install --no-cache-dir /workspace/backend/services/router-service
+              python -m uvicorn router_service.api.app:app --host 0.0.0.0 --port 8000 --no-access-log --log-level warning
+          ports:
+            - containerPort: 8000
+              name: http
+          resources:
+            requests:
+              cpu: 250m
+              memory: 2Gi
+            limits:
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: repo
+              mountPath: /workspace
+            - name: router-intent-catalog
+              mountPath: /etc/intent-router/catalog
+              readOnly: true
+      volumes:
+        - name: repo
+          hostPath:
+            path: /mnt/intent-router
+            type: Directory
+        - name: router-intent-catalog
+          configMap:
+            name: intent-router-intent-catalog
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: router-api-test
+spec:
+  selector:
+    app: router-api-test
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+  type: ClusterIP

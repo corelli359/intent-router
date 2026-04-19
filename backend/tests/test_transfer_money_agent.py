@@ -1,317 +1,207 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
+import json
 from typing import Any
 
 import httpx
 
+from transfer_money_agent.app import create_app, get_transfer_money_service  # noqa: E402
+from transfer_money_agent.service import TransferMoneyAgentRequest, TransferMoneyAgentService  # noqa: E402
 
-BACKEND_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(BACKEND_SRC) not in sys.path:
-    sys.path.insert(0, str(BACKEND_SRC))
 
-from intent_agents.transfer_money_app import create_app, get_transfer_money_service  # noqa: E402
-from intent_agents.transfer_money_service import TransferMoneyAgentRequest, TransferMoneyAgentService  # noqa: E402
+def _config_variables(values: dict[str, Any]) -> list[dict[str, str]]:
+    variables: list[dict[str, str]] = []
+    for name, value in values.items():
+        if isinstance(value, str):
+            serialized = value
+        else:
+            serialized = json.dumps(value, ensure_ascii=False)
+        variables.append({"name": name, "value": serialized})
+    return variables
 
 
 class FakeJsonRunner:
+    """Small fake LLM runner used to control agent resolution outputs."""
+
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
+        self.calls: list[dict[str, Any]] = []
 
     async def run_json(self, *, prompt, variables: dict[str, Any], schema=None) -> Any:
+        self.calls.append({"prompt": prompt, "variables": variables, "schema": schema})
         return self.payload
 
 
-def test_transfer_money_service_waits_with_semantic_partial_slots() -> None:
-    async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": "李四",
-                    "recipient_card_number": None,
-                    "recipient_phone_last4": None,
-                    "amount": "5000",
-                    "has_enough_information": False,
-                    "ask_message": "",
+def test_transfer_money_request_reads_slots_data_json_string() -> None:
+    request = TransferMoneyAgentRequest(
+        session_id="session_transfer_001",
+        txt="给李四转账 500 元",
+        stream=True,
+        config_variables=_config_variables(
+            {
+                "slots_data": {
+                    "amount": "500",
+                    "payee_name": "李四",
+                    "payee_card_no": "8899",
                 }
-            )
+            }
+        ),
+    )
+
+    assert request.get_slots_data() == {
+        "amount": "500",
+        "payee_name": "李四",
+        "payee_card_no": "8899",
+    }
+
+
+def test_transfer_money_service_prefers_config_variables_context_and_slots() -> None:
+    async def run() -> None:
+        runner = FakeJsonRunner(
+            {
+                "amount": None,
+                "payee_name": None,
+                "payer_card_remark": "工资卡",
+                "has_enough_information": True,
+                "ask_message": "",
+            }
         )
+        service = TransferMoneyAgentService(resolver=runner)
         response = await service.handle(
             TransferMoneyAgentRequest(
-                sessionId="session_transfer_001",
-                taskId="task_transfer_001",
-                input="帮我给李四转 5000 元",
+                session_id="session_transfer_002",
+                txt="付款卡备注工资卡",
+                stream=True,
+                config_variables=_config_variables(
+                    {
+                        "intent": {
+                            "code": "AG_TRANS",
+                            "name": "立即发起一笔转账交易",
+                            "description": "新契约上下文",
+                        },
+                        "recent_messages": [
+                            "user: 给李四尾号8899那张卡转 5000 元",
+                            "assistant: 已识别到金额、收款人姓名和收款卡号",
+                        ],
+                        "long_term_memory": ["用户经常给李四转账"],
+                        "slots_data": {
+                            "amount": "5000",
+                            "payee_name": "李四",
+                            "payee_card_no": "8899",
+                        },
+                    }
+                ),
+                intent={"code": "LEGACY_INTENT", "name": "旧意图"},
                 conversation={
-                    "recentMessages": ["user: 帮我给李四转 5000 元"],
-                    "longTermMemory": [
-                        "query_account_balance: card_number=6222021234567890, phone_last_four=1234"
-                    ],
+                    "recentMessages": ["legacy recent"],
+                    "longTermMemory": ["legacy memory"],
                 },
+                payee={"name": "王五", "cardNo": "5566"},
+                transfer={"amount": "9"},
             )
         )
 
-        assert response.status == "waiting_user_input"
-        assert response.content == "请提供收款卡号、收款人手机号后4位"
+        assert response.status == "completed"
         assert response.slot_memory == {
-            "recipient_name": "李四",
             "amount": "5000",
+            "payer_card_remark": "工资卡",
+            "payee_name": "李四",
+            "payee_card_no": "8899",
         }
+        assert response.content == "已向李四转账 5000 CNY，转账成功"
 
-    asyncio.run(run())
-
-
-def test_transfer_money_service_completes_after_follow_up_details() -> None:
-    async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": None,
-                    "recipient_card_number": "6222020100049999999",
-                    "recipient_phone_last4": "1234",
-                    "amount": None,
-                    "has_enough_information": True,
-                    "ask_message": "",
-                }
-            )
-        )
-        response = await service.handle(
-            TransferMoneyAgentRequest(
-                sessionId="session_transfer_002",
-                taskId="task_transfer_002",
-                input="收款卡号 6222020100049999999，收款人手机号后四位 1234",
-                recipient={"name": "李四"},
-                transfer={"amount": "5000"},
-                conversation={
-                    "recentMessages": [
-                        "user: 帮我给李四转 5000 元",
-                        "assistant: 请提供收款卡号、收款人手机号后4位",
-                    ],
-                    "longTermMemory": [],
-                },
-            )
-        )
-
-        assert response.status == "completed"
-        assert response.content == "已向李四转账 5000 元，转账成功"
-        assert response.slot_memory == {
-            "recipient_name": "李四",
-            "recipient_card_number": "6222020100049999999",
-            "recipient_phone_last_four": "1234",
+        assert len(runner.calls) == 1
+        variables = runner.calls[0]["variables"]
+        assert json.loads(variables["intent_json"]) == {
+            "code": "AG_TRANS",
+            "name": "立即发起一笔转账交易",
+            "description": "新契约上下文",
+            "examples": [],
+        }
+        assert json.loads(variables["recent_messages_json"]) == [
+            "user: 给李四尾号8899那张卡转 5000 元",
+            "assistant: 已识别到金额、收款人姓名和收款卡号",
+        ]
+        assert json.loads(variables["long_term_memory_json"]) == ["用户经常给李四转账"]
+        assert json.loads(variables["current_slots_json"]) == {
             "amount": "5000",
+            "ccy": None,
+            "payer_card_no": None,
+            "payer_card_remark": None,
+            "payee_name": "李四",
+            "payee_card_no": "8899",
+            "payee_card_remark": None,
+            "payee_card_bank": None,
+            "payee_phone": None,
         }
 
     asyncio.run(run())
 
 
-def test_transfer_money_service_preserves_existing_slots_when_prompt_only_returns_new_detail() -> None:
+def test_transfer_money_service_accepts_legacy_nested_request_shape() -> None:
     async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": None,
-                    "recipient_card_number": None,
-                    "recipient_phone_last4": "1234",
-                    "amount": None,
-                    "has_enough_information": True,
-                    "ask_message": "",
-                }
-            )
+        service = TransferMoneyAgentService(resolver=None)
+        request = TransferMoneyAgentRequest(
+            sessionId="session_transfer_003",
+            taskId="task_transfer_003",
+            input="给李四转 500 元",
+            payee={"name": "李四"},
+            transfer={"amount": "500"},
+            conversation={"recentMessages": [], "longTermMemory": []},
         )
-        response = await service.handle(
-            TransferMoneyAgentRequest(
-                sessionId="session_transfer_003",
-                taskId="task_transfer_003",
-                input="1234",
-                recipient={
-                    "name": "李四",
-                    "cardNumber": "6222020100049999999",
-                },
-                transfer={"amount": "5000"},
-                conversation={
-                    "recentMessages": [
-                        "user: 帮我给李四转 5000 元",
-                        "assistant: 请提供收款人手机号后4位",
-                        "user: 1234",
-                    ],
-                    "longTermMemory": [],
-                },
-            )
-        )
+        response = await service.handle(request)
 
+        assert request.session_id == "session_transfer_003"
+        assert request.txt == "给李四转 500 元"
         assert response.status == "completed"
         assert response.slot_memory == {
-            "recipient_name": "李四",
-            "recipient_card_number": "6222020100049999999",
-            "recipient_phone_last_four": "1234",
-            "amount": "5000",
+            "amount": "500",
+            "payee_name": "李四",
         }
+        assert response.content == "已向李四转账 500 CNY，转账成功"
 
     asyncio.run(run())
 
 
-def test_transfer_money_service_uses_prompt_ask_message_for_ambiguous_four_digits() -> None:
+def test_transfer_money_service_prioritizes_new_slots_over_legacy_nested_slots() -> None:
     async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": None,
-                    "recipient_card_number": None,
-                    "recipient_phone_last4": None,
-                    "amount": None,
-                    "has_enough_information": False,
-                    "ask_message": (
-                        "检测到 4 位数字，请明确这是收款人手机号后4位还是转账金额，"
-                        "例如“手机号后四位 1234”或“转账金额 5000”"
-                    ),
-                }
-            )
+        runner = FakeJsonRunner(
+            {
+                "amount": "9999",
+                "payee_name": "不会被使用",
+                "has_enough_information": True,
+                "ask_message": "",
+            }
         )
+        service = TransferMoneyAgentService(resolver=runner)
         response = await service.handle(
             TransferMoneyAgentRequest(
-                sessionId="session_transfer_004",
-                taskId="task_transfer_004",
-                input="1234",
-                recipient={
-                    "name": "李四",
-                    "cardNumber": "6222020100049999999",
-                },
-                conversation={
-                    "recentMessages": [
-                        "user: 帮我给李四转账",
-                        "assistant: 请提供收款人手机号后4位、转账金额",
-                        "user: 1234",
-                    ],
-                    "longTermMemory": [],
-                },
+                session_id="session_transfer_004",
+                txt="",
+                stream=True,
+                config_variables=_config_variables(
+                    {
+                        "slots_data": {
+                            "amount": "3000",
+                            "ccy": "USD",
+                            "payee_name": "新收款人",
+                            "payee_card_no": "8899",
+                        }
+                    }
+                ),
+                payee={"name": "旧收款人", "cardNo": "5566"},
+                transfer={"amount": "100", "ccy": "CNY"},
             )
         )
 
-        assert response.status == "waiting_user_input"
-        assert response.content == (
-            "检测到 4 位数字，请明确这是收款人手机号后4位还是转账金额，"
-            "例如“手机号后四位 1234”或“转账金额 5000”"
-        )
-        assert response.slot_memory == {
-            "recipient_name": "李四",
-            "recipient_card_number": "6222020100049999999",
-        }
-
-    asyncio.run(run())
-
-
-def test_transfer_money_service_accepts_standalone_amount_when_only_amount_is_missing() -> None:
-    async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": None,
-                    "recipient_card_number": None,
-                    "recipient_phone_last4": None,
-                    "amount": "5000",
-                    "has_enough_information": True,
-                    "ask_message": "",
-                }
-            )
-        )
-        response = await service.handle(
-            TransferMoneyAgentRequest(
-                sessionId="session_transfer_005",
-                taskId="task_transfer_005",
-                input="5000",
-                recipient={
-                    "name": "李四",
-                    "cardNumber": "6222020100049999999",
-                    "phoneLast4": "1234",
-                },
-                conversation={
-                    "recentMessages": [
-                        "user: 帮我给李四转账",
-                        "assistant: 请提供转账金额",
-                        "user: 5000",
-                    ],
-                    "longTermMemory": [],
-                },
-            )
-        )
-
+        assert runner.calls == []
         assert response.status == "completed"
-        assert response.slot_memory["amount"] == "5000"
-        assert response.content == "已向李四转账 5000 元，转账成功"
-
-    asyncio.run(run())
-
-
-def test_transfer_money_service_accepts_numeric_amount_from_request_slots() -> None:
-    async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": None,
-                    "recipient_card_number": "6222020100049999999",
-                    "recipient_phone_last4": "1234",
-                    "amount": None,
-                    "has_enough_information": True,
-                    "ask_message": "",
-                }
-            )
-        )
-        response = await service.handle(
-            TransferMoneyAgentRequest(
-                sessionId="session_transfer_006",
-                taskId="task_transfer_006",
-                input="收款卡号 6222020100049999999，收款人手机号后四位 1234",
-                recipient={"name": "我媳妇儿"},
-                transfer={"amount": 1000},
-                conversation={
-                    "recentMessages": [
-                        "user: 帮我查一下余额，如果超过5000，就跟我媳妇儿转1000",
-                        "assistant: 请提供收款卡号、收款人手机号后4位",
-                    ],
-                    "longTermMemory": [],
-                },
-            )
-        )
-
-        assert response.status == "completed"
-        assert response.slot_memory["amount"] == "1000"
-        assert response.content == "已向我媳妇儿转账 1000 元，转账成功"
-
-    asyncio.run(run())
-
-
-def test_transfer_money_service_fails_when_amount_exceeds_limit() -> None:
-    async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": "李四",
-                    "recipient_card_number": "6222020100049999999",
-                    "recipient_phone_last4": "1234",
-                    "amount": "12000",
-                    "has_enough_information": True,
-                    "ask_message": "",
-                }
-            )
-        )
-        response = await service.handle(
-            TransferMoneyAgentRequest(
-                sessionId="session_transfer_006",
-                taskId="task_transfer_006",
-                input="给李四转 12000 元",
-                recipient={
-                    "name": "李四",
-                    "cardNumber": "6222020100049999999",
-                    "phoneLast4": "1234",
-                },
-                transfer={"amount": "12000"},
-                conversation={"recentMessages": [], "longTermMemory": []},
-            )
-        )
-
-        assert response.status == "failed"
-        assert response.content == "账户余额不足"
+        assert response.content == "已向新收款人转账 3000 USD，转账成功"
+        assert response.payload["amount"] == "3000"
+        assert response.payload["ccy"] == "USD"
+        assert response.payload["payee_name"] == "新收款人"
+        assert response.payload["payee_card_no"] == "8899"
 
     asyncio.run(run())
 
@@ -321,10 +211,9 @@ def test_transfer_money_service_does_not_silently_reuse_history_sensitive_slots(
         service = TransferMoneyAgentService(
             resolver=FakeJsonRunner(
                 {
-                    "recipient_name": "小明",
-                    "recipient_card_number": "6222020100049999999",
-                    "recipient_phone_last4": "1234",
                     "amount": "1000",
+                    "payee_name": "小明",
+                    "payee_card_no": "5566",
                     "has_enough_information": True,
                     "ask_message": "",
                 }
@@ -332,37 +221,38 @@ def test_transfer_money_service_does_not_silently_reuse_history_sensitive_slots(
         )
         response = await service.handle(
             TransferMoneyAgentRequest(
-                sessionId="session_transfer_007",
-                taskId="task_transfer_007",
-                input="帮我转账",
-                conversation={
-                    "recentMessages": [
-                        "user: 给小明转1000",
-                        "assistant: 请提供收款卡号、收款人手机号后4位",
-                        "user: 卡号 6222020100049999999，后四位 1234",
-                    ],
-                    "longTermMemory": [],
-                },
+                session_id="session_transfer_005",
+                txt="帮我转账",
+                stream=True,
+                config_variables=_config_variables(
+                    {
+                        "recent_messages": [
+                            "user: 给小明转1000",
+                            "assistant: 已向小明转账成功",
+                        ],
+                        "long_term_memory": [],
+                    }
+                ),
             )
         )
 
         assert response.status == "waiting_user_input"
-        assert response.content == "请提供收款人姓名、收款卡号、收款人手机号后4位、转账金额"
+        assert response.content == "请提供金额、收款人姓名"
         assert response.slot_memory == {}
 
     asyncio.run(run())
 
 
-def test_transfer_money_http_app_returns_router_payload() -> None:
+def test_transfer_money_http_app_streams_sse_contract() -> None:
     async def run() -> None:
         app = create_app()
         app.dependency_overrides[get_transfer_money_service] = lambda: TransferMoneyAgentService(
             resolver=FakeJsonRunner(
                 {
-                    "recipient_name": "李四",
-                    "recipient_card_number": "6222020100049999999",
-                    "recipient_phone_last4": "1234",
                     "amount": "3000",
+                    "payee_name": "李四",
+                    "payee_card_no": "8899",
+                    "ccy": "CNY",
                     "has_enough_information": True,
                     "ask_message": "",
                 }
@@ -373,61 +263,45 @@ def test_transfer_money_http_app_returns_router_payload() -> None:
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",
         ) as client:
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 "/api/agent/run",
                 json={
-                    "sessionId": "session_transfer_007",
-                    "taskId": "task_transfer_007",
-                    "input": "给李四转 3000 元",
-                    "recipient": {
-                        "name": "李四",
-                        "cardNumber": "6222020100049999999",
-                        "phoneLast4": "1234",
-                    },
-                    "transfer": {"amount": "3000"},
-                    "conversation": {"recentMessages": [], "longTermMemory": []},
+                    "session_id": "session_transfer_006",
+                    "txt": "给李四尾号8899那张卡转 3000 元",
+                    "stream": True,
+                    "config_variables": _config_variables(
+                        {
+                            "slots_data": {
+                                "amount": "3000",
+                                "payee_name": "李四",
+                                "payee_card_no": "8899",
+                                "ccy": "CNY",
+                            }
+                        }
+                    ),
                 },
-            )
+            ) as response:
+                lines = [line async for line in response.aiter_lines()]
 
         assert response.status_code == 200
-        payload = response.json()
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert lines.count("event:message") == 1
+        assert lines.count("event:done") == 1
+
+        message_line = lines[lines.index("event:message") + 1]
+        done_line = lines[lines.index("event:done") + 1]
+        assert message_line.startswith("data:")
+        assert done_line == "data:[DONE]"
+
+        payload = json.loads(message_line.removeprefix("data:"))
+        assert payload["event"] == "final"
         assert payload["status"] == "completed"
-        assert payload["slot_memory"]["amount"] == "3000"
-
-    asyncio.run(run())
-
-
-def test_transfer_money_service_executes_directly_with_prefilled_slots_and_empty_input() -> None:
-    async def run() -> None:
-        service = TransferMoneyAgentService(
-            resolver=FakeJsonRunner(
-                {
-                    "recipient_name": None,
-                    "recipient_card_number": None,
-                    "recipient_phone_last4": None,
-                    "amount": None,
-                    "has_enough_information": False,
-                    "ask_message": "不应调用 LLM 解析",
-                }
-            )
-        )
-        response = await service.handle(
-            TransferMoneyAgentRequest(
-                sessionId="session_transfer_direct_001",
-                taskId="task_transfer_direct_001",
-                input="",
-                recipient={
-                    "name": "李四",
-                    "cardNumber": "6222020100049999999",
-                    "phoneLast4": "1234",
-                },
-                transfer={"amount": "3000"},
-                conversation={"recentMessages": [], "longTermMemory": []},
-            )
-        )
-
-        assert response.status == "completed"
-        assert response.payload["business_status"] == "success"
-        assert response.payload["recipient_name"] == "李四"
+        assert payload["slot_memory"] == {
+            "amount": "3000",
+            "payee_name": "李四",
+            "payee_card_no": "8899",
+        }
+        assert payload["content"] == "已向李四转账 3000 CNY，转账成功"
 
     asyncio.run(run())
