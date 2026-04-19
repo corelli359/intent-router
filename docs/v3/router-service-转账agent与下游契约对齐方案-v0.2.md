@@ -30,9 +30,7 @@
   "stream": true,
   "config_variables": [
     {"name": "custID", "value": "cust_xxx"},
-    {"name": "sessionID", "value": "session_xxx"},
     {"name": "currentDisplay", "value": ""},
-    {"name": "agentSessionID", "value": "session_xxx"},
     {"name": "slots_data", "value": "{\"payee_name\":\"小明\",\"amount\":\"200\"}"}
   ]
 }
@@ -255,9 +253,7 @@ sequenceDiagram
   "stream": true,
   "config_variables": [
     {"name": "custID", "value": "$session.cust_id"},
-    {"name": "sessionID", "value": "$session.id"},
     {"name": "currentDisplay", "value": ""},
-    {"name": "agentSessionID", "value": "$session.id"},
     {"name": "intent", "value": "{\"code\":\"AG_TRANS\",\"name\":\"立即发起一笔转账交易\",...}"},
     {"name": "recent_messages", "value": "[\"user: 给小明转账\"]"},
     {"name": "long_term_memory", "value": "[]"},
@@ -268,7 +264,7 @@ sequenceDiagram
 
 其中：
 
-- `custID/sessionID/currentDisplay/agentSessionID` 对齐目标分支约束
+- `custID/currentDisplay` 保留为业务透传变量
 - `intent/recent_messages/long_term_memory` 是为保持当前分支多轮理解效果额外保留
 - `slots_data` 由 Router 基于当前 `task.slot_memory` 覆盖生成
 
@@ -409,9 +405,7 @@ sequenceDiagram
 - `txt`
 - `stream`
 - `config_variables.custID`
-- `config_variables.sessionID`
 - `config_variables.currentDisplay`
-- `config_variables.agentSessionID`
 - `config_variables.intent`
 - `config_variables.recent_messages`
 - `config_variables.long_term_memory`
