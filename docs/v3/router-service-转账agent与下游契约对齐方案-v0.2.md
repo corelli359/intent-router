@@ -148,6 +148,51 @@ flowchart LR
 
 ## 7. 迁移后的关键时序
 
+### 7.0 Client -> 助手服务 -> Router -> Agent 端到端 SSE 链路
+
+当前真实链路不是 Client 直接调用 Router，而是：
+
+`Client -> 助手服务 -> Router -> Agent`
+
+对应的响应方向是：
+
+`Agent -> Router -> 助手服务 -> Client`
+
+这条链路里，SSE 的正确语义应当是“逐层透传流式响应”，而不是“下游完成后再一次性回包”，也不是“agent 主动回调上游”。
+
+职责边界如下：
+
+- Client：消费助手服务输出的最终流
+- 助手服务：既是 Router 的 SSE client，也是 Client 的 SSE server
+- Router：既是 Agent 的 SSE client，也是助手服务的 SSE server
+- Agent：对 Router 输出业务执行流
+
+关键约束：
+
+1. Agent 的 SSE outbound 是对 Router 这次 HTTP 请求的流式响应，不是独立 callback。
+2. Router 不能把 Agent 原始 SSE 裸透传给助手服务，必须先完成：
+   - `slot_memory` 合并
+   - task/node/session 状态更新
+   - 事件语义标准化
+3. 助手服务可以在 Router 事件流之上继续做协议裁剪或包装，但不能把整段流缓存到最后才返回。
+4. 只要会话状态仍保存在 Router 内存中，助手服务到 Router 这一跳必须保证会话粘性，否则多轮和流式状态都会错位。
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Assistant as 助手服务
+    participant Router as router-service
+    participant Agent as transfer-money-agent
+
+    Client->>Assistant: 发起流式请求
+    Assistant->>Router: 调用 Router SSE 接口
+    Router->>Agent: 调用 Agent SSE 接口
+    Agent-->>Router: 持续输出业务事件流
+    Router->>Router: 状态归一 + session/task 更新
+    Router-->>Assistant: 输出 Router 标准事件流
+    Assistant-->>Client: 输出客户端消费事件流
+```
+
 ### 7.1 转账单轮/多轮时序
 
 ```mermaid

@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 logger = logging.getLogger(__name__)
@@ -120,6 +120,63 @@ class AgentIntentContext(BaseModel):
     name: str | None = None
     description: str | None = None
     examples: list[str] = Field(default_factory=list)
+
+
+class ConfigVariable(BaseModel):
+    name: str
+    value: Any = ""
+
+    def as_string(self) -> str:
+        if self.value is None:
+            return ""
+        if isinstance(self.value, str):
+            return self.value
+        return json.dumps(self.value, ensure_ascii=False)
+
+
+class ConfigVariablesRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str
+    txt: str = ""
+    stream: bool = True
+    config_variables: list[ConfigVariable] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _promote_legacy_envelope(cls, raw_data: Any) -> Any:
+        if not isinstance(raw_data, dict):
+            return raw_data
+
+        data = dict(raw_data)
+        if "session_id" not in data and "sessionId" in data:
+            data["session_id"] = data["sessionId"]
+        if "txt" not in data and "input" in data:
+            data["txt"] = data["input"]
+        return data
+
+    def get_config_value(self, name: str) -> str | None:
+        value: str | None = None
+        for variable in self.config_variables:
+            if variable.name == name:
+                value = variable.as_string()
+        return value
+
+    def get_config_json_value(self, name: str) -> Any:
+        raw_value = self.get_config_value(name)
+        if raw_value is None or not raw_value.strip():
+            return None
+        try:
+            return json.loads(raw_value)
+        except JSONDecodeError:
+            logger.warning("Ignoring invalid JSON config variable %s", name, exc_info=True)
+            return None
+
+    def get_slots_data(self) -> dict[str, Any]:
+        parsed = self.get_config_json_value("slots_data")
+        if isinstance(parsed, dict):
+            return parsed
+        return {}
 
 
 class AgentExecutionResponse(BaseModel):

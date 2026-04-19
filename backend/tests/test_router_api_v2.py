@@ -25,7 +25,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from tests.support.mock_agent_client import MockStreamingAgentClient
 from router_service.core.support.agent_client import StreamingAgentClient
-from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.shared.domain import AgentStreamChunk, IntentDefinition, IntentMatch, Task, TaskStatus
 from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
@@ -93,6 +93,30 @@ def _ag_trans_intent() -> IntentDefinition:
                 "required": True,
             },
         ],
+        request_schema={
+            "type": "object",
+            "required": ["session_id", "txt", "stream", "config_variables"],
+        },
+        field_mapping={
+            "session_id": "$session.id",
+            "txt": "$message.current",
+            "stream": "true",
+            "config_variables.custID": "$session.cust_id",
+            "config_variables.sessionID": "$session.id",
+            "config_variables.currentDisplay": "",
+            "config_variables.agentSessionID": "$session.id",
+            "config_variables.intent": "$intent",
+            "config_variables.recent_messages": "$context.recent_messages",
+            "config_variables.long_term_memory": "$context.long_term_memory",
+            "config_variables.slots_data.amount": "$slot_memory.amount",
+            "config_variables.slots_data.payer_card_no": "$slot_memory.payer_card_no",
+            "config_variables.slots_data.payer_card_remark": "$slot_memory.payer_card_remark",
+            "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+            "config_variables.slots_data.payee_card_no": "$slot_memory.payee_card_no",
+            "config_variables.slots_data.payee_card_remark": "$slot_memory.payee_card_remark",
+            "config_variables.slots_data.payee_card_bank": "$slot_memory.payee_card_bank",
+            "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone",
+        },
         graph_build_hints={"provides_context_keys": ["amount", "business_status"]},
     )
 
@@ -160,6 +184,38 @@ class _ContractTransferUnderstandingValidator:
             prompt_message=prompt_message,
             diagnostics=[],
         )
+
+
+class _TrailingTerminalChunkAgentClient:
+    def __init__(self) -> None:
+        self.tasks: list[Task] = []
+
+    async def stream(self, task: Task, user_input: str):
+        del user_input
+        self.tasks.append(task)
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content="转账已受理",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            payload={"phase": "accepted"},
+        )
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content="转账成功",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            payload={"phase": "settled"},
+        )
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        del session_id, task_id, agent_url
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 @dataclass(frozen=True)
@@ -792,6 +848,7 @@ def _test_v2_app(
     recommendation_router=None,
     intents: list[IntentDefinition] | None = None,
     understanding_validator=None,
+    agent_client=None,
 ) -> tuple[object, GraphRouterOrchestrator]:
     broker = EventBroker()
     orchestrator = GraphRouterOrchestrator(
@@ -802,7 +859,7 @@ def _test_v2_app(
         planner=planner or SequentialIntentGraphPlanner(),
         turn_interpreter=turn_interpreter or BasicTurnInterpreter(),
         recommendation_router=recommendation_router,
-        agent_client=MockStreamingAgentClient(),
+        agent_client=agent_client or MockStreamingAgentClient(),
         understanding_validator=understanding_validator,
     )
     app = create_router_app()
@@ -2772,6 +2829,56 @@ def test_v2_router_only_transfer_contract_from_generic_request_fills_amount_then
                 "payee_name": "小明",
                 "amount": "200",
             }
+
+    asyncio.run(run())
+
+
+def test_v2_ag_trans_consumes_full_agent_stream_after_first_terminal_chunk() -> None:
+    async def run() -> None:
+        agent_client = _TrailingTerminalChunkAgentClient()
+        app, _ = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "给小明转账200元"},
+            )
+            assert response.status_code == 200
+            snapshot = response.json()["snapshot"]
+            current_graph = snapshot["current_graph"]
+            assert current_graph["status"] == "completed"
+            assert current_graph["nodes"][0]["intent_code"] == "AG_TRANS"
+            assert current_graph["nodes"][0]["status"] == "completed"
+            assert current_graph["nodes"][0]["output_payload"] == {"phase": "settled"}
+
+            assistant_messages = [message["content"] for message in snapshot["messages"] if message["role"] == "assistant"]
+            assert assistant_messages[-2:] == ["转账已受理", "转账成功"]
+
+            assert len(agent_client.tasks) == 1
+            task = agent_client.tasks[0]
+            assert task.agent_url == "http://test-agent/ag_trans"
+            assert task.request_schema["required"] == [
+                "session_id",
+                "txt",
+                "stream",
+                "config_variables",
+            ]
+            assert task.field_mapping["session_id"] == "$session.id"
+            assert task.field_mapping["txt"] == "$message.current"
+            assert task.field_mapping["stream"] == "true"
+            assert task.field_mapping["config_variables.intent"] == "$intent"
+            assert task.field_mapping["config_variables.recent_messages"] == "$context.recent_messages"
+            assert task.field_mapping["config_variables.long_term_memory"] == "$context.long_term_memory"
+            assert task.field_mapping["config_variables.slots_data.amount"] == "$slot_memory.amount"
+            assert task.field_mapping["config_variables.slots_data.payee_name"] == "$slot_memory.payee_name"
 
     asyncio.run(run())
 

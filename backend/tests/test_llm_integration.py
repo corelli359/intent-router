@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 
-from router_service.core.support.agent_client import StreamingAgentClient  # noqa: E402
+from router_service.core.support.agent_client import RequestPayloadBuilder, StreamingAgentClient  # noqa: E402
 from router_service.core.shared.domain import IntentDefinition, Task, TaskStatus  # noqa: E402
 from router_service.core.shared.domain import IntentMatch  # noqa: E402
 from router_service.core.support.llm_client import (  # noqa: E402
@@ -63,6 +63,18 @@ class FakeLangChainClient:
         if on_delta is not None:
             await on_delta('{"matches":')
         return self.recognition_response.model_dump()
+
+
+class _AsyncByteStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        return None
 
 
 def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
@@ -589,6 +601,112 @@ def test_recognition_intents_json_reuses_cached_serialization_for_same_intent_in
     assert first is second
 
 
+def test_request_payload_builder_supports_config_variables_and_slots_data_mappings() -> None:
+    task = Task(
+        session_id="session_003",
+        intent_code="transfer_money",
+        agent_url="https://agent.example.com/transfer",
+        intent_name="转账",
+        intent_description="执行转账",
+        intent_examples=["给小明转账 200 元"],
+        confidence=0.91,
+        request_schema={"type": "object", "required": ["session_id", "txt", "stream", "config_variables"]},
+        field_mapping={
+            "session_id": "$session.id",
+            "txt": "$message.current",
+            "stream": "true",
+            "config_variables.custID": "$session.cust_id",
+            "config_variables.currentDisplay": "",
+            "config_variables.intent": "$intent",
+            "config_variables.recent_messages": "$context.recent_messages",
+            "config_variables.long_term_memory": "$context.long_term_memory",
+            "config_variables.approval_required": "$slot_memory.approval_required",
+            "config_variables.retry_count": "$slot_memory.retry_count",
+            "config_variables.exchange_rate": "$slot_memory.exchange_rate",
+            "config_variables.memo": "$slot_memory.memo",
+            "config_variables.routing": "$slot_memory.routing",
+            "config_variables.tags": "$slot_memory.tags",
+            "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+            "config_variables.slots_data.amount": "$slot_memory.amount",
+        },
+        input_context={
+            "cust_id": "cust_003",
+            "recent_messages": ["user: 给小明转账"],
+            "long_term_memory": ["常用收款人: 小明"],
+        },
+        slot_memory={
+            "payee_name": "小明",
+            "amount": 200,
+            "approval_required": True,
+            "retry_count": 2,
+            "exchange_rate": 6.8,
+            "memo": None,
+            "routing": {"channel": "fast"},
+            "tags": ["vip", "mobile"],
+        },
+    )
+
+    payload = RequestPayloadBuilder().build(task, "给小明转账 200 元")
+
+    assert payload["session_id"] == "session_003"
+    assert payload["txt"] == "给小明转账 200 元"
+    assert payload["stream"] is True
+    assert "intent" not in payload
+
+    config_variables = {item["name"]: item["value"] for item in payload["config_variables"]}
+    assert config_variables["custID"] == "cust_003"
+    assert config_variables["currentDisplay"] == ""
+    assert json.loads(config_variables["intent"]) == {
+        "code": "transfer_money",
+        "name": "转账",
+        "description": "执行转账",
+        "examples": ["给小明转账 200 元"],
+    }
+    assert json.loads(config_variables["recent_messages"]) == ["user: 给小明转账"]
+    assert json.loads(config_variables["long_term_memory"]) == ["常用收款人: 小明"]
+    assert config_variables["approval_required"] == "true"
+    assert config_variables["retry_count"] == "2"
+    assert config_variables["exchange_rate"] == "6.8"
+    assert config_variables["memo"] == "null"
+    assert json.loads(config_variables["routing"]) == {"channel": "fast"}
+    assert json.loads(config_variables["tags"]) == ["vip", "mobile"]
+    assert json.loads(config_variables["slots_data"]) == {"payee_name": "小明", "amount": 200}
+
+
+def test_request_payload_builder_keeps_legacy_default_payload_for_unmapped_intents() -> None:
+    task = Task(
+        session_id="session_legacy",
+        intent_code="query_order_status",
+        agent_url="https://agent.example.com/order/stream",
+        intent_name="查询订单状态",
+        intent_description="查询订单和物流状态",
+        intent_examples=["帮我查订单 123"],
+        confidence=0.88,
+        input_context={"recent_messages": ["user: 帮我查订单"], "long_term_memory": ["订单 123 常查"]},
+        slot_memory={"order_id": "123"},
+    )
+
+    payload = RequestPayloadBuilder().build(task, "帮我查订单 123")
+
+    assert payload == {
+        "sessionId": "session_legacy",
+        "taskId": task.task_id,
+        "intentCode": "query_order_status",
+        "input": "帮我查订单 123",
+        "intent": {
+            "code": "query_order_status",
+            "name": "查询订单状态",
+            "description": "查询订单和物流状态",
+            "examples": ["帮我查订单 123"],
+        },
+        "context": {
+            "recentMessages": ["user: 帮我查订单"],
+            "longTermMemory": ["订单 123 常查"],
+        },
+        "slots": {"order_id": "123"},
+    }
+
+
 def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
     import httpx
 
@@ -635,6 +753,150 @@ def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
         assert len(chunks) == 1
         assert chunks[0].status == TaskStatus.COMPLETED
         assert chunks[0].payload["order_id"] == "123"
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_supports_sse_json_payloads() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_sse",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream(
+                    [
+                        b'event: message\ndata: {"event":"final","content":"\xe5\xb7\xb2\xe5\xae\x8c\xe6\x88\x90","ishandover":true,"status":"completed","payload":{"receipt_id":"txn_001"}}\n\n',
+                        b"event: done\ndata: [DONE]\n\n",
+                    ]
+                ),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "已完成"
+        assert chunks[0].status == TaskStatus.COMPLETED
+        assert chunks[0].ishandover is True
+        assert chunks[0].payload == {"receipt_id": "txn_001"}
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_nested",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                json={
+                    "additional_kwargs": {
+                        "node_output": {
+                            "output": json.dumps(
+                                {
+                                "event": "final",
+                                "data": [{"answer": "已向小明转账 200 CNY，转账成功"}],
+                                "isHandOver": True,
+                                "status": "completed",
+                                "slot_memory": {"payee_name": "小明", "amount": "200"},
+                                "payload": {"receipt_id": "txn_123"},
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "已向小明转账 200 CNY，转账成功"
+        assert chunks[0].status == TaskStatus.COMPLETED
+        assert chunks[0].ishandover is True
+        assert chunks[0].payload == {
+            "receipt_id": "txn_123",
+            "slot_memory": {"payee_name": "小明", "amount": "200"},
+        }
+        assert task.slot_memory == {"payee_name": "小明", "amount": "200"}
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_reports_invalid_json_stream_payloads() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_invalid_stream",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream([b"data: not-json\n\n"]),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].status == TaskStatus.FAILED
+        assert "invalid JSON stream payload" in chunks[0].content
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_reports_empty_streams() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_empty_stream",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream([b"data: [DONE]\n\n"]),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].status == TaskStatus.FAILED
+        assert chunks[0].content == "Agent returned no stream events"
 
     asyncio.run(run())
 

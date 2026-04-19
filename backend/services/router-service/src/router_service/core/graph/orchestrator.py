@@ -768,13 +768,6 @@ class GraphRouterOrchestrator:
                 async with asyncio.timeout(self.config.agent_timeout_seconds):
                     async for chunk in self.agent_client.stream(task, effective_user_input):
                         await self._handle_agent_chunk(session, graph, node, task, chunk)
-                        if chunk.status in {
-                            TaskStatus.WAITING_USER_INPUT,
-                            TaskStatus.WAITING_CONFIRMATION,
-                            TaskStatus.COMPLETED,
-                            TaskStatus.FAILED,
-                        }:
-                            break
             except TimeoutError:
                 await self._fail_node(
                     session,
