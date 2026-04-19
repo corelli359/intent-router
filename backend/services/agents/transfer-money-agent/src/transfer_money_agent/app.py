@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from collections.abc import AsyncIterator
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import StreamingResponse
 
 from .support import (
     AgentCancelRequest,
@@ -38,12 +40,16 @@ def create_app() -> FastAPI:
             "llm_ready": settings.connection_ready,
         }
 
-    @app.post("/api/agent/run", response_model=AgentExecutionResponse)
+    @app.post("/api/agent/run")
     async def run_agent(
         request: TransferMoneyAgentRequest,
         service: TransferMoneyAgentService = Depends(get_transfer_money_service),
-    ) -> AgentExecutionResponse:
-        return await service.handle(request)
+    ) -> StreamingResponse:
+        """Run the transfer money agent and return SSE stream."""
+        return StreamingResponse(
+            service.handle_stream(request),
+            media_type="text/event-stream",
+        )
 
     @app.post("/api/agent/cancel", response_model=AgentCancelResponse)
     async def cancel_agent(request: AgentCancelRequest) -> AgentCancelResponse:

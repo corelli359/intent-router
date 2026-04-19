@@ -6,8 +6,10 @@ from json import JSONDecodeError
 import os
 from pathlib import Path
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 from typing import Any, Literal, Protocol
+from collections.abc import AsyncIterator
 
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
@@ -106,6 +108,30 @@ class AgentCustomer(BaseModel):
     cust_id: str | None = Field(default=None, alias="custId")
 
 
+class ConfigVariablesRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(alias="session_id")
+    txt: str = ""
+    stream: bool = True
+    config_variables: list[dict[str, str]] = Field(default_factory=list)
+
+    def get_config_value(self, name: str, default: str = "") -> str:
+        for item in self.config_variables:
+            if item.get("name") == name:
+                return item.get("value", default)
+        return default
+
+    def get_slots_data(self) -> dict[str, Any]:
+        raw = self.get_config_value("slots_data")
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+
 class AgentConversationContext(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -178,6 +204,61 @@ class AgentExecutionResponse(BaseModel):
             status="failed",
             payload=payload or {},
         )
+
+
+class AgentStreamEvent(BaseModel):
+    """SSE event payload matching the downstream agent streaming format."""
+
+    content: str = ""
+    additional_kwargs: dict[str, Any] = Field(default_factory=dict)
+    response_metadata: dict[str, Any] = Field(default_factory=dict)
+    type: str = "ai"
+    name: str | None = None
+    id: str | None = None
+    example: bool = False
+    tool_calls: list[Any] = Field(default_factory=list)
+    invalid_tool_calls: list[Any] = Field(default_factory=list)
+    usage_metadata: dict[str, Any] | None = None
+
+    @classmethod
+    def from_node_output(
+        cls,
+        node_id: str,
+        node_title: str,
+        output: dict[str, Any] | str,
+        exception: str | None = None,
+        headers: dict[str, Any] | None = None,
+    ) -> "AgentStreamEvent":
+        """Create a stream event from a node's output."""
+        # Use indented JSON format (with \n and proper escaping) for output
+        output_str = json.dumps(output, ensure_ascii=False, indent=2) if isinstance(output, dict) else output
+        node_output: dict[str, Any] = {
+            "output": output_str,
+            "exception": exception,
+        }
+        if headers is not None:
+            node_output["headers"] = headers
+        return cls(
+            content="",
+            additional_kwargs={
+                "node_id": node_id,
+                "node_title": node_title,
+                "node_output": node_output,
+                "timestamp": _utc_timestamp(),
+            },
+        )
+
+    def to_sse(self, event: str = "message") -> str:
+        """Format as SSE text: 'event:xxx\\ndata:...\\n\\n'."""
+        data = self.model_dump(mode="json")
+        # Use compact JSON format (no spaces after separators)
+        return f"event:{event}\ndata:{json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
+
+
+def _utc_timestamp() -> str:
+    """Return current UTC timestamp in the expected format."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 class AgentCancelRequest(BaseModel):

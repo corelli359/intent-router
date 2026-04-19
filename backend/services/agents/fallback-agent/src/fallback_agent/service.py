@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+import json
+from collections.abc import AsyncIterator
 
-from .support import AgentConversationContext, AgentCustomer, AgentExecutionResponse
+from .support import AgentExecutionResponse, ConfigVariablesRequest
 
 
-class FallbackAgentRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    session_id: str = Field(alias="sessionId")
-    task_id: str = Field(alias="taskId")
-    input: str
-    customer: AgentCustomer = Field(default_factory=AgentCustomer)
-    conversation: AgentConversationContext = Field(default_factory=AgentConversationContext)
+class FallbackAgentRequest(ConfigVariablesRequest):
+    pass
 
 
 class FallbackAgentService:
@@ -22,6 +17,23 @@ class FallbackAgentService:
             payload={
                 "agent": "fallback_general",
                 "route_type": "fallback",
-                "last_user_input": request.input,
+                "last_user_input": request.txt,
             },
         )
+
+    async def handle_stream(self, request: FallbackAgentRequest) -> AsyncIterator[str]:
+        """Handle the request and yield SSE formatted events matching Router expectations."""
+        response = await self.handle(request)
+
+        output = {
+            "event": response.event,
+            "content": response.content,
+            "ishandover": response.ishandover,
+            "status": response.status,
+            "slot_memory": response.slot_memory,
+            "payload": response.payload,
+        }
+
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
+        yield "event:done\ndata:[DONE]\n\n"
+

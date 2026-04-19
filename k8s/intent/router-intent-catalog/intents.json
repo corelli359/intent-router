@@ -26,17 +26,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -72,17 +73,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -114,17 +116,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -156,17 +159,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -200,17 +204,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -244,17 +249,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -286,17 +292,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -328,17 +335,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -370,17 +378,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -416,17 +425,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -458,17 +468,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -500,17 +511,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -542,17 +554,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -584,17 +597,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -617,7 +631,7 @@
         "转5000元给朋友",
         "立即转账"
       ],
-      "agent_url": "http://intent-appointment-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "agent_url": "http://localhost:8001/api/agent/run",
       "is_leaf_intent": true,
       "parent_intent_code": "",
       "status": "active",
@@ -626,25 +640,26 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory",
-        "transfer.amount": "$slot_memory.amount",
-        "payer.cardNo": "$slot_memory.payer_card_no",
-        "payer.cardRemark": "$slot_memory.payer_card_remark",
-        "payee.name": "$slot_memory.payee_name",
-        "payee.cardNo": "$slot_memory.payee_card_no",
-        "payee.cardRemark": "$slot_memory.payee_card_remark",
-        "payee.cardBank": "$slot_memory.payee_card_bank",
-        "payee.phone": "$slot_memory.payee_phone"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id",
+        "config_variables.slots_data.amount": "$slot_memory.amount",
+        "config_variables.slots_data.payer_card_no": "$slot_memory.payer_card_no",
+        "config_variables.slots_data.payer_card_remark": "$slot_memory.payer_card_remark",
+        "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+        "config_variables.slots_data.payee_card_no": "$slot_memory.payee_card_no",
+        "config_variables.slots_data.payee_card_remark": "$slot_memory.payee_card_remark",
+        "config_variables.slots_data.payee_card_bank": "$slot_memory.payee_card_bank",
+        "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone"
       },
       "resume_policy": "resume_same_task"
     },
@@ -676,17 +691,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -720,17 +736,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -764,17 +781,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -806,17 +824,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -848,17 +867,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -890,17 +910,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -932,17 +953,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -976,17 +998,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1020,17 +1043,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1060,17 +1084,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1104,17 +1129,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1146,17 +1172,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1188,17 +1215,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1232,17 +1260,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1276,17 +1305,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1320,17 +1350,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1364,17 +1395,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1408,17 +1440,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1454,17 +1487,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     },
@@ -1496,17 +1530,18 @@
       "request_schema": {
         "type": "object",
         "required": [
-          "sessionId",
-          "taskId",
-          "input"
+          "session_id",
+          "txt"
         ]
       },
       "field_mapping": {
-        "sessionId": "$session.id",
-        "taskId": "$task.id",
-        "input": "$message.current",
-        "conversation.recentMessages": "$context.recent_messages",
-        "conversation.longTermMemory": "$context.long_term_memory"
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$session.cust_id",
+        "config_variables.sessionID": "$session.id",
+        "config_variables.currentDisplay": "",
+        "config_variables.agentSessionID": "$session.id"
       },
       "resume_policy": "resume_same_task"
     }

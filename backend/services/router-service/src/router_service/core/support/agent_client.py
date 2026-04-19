@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -9,6 +10,7 @@ import httpx
 from router_service.core.shared.domain import AgentStreamChunk, Task, TaskStatus
 
 MISSING = object()
+logger = logging.getLogger(__name__)
 
 
 class AgentClient(Protocol):
@@ -36,43 +38,53 @@ class RequestPayloadBuilder:
             payload = self._default_payload(task, user_input)
         else:
             payload: dict[str, Any] = {}
+            slots_data: dict[str, Any] = {}
+            config_variables: list[dict[str, str]] = []
+
             for target_path, source_path in task.field_mapping.items():
                 value = self._resolve_source(source_path, task, user_input)
                 if value is MISSING:
                     continue
-                self._set_nested_value(payload, target_path, value)
 
-        payload.setdefault(
-            "intent",
-            {
-                "code": task.intent_code,
-                "name": task.intent_name,
-                "description": task.intent_description,
-                "examples": list(task.intent_examples),
-            },
-        )
+                if target_path.startswith("config_variables.slots_data."):
+                    slot_key = target_path.removeprefix("config_variables.slots_data.")
+                    slots_data[slot_key] = value
+                elif target_path.startswith("config_variables."):
+                    var_name = target_path.removeprefix("config_variables.")
+                    str_value = json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else str(value)
+                    config_variables.append({"name": var_name, "value": str_value})
+                else:
+                    self._set_nested_value(payload, target_path, value)
+
+            if slots_data:
+                config_variables.append({
+                    "name": "slots_data",
+                    "value": json.dumps(slots_data, ensure_ascii=False),
+                })
+            if config_variables:
+                payload["config_variables"] = config_variables
 
         self._validate_required_fields(payload, task.request_schema)
         return payload
 
     def _default_payload(self, task: Task, user_input: str) -> dict[str, Any]:
-        """Build the default payload shape used when no explicit field mapping exists."""
+        """Build the config-variables payload shape used when no explicit field mapping exists."""
+        config_variables: list[dict[str, str]] = [
+            {"name": "custID", "value": str(task.input_context.get("cust_id", ""))},
+            {"name": "sessionID", "value": task.session_id},
+            {"name": "currentDisplay", "value": ""},
+            {"name": "agentSessionID", "value": task.session_id},
+        ]
+        if task.slot_memory:
+            config_variables.append({
+                "name": "slots_data",
+                "value": json.dumps(dict(task.slot_memory), ensure_ascii=False),
+            })
         return {
-            "sessionId": task.session_id,
-            "taskId": task.task_id,
-            "intentCode": task.intent_code,
-            "input": user_input,
-            "intent": {
-                "code": task.intent_code,
-                "name": task.intent_name,
-                "description": task.intent_description,
-                "examples": list(task.intent_examples),
-            },
-            "context": {
-                "recentMessages": task.input_context.get("recent_messages", []),
-                "longTermMemory": task.input_context.get("long_term_memory", []),
-            },
-            "slots": dict(task.slot_memory),
+            "session_id": task.session_id,
+            "txt": user_input,
+            "stream": True,
+            "config_variables": config_variables,
         }
 
     def _validate_required_fields(self, payload: dict[str, Any], request_schema: dict[str, Any]) -> None:
@@ -192,25 +204,58 @@ class StreamingAgentClient:
             yield self._failure_chunk(task, str(exc))
             return
 
+        # DEBUG: 打印请求信息
+        print("=" * 60, flush=True)
+        print(f"[AGENT_CLIENT] 准备调用子智能体", flush=True)
+        print(f"[AGENT_CLIENT] agent_url: {task.agent_url}", flush=True)
+        print(f"[AGENT_CLIENT] intent_code: {task.intent_code}", flush=True)
+        print(f"[AGENT_CLIENT] slot_memory: {task.slot_memory}", flush=True)
+        print(f"[AGENT_CLIENT] request_payload:", flush=True)
+        print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+        print("=" * 60, flush=True)
+
         emitted_chunk = False
         try:
+            logger.debug("Agent request: POST %s payload=%s", task.agent_url, json.dumps(payload, ensure_ascii=False)[:1000])
+
             async with self.http_client.stream(
                 "POST",
                 task.agent_url,
                 json=payload,
-                headers={"Accept": "text/event-stream, application/x-ndjson, application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream, application/x-ndjson, application/json"
+                },
             ) as response:
+                logger.debug("Agent response: status=%s content-type=%s", response.status_code, response.headers.get("content-type", ""))
+
                 if response.status_code >= 400:
+                    error_body = await response.aread()
+                    logger.error("Agent HTTP error %s: %s", response.status_code, error_body.decode("utf-8")[:2000])
                     yield self._failure_chunk(
                         task,
-                        f"Agent HTTP request failed with status {response.status_code}: {await response.aread()}",
+                        f"Agent HTTP request failed with status {response.status_code}: {error_body}",
                     )
                     return
 
                 content_type = response.headers.get("content-type", "")
+
                 if "application/json" in content_type and "stream" not in content_type:
                     raw_body = await response.aread()
-                    parsed = json.loads(raw_body.decode("utf-8"))
+                    logger.debug("Agent JSON response: %d bytes", len(raw_body))
+
+                    if not raw_body:
+                        logger.warning("Agent returned empty JSON response")
+                        yield self._failure_chunk(task, "Agent returned empty response")
+                        return
+
+                    try:
+                        parsed = json.loads(raw_body.decode("utf-8"))
+                    except json.JSONDecodeError as e:
+                        logger.error("Agent returned invalid JSON: %s", e)
+                        yield self._failure_chunk(task, f"Agent returned invalid JSON: {e}")
+                        return
+
                     for chunk in self._payloads_to_chunks(task, parsed):
                         emitted_chunk = True
                         yield chunk
@@ -219,6 +264,8 @@ class StreamingAgentClient:
                 sse_buffer: list[str] = []
                 async for raw_line in response.aiter_lines():
                     line = raw_line.strip()
+                    if line:
+                        logger.debug("SSE line: %s", line[:200])
                     if not line:
                         if sse_buffer:
                             for chunk in self._data_text_to_chunks(task, "\n".join(sse_buffer)):
@@ -242,10 +289,12 @@ class StreamingAgentClient:
                         emitted_chunk = True
                         yield chunk
         except Exception as exc:
+            logger.exception(f"[AGENT_CLIENT] HTTP请求异常: {exc}")
             yield self._failure_chunk(task, f"Agent HTTP request failed: {exc}")
             return
 
         if not emitted_chunk:
+            logger.warning("[AGENT_CLIENT] Agent未返回任何chunk")
             yield self._failure_chunk(task, "Agent returned no stream events")
 
     async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
@@ -290,6 +339,14 @@ class StreamingAgentClient:
 
     def _payload_to_chunk(self, task: Task, payload: dict[str, Any]) -> AgentStreamChunk:
         """Normalize one downstream payload dict into an `AgentStreamChunk`."""
+        logger.debug("Parsing agent payload: %s", json.dumps(payload, ensure_ascii=False)[:500])
+
+        # Handle nested format: additional_kwargs.node_output.output
+        nested_output = self._extract_nested_output(payload)
+        if nested_output:
+            logger.debug("Extracted nested output: %s", json.dumps(nested_output, ensure_ascii=False)[:300])
+            payload = nested_output
+
         slot_memory = payload.get("slot_memory")
         if isinstance(slot_memory, dict):
             task.slot_memory.update(slot_memory)
@@ -299,21 +356,65 @@ class StreamingAgentClient:
         if isinstance(slot_memory, dict):
             normalized_payload.setdefault("slot_memory", dict(task.slot_memory))
 
-        ishandover = payload.get("ishandover")
+        # Support both ishandover and isHandOver
+        ishandover = payload.get("ishandover") or payload.get("isHandOver")
+        # Support handOverReason for logging/debugging
+        hand_over_reason = payload.get("handOverReason")
         status = self._resolve_status(payload.get("status"), ishandover)
         if not isinstance(ishandover, bool):
             ishandover = status in {TaskStatus.COMPLETED, TaskStatus.FAILED}
         if status == TaskStatus.WAITING_USER_INPUT:
             ishandover = False
 
+        # Extract content from payload or data array
+        content = self._extract_content(payload)
+
         return AgentStreamChunk(
             task_id=task.task_id,
             event=str(payload.get("event") or ("final" if ishandover else "message")),
-            content=str(payload.get("content") or payload.get("message") or ""),
+            content=content,
             ishandover=ishandover,
             status=status,
             payload=normalized_payload,
         )
+
+    def _extract_nested_output(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Extract output from nested additional_kwargs.node_output.output format."""
+        additional_kwargs = payload.get("additional_kwargs")
+        if not isinstance(additional_kwargs, dict):
+            return None
+
+        node_output = additional_kwargs.get("node_output")
+        if not isinstance(node_output, dict):
+            return None
+
+        output = node_output.get("output")
+        if not isinstance(output, str):
+            return None
+
+        try:
+            parsed = json.loads(output)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return None
+
+    def _extract_content(self, payload: dict[str, Any]) -> str:
+        """Extract content from payload, supporting data array format."""
+        content = payload.get("content") or payload.get("message") or ""
+        if content:
+            return str(content)
+
+        # Try to extract from data array (old format)
+        data = payload.get("data")
+        if isinstance(data, list) and data:
+            first_item = data[0] if isinstance(data[0], dict) else {}
+            answer = first_item.get("answer", "")
+            if answer:
+                return str(answer)
+
+        return ""
 
     def _resolve_status(self, raw_status: Any, ishandover: Any) -> TaskStatus:
         """Resolve agent-provided status fields into the canonical task status enum."""

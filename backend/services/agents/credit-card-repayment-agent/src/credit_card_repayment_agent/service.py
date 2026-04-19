@@ -1,42 +1,25 @@
 from __future__ import annotations
 
+import json
+
 from decimal import Decimal
 from typing import Any
+from collections.abc import AsyncIterator
 
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
 from .support import (
-    AgentConversationContext,
-    AgentCustomer,
     AgentExecutionResponse,
-    AgentIntentContext,
+    AgentStreamEvent,
+    ConfigVariablesRequest,
     JsonObjectRunner,
     dump_json,
 )
 
 
-class CreditCardInfo(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    card_number: str | int | None = Field(default=None, alias="cardNumber")
-    phone_last4: str | int | None = Field(default=None, alias="phoneLast4")
-
-
-class CreditCardRepaymentAgentRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    session_id: str = Field(alias="sessionId")
-    task_id: str = Field(alias="taskId")
-    input: str
-    customer: AgentCustomer = Field(default_factory=AgentCustomer)
-    conversation: AgentConversationContext = Field(default_factory=AgentConversationContext)
-    intent: AgentIntentContext = Field(default_factory=AgentIntentContext)
-    credit_card: CreditCardInfo = Field(
-        default_factory=CreditCardInfo,
-        alias="creditCard",
-        validation_alias=AliasChoices("creditCard", "account"),
-    )
+class CreditCardRepaymentAgentRequest(ConfigVariablesRequest):
+    pass
 
 
 class CreditCardRepaymentResolution(BaseModel):
@@ -86,12 +69,13 @@ class CreditCardRepaymentAgentService:
         self.resolver = resolver
 
     async def handle(self, request: CreditCardRepaymentAgentRequest) -> AgentExecutionResponse:
+        slots = request.get_slots_data()
         seeded = CreditCardRepaymentResolution(
-            card_number=self._normalize_card_number(request.credit_card.card_number),
-            phone_last4=self._normalize_phone_last4(request.credit_card.phone_last4),
+            card_number=self._normalize_card_number(slots.get("card_number")),
+            phone_last4=self._normalize_phone_last4(slots.get("phone_last4")),
         )
         direct_resolution = self._finalize_resolution(seeded, CreditCardRepaymentResolution())
-        if not request.input.strip() and direct_resolution.has_enough_information:
+        if not request.txt.strip() and direct_resolution.has_enough_information:
             resolution = direct_resolution
         else:
             resolution = await self._resolve(request, seeded)
@@ -126,24 +110,44 @@ class CreditCardRepaymentAgentService:
             },
         )
 
+    async def handle_stream(self, request: CreditCardRepaymentAgentRequest) -> AsyncIterator[str]:
+        """Handle the request and yield SSE formatted events matching Router expectations."""
+        response = await self.handle(request)
+
+        output = {
+            "event": response.event,
+            "content": response.content,
+            "ishandover": response.ishandover,
+            "status": response.status,
+            "slot_memory": response.slot_memory,
+            "payload": response.payload,
+        }
+
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
+        yield "event:done\ndata:[DONE]\n\n"
+
     async def _resolve(
         self,
         request: CreditCardRepaymentAgentRequest,
         seeded: CreditCardRepaymentResolution,
     ) -> CreditCardRepaymentResolution:
-        heuristic = self._extract_from_input(request.input)
+        heuristic = self._extract_from_input(request.txt)
         if self.resolver is None:
             return self._finalize_resolution(seeded, heuristic)
 
         try:
+            slots = request.get_slots_data()
             raw_payload = await self.resolver.run_json(
                 prompt=CREDIT_CARD_REPAYMENT_PROMPT,
                 variables={
-                    "intent_json": dump_json(request.intent.model_dump()),
-                    "input_text": request.input,
-                    "credit_card_json": dump_json(request.credit_card.model_dump()),
-                    "recent_messages_json": dump_json(request.conversation.recent_messages),
-                    "long_term_memory_json": dump_json(request.conversation.long_term_memory),
+                    "intent_json": request.get_config_value("intent", "{}"),
+                    "input_text": request.txt,
+                    "credit_card_json": dump_json({
+                        "card_number": slots.get("card_number"),
+                        "phone_last4": slots.get("phone_last4"),
+                    }),
+                    "recent_messages_json": request.get_config_value("recent_messages", "[]"),
+                    "long_term_memory_json": request.get_config_value("long_term_memory", "[]"),
                 },
                 schema=CreditCardRepaymentResolution,
             )

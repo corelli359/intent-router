@@ -1,0 +1,8 @@
+# Intent-Router 打包命令
+# 在项目根目录下执行
+
+# 删除旧包并创建新的加密压缩包
+rm -f intent-router-core.zip && zip -e -r intent-router-core.zip backend/services/router-service/src backend/services/router-service/pyproject.toml backend/services/agents/account-balance-agent/src backend/services/agents/account-balance-agent/pyproject.toml backend/services/agents/credit-card-repayment-agent/src backend/services/agents/credit-card-repayment-agent/pyproject.toml backend/services/agents/fallback-agent/src backend/services/agents/fallback-agent/pyproject.toml backend/services/agents/forex-agent/src backend/services/agents/forex-agent/pyproject.toml backend/services/agents/gas-bill-agent/src backend/services/agents/gas-bill-agent/pyproject.toml backend/services/agents/transfer-money-agent/src backend/services/agents/transfer-money-agent/pyproject.toml scripts k8s pyproject.toml README.md AGENTS.md .gitignore -x "*/__pycache__/*" -x "*.pyc"
+
+# 查看压缩包大小
+ls -lh intent-router-core.zip

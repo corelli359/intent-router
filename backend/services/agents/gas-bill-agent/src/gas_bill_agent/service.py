@@ -1,46 +1,27 @@
 from __future__ import annotations
 
+import json
+
 import re
 from decimal import Decimal
 from typing import Any
+from collections.abc import AsyncIterator
 
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
 from .support import (
-    AgentConversationContext,
-    AgentCustomer,
     AgentExecutionResponse,
-    AgentIntentContext,
+    ConfigVariablesRequest,
     JsonObjectRunner,
     dump_json,
+    AgentStreamEvent,
 )
 from .finance_utils import amount_value, digit_runs, format_decimal, normalize_amount
 
 
-class GasAccount(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    account_number: str | int | None = Field(default=None, alias="accountNumber")
-
-
-class GasPayment(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    amount: str | int | float | None = Field(default=None, alias="amount")
-
-
-class GasBillPaymentAgentRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    session_id: str = Field(alias="sessionId")
-    task_id: str = Field(alias="taskId")
-    input: str
-    customer: AgentCustomer = Field(default_factory=AgentCustomer)
-    conversation: AgentConversationContext = Field(default_factory=AgentConversationContext)
-    intent: AgentIntentContext = Field(default_factory=AgentIntentContext)
-    gas: GasAccount = Field(default_factory=GasAccount)
-    payment: GasPayment = Field(default_factory=GasPayment)
+class GasBillPaymentAgentRequest(ConfigVariablesRequest):
+    pass
 
 
 class GasBillPaymentResolution(BaseModel):
@@ -89,12 +70,13 @@ class GasBillPaymentAgentService:
         self.resolver = resolver
 
     async def handle(self, request: GasBillPaymentAgentRequest) -> AgentExecutionResponse:
+        slots = request.get_slots_data()
         seeded = GasBillPaymentResolution(
-            gas_account_number=self._normalize_account_number(request.gas.account_number),
-            amount=normalize_amount(request.payment.amount),
+            gas_account_number=self._normalize_account_number(slots.get("gas_account_number")),
+            amount=normalize_amount(slots.get("amount")),
         )
         direct_resolution = self._finalize_resolution(seeded, GasBillPaymentResolution())
-        if not request.input.strip() and direct_resolution.has_enough_information:
+        if not request.txt.strip() and direct_resolution.has_enough_information:
             resolution = direct_resolution
         else:
             resolution = await self._resolve(request, seeded)
@@ -125,30 +107,44 @@ class GasBillPaymentAgentService:
                 "business_status": "completed",
             },
         )
+    async def handle_stream(self, request: GasBillPaymentAgentRequest) -> AsyncIterator[str]:
+        """Handle the request and yield SSE formatted events matching Router expectations."""
+        response = await self.handle(request)
+
+        output = {
+            "event": response.event,
+            "content": response.content,
+            "ishandover": response.ishandover,
+            "status": response.status,
+            "slot_memory": response.slot_memory,
+            "payload": response.payload,
+        }
+
+        yield f"event:message\ndata:{json.dumps(output, ensure_ascii=False)}\n\n"
+        yield "event:done\ndata:[DONE]\n\n"
 
     async def _resolve(
         self,
         request: GasBillPaymentAgentRequest,
         seeded: GasBillPaymentResolution,
     ) -> GasBillPaymentResolution:
-        heuristic = self._extract_from_input(request.input)
+        heuristic = self._extract_from_input(request.txt)
         if self.resolver is None:
             return self._finalize_resolution(seeded, heuristic)
 
         try:
+            slots = request.get_slots_data()
             raw_payload = await self.resolver.run_json(
                 prompt=GAS_BILL_PAYMENT_PROMPT,
                 variables={
-                    "intent_json": dump_json(request.intent.model_dump()),
-                    "input_text": request.input,
-                    "current_slots_json": dump_json(
-                        {
-                            "gas_account_number": request.gas.account_number,
-                            "amount": request.payment.amount,
-                        }
-                    ),
-                    "recent_messages_json": dump_json(request.conversation.recent_messages),
-                    "long_term_memory_json": dump_json(request.conversation.long_term_memory),
+                    "intent_json": request.get_config_value("intent", "{}"),
+                    "input_text": request.txt,
+                    "current_slots_json": dump_json({
+                        "gas_account_number": slots.get("gas_account_number"),
+                        "amount": slots.get("amount"),
+                    }),
+                    "recent_messages_json": request.get_config_value("recent_messages", "[]"),
+                    "long_term_memory_json": request.get_config_value("long_term_memory", "[]"),
                 },
                 schema=GasBillPaymentResolution,
             )
