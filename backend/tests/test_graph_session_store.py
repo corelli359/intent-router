@@ -28,6 +28,7 @@ def test_purge_expired_promotes_and_removes_expired_session() -> None:
     active = store.create(cust_id="cust-1", session_id="active")
     expired = store.create(cust_id="cust-1", session_id="expired")
     expired.expires_at = expired.created_at - timedelta(seconds=1)
+    store.note_session_expiry(expired)
 
     removed = store.purge_expired()
 
@@ -47,6 +48,27 @@ def test_purge_expired_no_action_when_sessions_are_fresh() -> None:
 
     assert removed == []
     assert memory.promoted_sessions == []
+
+
+def test_purge_expired_skips_session_when_expiry_was_extended() -> None:
+    memory = SpyMemory()
+    store = GraphSessionStore(long_term_memory=memory)
+    session = store.create(cust_id="cust-3", session_id="extended")
+    original_expiry = session.expires_at
+    session.expires_at = original_expiry + timedelta(minutes=10)
+
+    removed = store.purge_expired(now=original_expiry + timedelta(seconds=1))
+
+    assert removed == []
+    assert memory.promoted_sessions == []
+    assert store.get(session.session_id) is session
+
+    removed = store.purge_expired(now=session.expires_at + timedelta(seconds=1))
+
+    assert removed == ["extended"]
+    assert memory.promoted_sessions == ["extended"]
+    with pytest.raises(KeyError):
+        store.get(session.session_id)
 
 
 def test_session_lock_serializes_same_session_id() -> None:

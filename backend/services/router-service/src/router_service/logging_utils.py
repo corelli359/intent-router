@@ -12,7 +12,7 @@ _ROUTER_QUEUE_HANDLER_ATTR = "_router_queue_handler"
 
 
 ROUTER_LOG_LEVEL_ENV = "ROUTER_LOG_LEVEL"
-DEFAULT_ROUTER_LOG_LEVEL = "INFO"
+DEFAULT_ROUTER_LOG_LEVEL = "WARNING"
 DEFAULT_ROUTER_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 
 

@@ -4,6 +4,9 @@ import asyncio
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
+import heapq
+import threading
 from typing import Any
 from uuid import uuid4
 
@@ -19,40 +22,50 @@ class GraphSessionStore:
         """Initialize the session store and its long-term memory backend."""
         self._sessions: dict[str, GraphSessionState] = {}
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._expiry_heap: list[tuple[datetime, str]] = []
+        self._state_lock = threading.RLock()
         self.long_term_memory = long_term_memory or LongTermMemoryStore()
 
     def create(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
         """Create and store a fresh graph session."""
         resolved_session_id = session_id or f"session_graph_{uuid4().hex[:10]}"
         session = GraphSessionState(session_id=resolved_session_id, cust_id=cust_id)
-        self._sessions[resolved_session_id] = session
-        return session
+        with self._state_lock:
+            return self._store_session(session)
 
     def get(self, session_id: str) -> GraphSessionState:
         """Return an existing graph session by id."""
-        return self._sessions[session_id]
+        with self._state_lock:
+            return self._sessions[session_id]
 
     @asynccontextmanager
     async def session_lock(self, session_id: str) -> AsyncIterator[None]:
         """Serialize concurrent mutations for one session id."""
-        async with self._locks[session_id]:
+        with self._state_lock:
+            lock = self._locks[session_id]
+        async with lock:
             yield
 
     def get_or_create(self, session_id: str | None, cust_id: str) -> GraphSessionState:
         """Resolve a session id, recreating expired or customer-mismatched sessions when needed."""
         if session_id is None:
             return self.create(cust_id=cust_id)
-        if session_id not in self._sessions:
-            self._sessions[session_id] = GraphSessionState(session_id=session_id, cust_id=cust_id)
-        session = self._sessions[session_id]
-        if session.cust_id != cust_id:
-            session = GraphSessionState(session_id=session_id, cust_id=cust_id)
-            self._sessions[session_id] = session
-        if session.is_expired():
-            self.long_term_memory.promote_session(self._compat_session_view(session))
-            session = GraphSessionState(session_id=session.session_id, cust_id=session.cust_id)
-            self._sessions[session_id] = session
-        return session
+        with self._state_lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return self._store_session(GraphSessionState(session_id=session_id, cust_id=cust_id))
+            if session.cust_id != cust_id:
+                return self._store_session(GraphSessionState(session_id=session_id, cust_id=cust_id))
+            if session.is_expired():
+                self.long_term_memory.promote_session(self._compat_session_view(session))
+                return self._store_session(GraphSessionState(session_id=session.session_id, cust_id=session.cust_id))
+            return session
+
+    def note_session_expiry(self, session: GraphSessionState) -> None:
+        """Track an externally updated session expiry without changing session contents."""
+        with self._state_lock:
+            if self._sessions.get(session.session_id) is session:
+                self._push_expiry(session)
 
     def _compat_session_view(self, session: GraphSessionState) -> Any:
         """Expose the subset of session fields required by long-term memory promotion."""
@@ -70,15 +83,37 @@ class GraphSessionStore:
 
         return _Compat(session)
 
-    def purge_expired(self) -> list[str]:
+    def _store_session(self, session: GraphSessionState) -> GraphSessionState:
+        """Persist one live session and index its current expiry deadline."""
+        self._sessions[session.session_id] = session
+        self._push_expiry(session)
+        return session
+
+    def _push_expiry(self, session: GraphSessionState) -> None:
+        """Record the session's current expiry in the lazy invalidation heap."""
+        heapq.heappush(self._expiry_heap, (session.expires_at, session.session_id))
+
+    def purge_expired(self, now: datetime | None = None) -> list[str]:
         """Promote and remove any sessions whose TTL has elapsed."""
-        now = utc_now()
+        current_time = now or utc_now()
         expired_sessions: list[str] = []
-        for session_id, session in list(self._sessions.items()):
-            if not session.is_expired(now=now):
-                continue
-            self.long_term_memory.promote_session(self._compat_session_view(session))
-            expired_sessions.append(session_id)
-            del self._sessions[session_id]
-            self._locks.pop(session_id, None)
+        with self._state_lock:
+            while self._expiry_heap:
+                tracked_expiry, session_id = self._expiry_heap[0]
+                if tracked_expiry > current_time:
+                    break
+                heapq.heappop(self._expiry_heap)
+                session = self._sessions.get(session_id)
+                if session is None:
+                    continue
+                if session.expires_at > tracked_expiry:
+                    self._push_expiry(session)
+                    continue
+                if not session.is_expired(now=current_time):
+                    self._push_expiry(session)
+                    continue
+                self.long_term_memory.promote_session(self._compat_session_view(session))
+                expired_sessions.append(session_id)
+                del self._sessions[session_id]
+                self._locks.pop(session_id, None)
         return expired_sessions
