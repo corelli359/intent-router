@@ -66,3 +66,25 @@ def test_event_broker_drops_oldest_event_when_queue_is_full() -> None:
         broker.unregister("session_overflow", queue)
 
     asyncio.run(run())
+
+
+def test_event_broker_publish_without_subscribers_is_noop() -> None:
+    async def run() -> None:
+        broker = EventBroker()
+
+        assert broker.has_subscribers("session_noop") is False
+        await broker.publish(
+            TaskEvent(
+                event="task.created",
+                task_id="task_001",
+                session_id="session_noop",
+                intent_code="query_account_balance",
+                status=TaskStatus.CREATED,
+                message="created",
+            )
+        )
+
+        assert broker.has_subscribers("session_noop") is False
+        assert "session_noop" not in broker._queues
+
+    asyncio.run(run())

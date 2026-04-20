@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
 
 from router_service.core.shared.domain import TaskEvent, TaskStatus
 from router_service.core.shared.graph_domain import (
@@ -174,15 +176,34 @@ class GraphEventPublisher:
         self.publish_event = publish_event
         self.presenter = presenter or GraphSnapshotPresenter(runtime_engine=runtime_engine)
         self.runtime_engine = runtime_engine or self.presenter.runtime_engine
+        self._events_enabled: ContextVar[bool] = ContextVar("router_events_enabled", default=True)
+
+    @contextmanager
+    def event_scope(self, enabled: bool) -> Iterator[None]:
+        """Temporarily enable or suppress event output for one router turn."""
+        token = self._events_enabled.set(enabled)
+        try:
+            yield
+        finally:
+            self._events_enabled.reset(token)
 
     async def publish(self, event: TaskEvent) -> None:
         """Publish one event, supporting both sync and async publisher callbacks."""
+        if not self._events_enabled.get():
+            return
         result = self.publish_event(event)
         if result is not None and hasattr(result, "__await__"):
             await result
 
+    def _should_publish_session(self, session: GraphSessionState) -> bool:
+        """Return whether event payloads should be built for this session."""
+        del session
+        return self._events_enabled.get()
+
     async def publish_recognition_started(self, session: GraphSessionState) -> None:
         """Publish the start of a recognition phase."""
+        if not self._should_publish_session(session):
+            return
         await self.publish(
             TaskEvent(
                 event="recognition.started",
@@ -197,7 +218,7 @@ class GraphEventPublisher:
 
     async def publish_recognition_delta(self, session: GraphSessionState, *, delta: str) -> None:
         """Publish one streamed recognition delta token or fragment."""
-        if not delta:
+        if not delta or not self._should_publish_session(session):
             return
         await self.publish(
             TaskEvent(
@@ -213,6 +234,8 @@ class GraphEventPublisher:
 
     async def publish_recognition_completed(self, session: GraphSessionState, *, recognition: Any) -> None:
         """Publish the completed recognition result."""
+        if not self._should_publish_session(session):
+            return
         primary_intents = [match.intent_code for match in recognition.primary]
         await self.publish(
             TaskEvent(
@@ -236,6 +259,8 @@ class GraphEventPublisher:
 
     async def publish_graph_builder_started(self, session: GraphSessionState) -> None:
         """Publish the start of the unified graph builder phase."""
+        if not self._should_publish_session(session):
+            return
         await self.publish(
             TaskEvent(
                 event="graph_builder.started",
@@ -250,7 +275,7 @@ class GraphEventPublisher:
 
     async def publish_graph_builder_delta(self, session: GraphSessionState, *, delta: str) -> None:
         """Publish one streamed delta from the unified graph builder."""
-        if not delta:
+        if not delta or not self._should_publish_session(session):
             return
         await self.publish(
             TaskEvent(
@@ -266,6 +291,8 @@ class GraphEventPublisher:
 
     async def publish_graph_builder_completed(self, session: GraphSessionState, *, result: Any) -> None:
         """Publish the completed unified graph builder result."""
+        if not self._should_publish_session(session):
+            return
         await self.publish(
             TaskEvent(
                 event="graph_builder.completed",
@@ -299,6 +326,8 @@ class GraphEventPublisher:
         payload_overrides: dict[str, Any] | None = None,
     ) -> None:
         """Publish one graph-level state update."""
+        if not self._should_publish_session(session):
+            return
         resolved_status = status or self.runtime_engine.task_status_for_graph(graph.status)
         payload: dict[str, Any] = {
             "cust_id": session.cust_id,
@@ -338,6 +367,8 @@ class GraphEventPublisher:
         source: str | None = None,
     ) -> None:
         """Publish one node-level runtime event with graph and node payload context."""
+        if not self._should_publish_session(session):
+            return
         event_payload: dict[str, Any] = {
             "cust_id": session.cust_id,
             **(payload or {}),
@@ -381,6 +412,8 @@ class GraphEventPublisher:
 
     async def publish_session_state(self, session: GraphSessionState, *, event: str) -> None:
         """Publish a session-level state update."""
+        if not self._should_publish_session(session):
+            return
         payload: dict[str, Any] = {
             "cust_id": session.cust_id,
             "active_node_id": session.active_node_id,
@@ -409,6 +442,8 @@ class GraphEventPublisher:
 
     async def publish_unrecognized(self, session: GraphSessionState, *, message: str) -> None:
         """Publish the router's no-match outcome."""
+        if not self._should_publish_session(session):
+            return
         await self.publish(
             TaskEvent(
                 event="graph.unrecognized",
@@ -424,6 +459,8 @@ class GraphEventPublisher:
 
     async def publish_pending_graph(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
         """Publish a newly proposed pending graph that requires confirmation."""
+        if not self._should_publish_session(session):
+            return
         await self.publish(
             TaskEvent(
                 event="graph.proposed",
@@ -446,6 +483,8 @@ class GraphEventPublisher:
 
     async def publish_graph_waiting_hint(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
         """Publish a reminder that a pending graph still awaits confirmation."""
+        if not self._should_publish_session(session):
+            return
         await self.publish(
             TaskEvent(
                 event="graph.waiting_confirmation",
@@ -468,6 +507,8 @@ class GraphEventPublisher:
 
     async def publish_graph_cancelled(self, session: GraphSessionState, graph: ExecutionGraphState) -> None:
         """Publish cancellation of a pending or current graph."""
+        if not self._should_publish_session(session):
+            return
         await self.publish(
             TaskEvent(
                 event="graph.cancelled",

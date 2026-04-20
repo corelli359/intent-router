@@ -273,23 +273,24 @@ class GraphRouterOrchestrator:
             content=content,
             details=trace_details,
         ):
-            async with self.session_store.session_lock(session_id):
-                with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
-                    await self.message_flow.handle_user_message(
-                        session_id,
-                        cust_id,
-                        content,
-                        router_only=router_only,
-                        guided_selection=guided_selection,
-                        recommendation_context=recommendation_context,
-                        proactive_recommendation=proactive_recommendation,
-                        return_snapshot=False,
-                        emit_events=emit_events,
-                    )
-                session = self.session_store.get(session_id)
-                snapshot = self._finalize_handover_business(session)
-                if snapshot is None and return_snapshot:
-                    snapshot = self._build_session_dump(session)
+            with self.event_publisher.event_scope(emit_events):
+                async with self.session_store.session_lock(session_id):
+                    with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
+                        await self.message_flow.handle_user_message(
+                            session_id,
+                            cust_id,
+                            content,
+                            router_only=router_only,
+                            guided_selection=guided_selection,
+                            recommendation_context=recommendation_context,
+                            proactive_recommendation=proactive_recommendation,
+                            return_snapshot=False,
+                            emit_events=emit_events,
+                        )
+                    session = self.session_store.get(session_id)
+                    snapshot = self._finalize_handover_business(session)
+                    if snapshot is None and return_snapshot:
+                        snapshot = self._build_session_dump(session)
             logger.debug(
                 "Router message snapshot (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s)",
                 current_trace_id(),
@@ -330,23 +331,24 @@ class GraphRouterOrchestrator:
             content=content,
             details=trace_details,
         ):
-            async with self.session_store.session_lock(session_id):
-                with router_stage(logger, "orchestrator.handle_user_message_serialized", **trace_details):
-                    await self.message_flow.handle_user_message(
-                        session_id,
-                        cust_id,
-                        content,
-                        router_only=router_only,
-                        guided_selection=guided_selection,
-                        recommendation_context=recommendation_context,
-                        proactive_recommendation=proactive_recommendation,
-                        return_snapshot=False,
-                        emit_events=emit_events,
-                    )
-                session = self.session_store.get(session_id)
-                serialized = self._finalize_handover_business_with(session, serializer)
-                if serialized is None:
-                    serialized = serializer(session)
+            with self.event_publisher.event_scope(emit_events):
+                async with self.session_store.session_lock(session_id):
+                    with router_stage(logger, "orchestrator.handle_user_message_serialized", **trace_details):
+                        await self.message_flow.handle_user_message(
+                            session_id,
+                            cust_id,
+                            content,
+                            router_only=router_only,
+                            guided_selection=guided_selection,
+                            recommendation_context=recommendation_context,
+                            proactive_recommendation=proactive_recommendation,
+                            return_snapshot=False,
+                            emit_events=emit_events,
+                        )
+                    session = self.session_store.get(session_id)
+                    serialized = self._finalize_handover_business_with(session, serializer)
+                    if serialized is None:
+                        serialized = serializer(session)
         return serialized
 
     async def _handle_proactive_recommendation_turn(
@@ -388,23 +390,25 @@ class GraphRouterOrchestrator:
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
         return_snapshot: bool = True,
+        emit_events: bool = True,
     ) -> GraphRouterSnapshot | None:
         """Delegate one explicit graph action into the action-flow state machine."""
-        async with self.session_store.session_lock(session_id):
-            await self.action_flow.handle_action(
-                session_id=session_id,
-                cust_id=cust_id,
-                action_code=action_code,
-                source=source,
-                task_id=task_id,
-                confirm_token=confirm_token,
-                payload=payload,
-                return_snapshot=False,
-            )
-            session = self.session_store.get(session_id)
-            snapshot = self._finalize_handover_business(session)
-            if snapshot is None and return_snapshot:
-                snapshot = self._build_session_dump(session)
+        with self.event_publisher.event_scope(emit_events):
+            async with self.session_store.session_lock(session_id):
+                await self.action_flow.handle_action(
+                    session_id=session_id,
+                    cust_id=cust_id,
+                    action_code=action_code,
+                    source=source,
+                    task_id=task_id,
+                    confirm_token=confirm_token,
+                    payload=payload,
+                    return_snapshot=False,
+                )
+                session = self.session_store.get(session_id)
+                snapshot = self._finalize_handover_business(session)
+                if snapshot is None and return_snapshot:
+                    snapshot = self._build_session_dump(session)
         return snapshot if return_snapshot or snapshot is not None else None
 
     async def handle_action_serialized(
@@ -418,23 +422,25 @@ class GraphRouterOrchestrator:
         task_id: str | None = None,
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
+        emit_events: bool = False,
     ) -> SerializedResponseT:
         """Process one explicit graph action and serialize the response while the session is still locked."""
-        async with self.session_store.session_lock(session_id):
-            await self.action_flow.handle_action(
-                session_id=session_id,
-                cust_id=cust_id,
-                action_code=action_code,
-                source=source,
-                task_id=task_id,
-                confirm_token=confirm_token,
-                payload=payload,
-                return_snapshot=False,
-            )
-            session = self.session_store.get(session_id)
-            serialized = self._finalize_handover_business_with(session, serializer)
-            if serialized is None:
-                serialized = serializer(session)
+        with self.event_publisher.event_scope(emit_events):
+            async with self.session_store.session_lock(session_id):
+                await self.action_flow.handle_action(
+                    session_id=session_id,
+                    cust_id=cust_id,
+                    action_code=action_code,
+                    source=source,
+                    task_id=task_id,
+                    confirm_token=confirm_token,
+                    payload=payload,
+                    return_snapshot=False,
+                )
+                session = self.session_store.get(session_id)
+                serialized = self._finalize_handover_business_with(session, serializer)
+                if serialized is None:
+                    serialized = serializer(session)
         return serialized
 
     async def _route_new_message(
@@ -790,7 +796,7 @@ class GraphRouterOrchestrator:
         dispatch_input: str,
     ) -> Task | None:
         """Validate slot readiness and create the agent task for a ready node."""
-        active_intents = dict(self.intent_catalog.active_intents_by_code())
+        active_intents = self.intent_catalog.active_intents_by_code()
         intent = active_intents.get(node.intent_code)
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
@@ -853,7 +859,7 @@ class GraphRouterOrchestrator:
         dispatch_input: str,
     ) -> bool:
         """Validate router understanding and stop once the node is ready to dispatch."""
-        active_intents = dict(self.intent_catalog.active_intents_by_code())
+        active_intents = self.intent_catalog.active_intents_by_code()
         intent = active_intents.get(node.intent_code)
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
@@ -973,11 +979,14 @@ class GraphRouterOrchestrator:
             node_id=node.node_id,
             intent_code=intent.intent_code,
         ):
-            session_context = self._build_session_context(session)
-            memory_candidates = list(session_context["long_term_memory"])
+            long_term_memory = self.session_store.long_term_memory.recall(
+                session.cust_id,
+                limit=self.config.memory_recall_limit,
+            )
+            memory_candidates = list(long_term_memory)
             history_slot_values = self._history_slot_values(
                 session,
-                long_term_memory=session_context["long_term_memory"],
+                long_term_memory=long_term_memory,
             )
             for slot_key, value in history_slot_values.items():
                 candidate = f"{slot_key}={value}"

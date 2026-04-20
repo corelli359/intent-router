@@ -3,9 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from router_service.core.support.json_codec import json_loads
-
-
 _PERF_TRANSFER_MESSAGE = "给小明转500元"
 _PERF_TRANSFER_SLOTS = {
     "payee_name": "小明",
@@ -18,6 +15,11 @@ def _extract_transfer_slots(message: str) -> dict[str, str]:
     if normalized != _PERF_TRANSFER_MESSAGE:
         return {}
     return dict(_PERF_TRANSFER_SLOTS)
+
+
+def _json_text_mentions_key(raw_json: object, key: str) -> bool:
+    """Return whether one compact JSON variable mentions a key without reparsing it."""
+    return key in str(raw_json or "")
 
 
 @dataclass(slots=True)
@@ -38,12 +40,14 @@ class FastPerfLLMClient:
         message = str(variables.get("message") or "")
         slots = _extract_transfer_slots(message)
         if "intent_json" in variables and "existing_slot_memory_json" in variables:
-            intent_payload = json_loads(str(variables["intent_json"]))
-            slot_schema = intent_payload.get("slot_schema") or []
-            existing = json_loads(str(variables["existing_slot_memory_json"]))
-            slot_keys = {str(item.get("slot_key") or "") for item in slot_schema if isinstance(item, dict)}
+            intent_json = variables.get("intent_json")
+            existing_slot_memory_json = variables.get("existing_slot_memory_json")
             payload_slots: list[dict[str, Any]] = []
-            if "payee_name" in slots and "payee_name" in slot_keys and "payee_name" not in existing:
+            if (
+                "payee_name" in slots
+                and _json_text_mentions_key(intent_json, "payee_name")
+                and not _json_text_mentions_key(existing_slot_memory_json, "payee_name")
+            ):
                 payload_slots.append(
                     {
                         "slot_key": "payee_name",
@@ -53,7 +57,11 @@ class FastPerfLLMClient:
                         "confidence": 0.99,
                     }
                 )
-            if "amount" in slots and "amount" in slot_keys and "amount" not in existing:
+            if (
+                "amount" in slots
+                and _json_text_mentions_key(intent_json, "amount")
+                and not _json_text_mentions_key(existing_slot_memory_json, "amount")
+            ):
                 payload_slots.append(
                     {
                         "slot_key": "amount",

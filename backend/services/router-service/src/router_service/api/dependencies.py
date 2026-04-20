@@ -177,10 +177,12 @@ def build_router_runtime() -> RouterRuntime:
             llm_client=llm_client,
             model=settings.llm_model,
             system_prompt_template=(
-                settings.llm_slot_extractor_system_prompt_template or DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT
+                getattr(settings, "llm_slot_extractor_system_prompt_template", None)
+                or DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT
             ),
             human_prompt_template=(
-                settings.llm_slot_extractor_human_prompt_template or DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT
+                getattr(settings, "llm_slot_extractor_human_prompt_template", None)
+                or DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT
             ),
         ),
         slot_validator=SlotValidator(),
@@ -287,7 +289,7 @@ def _build_llm_client() -> JsonLLMClient | None:
         base_url=settings.llm_api_base_url or "",
         api_key=settings.llm_api_key,
         default_model=settings.default_llm_model,
-        temperature=settings.llm_temperature,
+        temperature=getattr(settings, "llm_temperature", 0.0),
         timeout_seconds=settings.llm_timeout_seconds,
         rate_limit_max_retries=getattr(settings, "llm_rate_limit_max_retries", 2),
         rate_limit_retry_delay_seconds=getattr(settings, "llm_rate_limit_retry_delay_seconds", 2.0),

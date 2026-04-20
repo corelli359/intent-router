@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from enum import StrEnum
 from contextlib import suppress
+from enum import StrEnum
 
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field, model_validator
@@ -17,6 +17,7 @@ from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphEdge,
     GraphNodeState,
+    GraphRouterSnapshot,
     GuidedSelectionPayload,
     ProactiveRecommendationPayload,
     RecommendationContextPayload,
@@ -47,6 +48,13 @@ class CreateSessionRequest(BaseModel):
 
     cust_id: str | None = None
     session_id: str | None = None
+
+
+class SessionSnapshotResponse(BaseModel):
+    """Standard response envelope for snapshot-returning session mutations."""
+
+    ok: bool = True
+    snapshot: GraphRouterSnapshot
 
 
 class MessageRequest(BaseModel):
@@ -278,6 +286,16 @@ def _serialize_session(session: object) -> dict[str, object]:
     }
 
 
+def _serialize_response_snapshot(snapshot: object) -> dict[str, object]:
+    """Normalize fallback snapshot objects into the public API response shape."""
+    if isinstance(snapshot, dict):
+        return snapshot
+    model_dump = getattr(snapshot, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+    return _serialize_session(snapshot)
+
+
 def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
     """Encode one router event as an SSE frame."""
     body = json_dumps(payload)
@@ -295,11 +313,11 @@ async def create_session(
     return CreateSessionResponse(session_id=session.session_id, cust_id=session.cust_id)
 
 
-@router.get("/sessions/{session_id}")
+@router.get("/sessions/{session_id}", response_model=GraphRouterSnapshot)
 async def get_session_snapshot(
     session_id: str,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
-):
+) -> dict[str, object]:
     """Return the current router snapshot for one session."""
     try:
         return _serialize_session_payload(orchestrator, session_id)
@@ -312,67 +330,96 @@ async def get_session_snapshot(
         ) from exc
 
 
-@router.post("/sessions/{session_id}/messages")
+@router.post("/sessions/{session_id}/messages", response_model=SessionSnapshotResponse)
 async def post_message(
     session_id: str,
     request: MessageRequest,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
-):
+) -> SessionSnapshotResponse:
     """Submit one user message turn to the router and return the updated snapshot."""
     # Message APIs are the main entry for intent dialog. They can be called by a
     # frontend chat page, a test harness, or a backend integration that wants to
     # drive the router directly without rendering any UI.
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     try:
-        snapshot = await orchestrator.handle_user_message_serialized(
-            session_id=session_id,
-            cust_id=resolved_cust_id,
-            content=request.content or "",
-            serializer=_serialize_session,
-            router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
-            guided_selection=request.guided_selection,
-            recommendation_context=request.recommendation_context,
-            proactive_recommendation=request.proactive_recommendation,
-            emit_events=False,
-        )
+        serialized_handler = getattr(orchestrator, "handle_user_message_serialized", None)
+        if callable(serialized_handler):
+            snapshot = await serialized_handler(
+                session_id=session_id,
+                cust_id=resolved_cust_id,
+                content=request.content or "",
+                serializer=_serialize_session,
+                router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
+                guided_selection=request.guided_selection,
+                recommendation_context=request.recommendation_context,
+                proactive_recommendation=request.proactive_recommendation,
+                emit_events=False,
+            )
+        else:
+            snapshot = _serialize_response_snapshot(
+                await orchestrator.handle_user_message(
+                    session_id=session_id,
+                    cust_id=resolved_cust_id,
+                    content=request.content or "",
+                    router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
+                    guided_selection=request.guided_selection,
+                    recommendation_context=request.recommendation_context,
+                    proactive_recommendation=request.proactive_recommendation,
+                    emit_events=False,
+                )
+            )
     except ValueError as exc:
         raise RouterApiException(
             status_code=400,
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
-    return {"ok": True, "snapshot": snapshot}
+    return SessionSnapshotResponse(snapshot=snapshot)
 
 
-@router.post("/sessions/{session_id}/actions")
+@router.post("/sessions/{session_id}/actions", response_model=SessionSnapshotResponse)
 async def post_action(
     session_id: str,
     request: ActionRequest,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
-):
+) -> SessionSnapshotResponse:
     """Submit one explicit graph action and return the updated snapshot."""
     # Action APIs mutate the router state machine directly. Typical callers are
     # the graph UI, an orchestration service, or tests that need to confirm/cancel
     # a pending graph or interrupt the current waiting node.
     resolved_cust_id = _resolve_action_cust_id(orchestrator, session_id, request)
     try:
-        snapshot = await orchestrator.handle_action_serialized(
-            session_id=session_id,
-            cust_id=resolved_cust_id,
-            action_code=request.action_code or "",
-            serializer=_serialize_session,
-            source=request.source,
-            task_id=request.task_id,
-            confirm_token=request.confirm_token,
-            payload=request.payload,
-        )
+        serialized_handler = getattr(orchestrator, "handle_action_serialized", None)
+        if callable(serialized_handler):
+            snapshot = await serialized_handler(
+                session_id=session_id,
+                cust_id=resolved_cust_id,
+                action_code=request.action_code or "",
+                serializer=_serialize_session,
+                source=request.source,
+                task_id=request.task_id,
+                confirm_token=request.confirm_token,
+                payload=request.payload,
+            )
+        else:
+            snapshot = _serialize_response_snapshot(
+                await orchestrator.handle_action(
+                    session_id=session_id,
+                    cust_id=resolved_cust_id,
+                    action_code=request.action_code or "",
+                    source=request.source,
+                    task_id=request.task_id,
+                    confirm_token=request.confirm_token,
+                    payload=request.payload,
+                )
+            )
     except ValueError as exc:
         raise RouterApiException(
             status_code=400,
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
-    return {"ok": True, "snapshot": snapshot}
+    return SessionSnapshotResponse(snapshot=snapshot)
 
 
 @router.post("/sessions/{session_id}/actions/stream")

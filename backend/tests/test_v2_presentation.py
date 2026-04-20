@@ -69,6 +69,32 @@ def test_graph_event_publisher_publishes_session_state_payload() -> None:
     assert events[0].payload["graph"]["graph_id"]
 
 
+def test_graph_event_publisher_skips_session_payload_when_scope_disabled() -> None:
+    events: list[TaskEvent] = []
+    publisher = GraphEventPublisher(events.append)
+
+    async def run() -> None:
+        from router_service.core.shared.graph_domain import GraphSessionState
+
+        session = GraphSessionState(session_id="s1", cust_id="cust_demo")
+        graph = ExecutionGraphState(source_message="测试图", status=GraphStatus.RUNNING)
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="transfer_money",
+                title="转账",
+                confidence=0.9,
+                position=0,
+            )
+        )
+        session.current_graph = graph
+        with publisher.event_scope(False):
+            await publisher.publish_session_state(session, event="session.updated")
+
+    asyncio.run(run())
+
+    assert events == []
+
+
 def test_graph_event_publisher_publishes_recognition_and_node_runtime_events() -> None:
     events: list[TaskEvent] = []
     publisher = GraphEventPublisher(events.append)

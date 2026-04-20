@@ -42,9 +42,16 @@ class EventBroker:
         if not queues:
             self._queues.pop(session_id, None)
 
+    def has_subscribers(self, session_id: str) -> bool:
+        """Return whether a session currently has at least one SSE subscriber."""
+        return bool(self._queues.get(session_id))
+
     async def publish(self, event: TaskEvent) -> None:
         """Publish an event to all queues subscribed to the same session."""
-        for queue in list(self._queues[event.session_id]):
+        queues = self._queues.get(event.session_id)
+        if not queues:
+            return
+        for queue in list(queues):
             await self._push_event(queue, event)
 
     async def subscribe(self, session_id: str) -> AsyncGenerator[TaskEvent, None]:

@@ -23,8 +23,10 @@ from router_service.core.prompts.prompt_templates import (
 logger = logging.getLogger(__name__)
 _INTENT_PAYLOAD_CACHE_LIMIT = 2048
 _INTENTS_JSON_CACHE_LIMIT = 256
+_INTENTS_BY_CODE_CACHE_LIMIT = 256
 _intent_payload_cache: dict[int, tuple[IntentDefinition, dict[str, object]]] = {}
 _intents_json_cache: dict[tuple[int, ...], tuple[tuple[IntentDefinition, ...], str]] = {}
+_intents_by_code_cache: dict[tuple[int, ...], tuple[tuple[IntentDefinition, ...], dict[str, IntentDefinition]]] = {}
 
 
 @dataclass(slots=True)
@@ -89,6 +91,24 @@ def recognition_intents_json(intents: Iterable[IntentDefinition]) -> str:
     return payload
 
 
+def recognition_intents_by_code(intents: Iterable[IntentDefinition]) -> dict[str, IntentDefinition]:
+    """Return a cached intent lookup for one active-intent set."""
+    intent_tuple = tuple(intents)
+    cache_key = tuple(id(intent) for intent in intent_tuple)
+    cached = _intents_by_code_cache.get(cache_key)
+    if cached is not None:
+        cached_intents, cached_index = cached
+        if len(cached_intents) == len(intent_tuple) and all(
+            left is right for left, right in zip(cached_intents, intent_tuple)
+        ):
+            return cached_index
+    index = {intent.intent_code: intent for intent in intent_tuple}
+    if len(_intents_by_code_cache) >= _INTENTS_BY_CODE_CACHE_LIMIT:
+        _intents_by_code_cache.clear()
+    _intents_by_code_cache[cache_key] = (intent_tuple, index)
+    return index
+
+
 class IntentRecognizer(Protocol):
     """Protocol for components that can recognize intents from free-form messages."""
 
@@ -147,7 +167,7 @@ class LLMIntentRecognizer:
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RecognitionResult:
         """Run LLM-based recognition and bucket matches by configured thresholds."""
-        active_intents = [intent for intent in intents if intent.status == "active"]
+        active_intents = tuple(intent for intent in intents if intent.status == "active")
         if not active_intents:
             return RecognitionResult(primary=[], candidates=[], diagnostics=[])
 
@@ -183,7 +203,7 @@ class LLMIntentRecognizer:
 
         raw_matches = response.matches
 
-        definitions_by_code = {intent.intent_code: intent for intent in active_intents}
+        definitions_by_code = recognition_intents_by_code(active_intents)
         primary: list[IntentMatch] = []
         candidates: list[IntentMatch] = []
         seen_codes: set[str] = set()

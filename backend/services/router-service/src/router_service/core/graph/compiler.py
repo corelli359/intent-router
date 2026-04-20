@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
@@ -152,9 +153,9 @@ class GraphCompiler:
                 )
 
             recognition = recognition or RecognitionResult(primary=[], candidates=[], diagnostics=[])
-            active_intent_index = self.intent_catalog.active_intents_by_code()
+            active_intent_index: Mapping[str, IntentDefinition] = self.intent_catalog.active_intents_by_code()
             matches = [match for match in recognition.primary if match.intent_code in active_intent_index]
-            intents_by_code = dict(active_intent_index)
+            intents_by_code = active_intent_index
             diagnostics: list[RouterDiagnostic] = list(recognition.diagnostics or [])
 
             if not matches:
@@ -185,8 +186,9 @@ class GraphCompiler:
                         no_match=True,
                         diagnostics=diagnostics,
                     )
-                matches = [IntentMatch(intent_code=fallback_intent.intent_code, confidence=0.0, reason="fallback")]
+                intents_by_code = dict(active_intent_index)
                 intents_by_code[fallback_intent.intent_code] = fallback_intent
+                matches = [IntentMatch(intent_code=fallback_intent.intent_code, confidence=0.0, reason="fallback")]
 
             if graph is None:
                 graph = await self._plan_graph(

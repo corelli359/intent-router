@@ -169,7 +169,6 @@ async def _run_step(
     errors: dict[str, int] = {}
     success_count = 0
     failure_count = 0
-    issue_lock = asyncio.Lock()
     worker_sessions: list[str] | None = None
 
     if flow_mode == "message_existing_session":
@@ -199,13 +198,9 @@ async def _run_step(
                 }
             worker_sessions.append(created_session_id)
 
-    async def should_continue() -> bool:
-        async with issue_lock:
-            return perf_counter() < deadline
-
     async def worker(worker_index: int) -> None:
         nonlocal success_count, failure_count
-        while await should_continue():
+        while perf_counter() < deadline:
             if flow_mode == "create_only":
                 ok, latency_ms, error_key = await _exercise_create_only(client)
             elif flow_mode == "message_auto_create":
@@ -274,7 +269,12 @@ async def _main_async(args: argparse.Namespace) -> int:
         )
 
     limits = httpx.Limits(max_connections=None, max_keepalive_connections=None)
-    async with httpx.AsyncClient(base_url=args.base_url.rstrip("/"), timeout=timeout, limits=limits) as client:
+    async with httpx.AsyncClient(
+        base_url=args.base_url.rstrip("/"),
+        timeout=timeout,
+        limits=limits,
+        trust_env=False,
+    ) as client:
         steps: list[dict[str, Any]] = []
         for concurrency in args.concurrency_steps:
             step = await _run_step(

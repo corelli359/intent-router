@@ -60,6 +60,26 @@ def router_trace(
     details: dict[str, Any] | None = None,
 ) -> Iterator[RouterTraceContext]:
     """Create one top-level router trace and log its overall elapsed time."""
+    if not logger.isEnabledFor(logging.INFO):
+        context = RouterTraceContext(
+            trace_id="",
+            entrypoint=entrypoint,
+            session_id=session_id,
+            cust_id=cust_id,
+            content_preview=None,
+        )
+        try:
+            yield context
+        except Exception:
+            logger.exception(
+                "Router trace failed (entrypoint=%s, session_id=%s, details=%s)",
+                entrypoint,
+                session_id,
+                details or None,
+            )
+            raise
+        return
+
     context = RouterTraceContext(
         trace_id=uuid4().hex[:8],
         entrypoint=entrypoint,
@@ -112,6 +132,18 @@ def router_stage(
     **details: Any,
 ) -> Iterator[None]:
     """Log one nested router stage with elapsed time under the current trace."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        try:
+            yield
+        except Exception:
+            logger.exception(
+                "Router stage failed (stage=%s, details=%s)",
+                stage,
+                details or None,
+            )
+            raise
+        return
+
     context = current_trace_context()
     trace_id = context.trace_id if context is not None else None
     session_id = context.session_id if context is not None else None

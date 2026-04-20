@@ -42,6 +42,11 @@ def parse_args() -> argparse.Namespace:
         choices=("critical", "error", "warning", "info", "debug", "trace"),
         help="Uvicorn log level.",
     )
+    parser.add_argument(
+        "--access-log",
+        action="store_true",
+        help="Enable uvicorn per-request access logs.",
+    )
     return parser.parse_args()
 
 
@@ -58,7 +63,7 @@ def main() -> int:
         port=args.port,
         reload=False,
         log_level=args.log_level,
-        access_log=True,
+        access_log=args.access_log,
     )
     return 0
 
