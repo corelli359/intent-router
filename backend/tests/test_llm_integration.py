@@ -17,6 +17,7 @@ from router_service.core.shared.domain import IntentMatch  # noqa: E402
 from router_service.core.support.llm_client import (  # noqa: E402
     IntentRecognitionMatchPayload,
     IntentRecognitionPayload,
+    LLMHTTPStatusError,
     LangChainLLMClient,
     extract_json_value,
 )
@@ -247,6 +248,58 @@ def test_langchain_llm_client_retries_rate_limited_requests_once() -> None:
 
         assert payload == {"matches": []}
         assert client.calls == 2
+
+    asyncio.run(run())
+
+
+def test_llm_http_status_error_message_includes_body_preview() -> None:
+    error = LLMHTTPStatusError(
+        400,
+        body={
+            "error": {
+                "message": "model not found",
+                "type": "invalid_request_error",
+            }
+        },
+    )
+
+    assert "LLM HTTP request failed with status 400" in str(error)
+    assert "model not found" in str(error)
+    assert "invalid_request_error" in str(error)
+    assert error.body["error"]["message"] == "model not found"
+
+
+def test_langchain_llm_client_http_status_error_includes_provider_body() -> None:
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "unknown model: bad-model",
+                        "code": "model_not_found",
+                    }
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as plain_client:
+            client = LangChainLLMClient(
+                base_url="https://example.com/v1",
+                api_key="plain-api-key",
+                default_model="bad-model",
+                http_async_client=plain_client,
+            )
+            with pytest.raises(LLMHTTPStatusError) as exc_info:
+                await client.run_json(
+                    prompt=ChatPromptTemplate.from_messages([("human", "hi")]),
+                    variables={},
+                )
+
+        assert exc_info.value.status_code == 400
+        assert "unknown model: bad-model" in str(exc_info.value)
+        assert "model_not_found" in str(exc_info.value)
+        assert exc_info.value.body["error"]["code"] == "model_not_found"
 
     asyncio.run(run())
 

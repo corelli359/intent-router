@@ -29,9 +29,12 @@ class LLMHTTPStatusError(RuntimeError):
     """HTTP-layer LLM failure with provider status metadata for retry logic."""
 
     def __init__(self, status_code: int, body: Any = None) -> None:
-        super().__init__(f"LLM HTTP request failed with status {status_code}")
         self.status_code = status_code
         self.body = body
+        message = f"LLM HTTP request failed with status {status_code}"
+        if body is not None:
+            message = f"{message}; body={body}"
+        super().__init__(message)
 
 
 def extract_json_value(raw_text: str) -> Any:
