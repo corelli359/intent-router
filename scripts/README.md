@@ -177,7 +177,49 @@ INTENT_ROUTER_INTERACTIVE=0 python scripts/verify_multiturn_intent_slot_suite.py
   --scenario two_turn_name_then_amount
 ```
 
-### 6) Build target-cluster frontend artifacts
+### 6) Assistant-style router contract verification
+
+This script bypasses `assistant-service` and calls Router directly with the
+assistant-facing request shape:
+
+- `txt`
+- `config_variables`
+- `executionMode`
+
+Default mode is `router_only`, so it validates the non-stream contract without
+depending on downstream agents.
+
+```bash
+python scripts/verify_router_assistant_contract.py --base-url "$INTENT_ROUTER_BASE_URL"
+```
+
+Strict two-turn transfer demo in `router_only` mode:
+
+```bash
+python scripts/verify_router_assistant_contract.py \
+  --base-url "$INTENT_ROUTER_BASE_URL" \
+  --strict-demo
+```
+
+When the transfer agent is deployed and you want to validate final handover:
+
+```bash
+python scripts/verify_router_assistant_contract.py \
+  --base-url "$INTENT_ROUTER_BASE_URL" \
+  --execution-mode execute \
+  --strict-demo
+```
+
+This script checks:
+
+- top-level response is `ok + output`
+- no `snapshot` is returned on assistant protocol
+- output shape matches one of:
+  - router intermediate state
+  - handover result
+  - failed result
+
+### 7) Build target-cluster frontend artifacts
 
 This generates:
 
@@ -200,7 +242,7 @@ ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
 ./scripts/build_prod_target.sh
 ```
 
-### 7) Register additional financial intents
+### 8) Register additional financial intents
 
 This upserts the extra V2 financial intents used by the multi-agent runtime:
 
