@@ -167,3 +167,4 @@ class AgentStreamChunk(BaseModel):
     ishandover: bool
     status: TaskStatus
     payload: dict[str, Any] = Field(default_factory=dict)
+    output: dict[str, Any] = Field(default_factory=dict)

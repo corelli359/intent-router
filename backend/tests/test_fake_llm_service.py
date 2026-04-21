@@ -77,3 +77,43 @@ async def test_fake_llm_perf_slot_fast_path_returns_transfer_slots() -> None:
     assert '"value":"小明"' in content
     assert '"slot_key":"amount"' in content
     assert '"value":"500"' in content
+
+
+@pytest.mark.asyncio
+async def test_fake_llm_slot_extractor_supports_current_router_prompt_shape() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "fake-router-llm",
+                "stream": False,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "你是路由层的槽位抽取器，只为单个 leaf intent 抽取槽位。",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "当前消息:\n给小明转账\n\n"
+                            "当前节点原始片段:\n给小明转账\n\n"
+                            "意图定义(JSON):\n"
+                            '{"intent_code":"AG_TRANS","slot_schema":[{"slot_key":"payee_name"},{"slot_key":"amount"}]}\n\n'
+                            "已有槽位(JSON):\n{}\n\n"
+                            "当前任务:\n"
+                            "只补充或修正当前轮能够明确落地的槽位；不要重复输出已经成立且本轮没有变化的已有槽位；不要猜测缺失槽位。\n\n"
+                            "请输出 JSON:\n"
+                        ),
+                    },
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    content = payload["choices"][0]["message"]["content"]
+    assert '"slot_key":"payee_name"' in content
+    assert '"value":"小明"' in content

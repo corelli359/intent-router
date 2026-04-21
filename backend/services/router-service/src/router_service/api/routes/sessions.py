@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from enum import StrEnum
+from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field, model_validator
@@ -17,13 +18,14 @@ from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphEdge,
     GraphNodeState,
+    GraphNodeStatus,
     GraphRouterSnapshot,
     GuidedSelectionPayload,
     ProactiveRecommendationPayload,
     RecommendationContextPayload,
 )
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator
-from router_service.core.support.json_codec import json_dumps
+from router_service.core.support.json_codec import JSONDecodeError, json_dumps, json_loads
 
 
 router = APIRouter(tags=["router"])
@@ -57,24 +59,57 @@ class SessionSnapshotResponse(BaseModel):
     snapshot: GraphRouterSnapshot
 
 
+class AssistantOutputResponse(BaseModel):
+    """Assistant-facing response envelope for the new upstream protocol."""
+
+    ok: bool = True
+    output: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConfigVariableInput(BaseModel):
+    """One upstream `config_variables` item passed through the router."""
+
+    name: str
+    value: Any = ""
+
+    def parsed_json_value(self) -> Any:
+        """Parse JSON-like string values when possible for structured router hints."""
+        if isinstance(self.value, str):
+            text = self.value.strip()
+            if not text:
+                return None
+            try:
+                return json_loads(text)
+            except JSONDecodeError:
+                return self.value
+        return self.value
+
+
 class MessageRequest(BaseModel):
     """Unified message payload for both plain dialog and structured router inputs."""
 
     content: str | None = None
     message: str | None = None
+    txt: str | None = None
     execution_mode: MessageExecutionMode = Field(default=MessageExecutionMode.EXECUTE, alias="executionMode")
     guided_selection: GuidedSelectionPayload | None = Field(default=None, alias="guidedSelection")
     recommendation_context: RecommendationContextPayload | None = Field(default=None, alias="recommendationContext")
     proactive_recommendation: ProactiveRecommendationPayload | None = Field(default=None, alias="proactiveRecommendation")
+    config_variables: list[ConfigVariableInput] = Field(default_factory=list)
     cust_id: str | None = None
 
     @model_validator(mode="after")
     def normalize(self) -> "MessageRequest":
         """Normalize alias fields and require either message content or guided selection."""
-        self.content = self.content or self.message or ""
+        self.content = self.content or self.message or self.txt or ""
         if not self.content and (self.guided_selection is None or not self.guided_selection.selected_intents):
             raise ValueError("content/message or guided_selection is required")
         return self
+
+    @property
+    def uses_assistant_protocol(self) -> bool:
+        """Return whether the request follows the v0.3 assistant-facing envelope."""
+        return self.txt is not None or bool(self.config_variables)
 
 
 class ActionRequest(BaseModel):
@@ -302,6 +337,123 @@ def _encode_sse(event_name: str, payload: dict[str, object]) -> str:
     return f"event: {event_name}\ndata: {body}\n\n"
 
 
+def _split_upstream_config_variables(
+    config_variables: list[ConfigVariableInput],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split ordinary passthrough config variables from special `slots_data`."""
+    passthrough: dict[str, Any] = {}
+    slots_data: dict[str, Any] = {}
+    for item in config_variables:
+        if item.name == "slots_data":
+            parsed = item.parsed_json_value()
+            if isinstance(parsed, dict):
+                slots_data = dict(parsed)
+            continue
+        passthrough[item.name] = item.value
+    return passthrough, slots_data
+
+
+def _response_graph(session: object) -> ExecutionGraphState | None:
+    """Resolve the graph that should be used to build the assistant-facing response."""
+    current_graph = getattr(session, "current_graph", None)
+    if current_graph is not None:
+        return current_graph
+    return getattr(session, "pending_graph", None)
+
+
+def _response_node(session: object) -> GraphNodeState | None:
+    """Resolve the most relevant node for one assistant-facing response."""
+    graph = _response_graph(session)
+    if graph is None or not graph.nodes:
+        return None
+
+    active_node_id = getattr(session, "active_node_id", None)
+    if active_node_id:
+        with suppress(KeyError):
+            return graph.node_by_id(active_node_id)
+
+    preferred_statuses = {
+        GraphNodeStatus.WAITING_USER_INPUT,
+        GraphNodeStatus.WAITING_CONFIRMATION,
+        GraphNodeStatus.READY_FOR_DISPATCH,
+        GraphNodeStatus.COMPLETED,
+        GraphNodeStatus.FAILED,
+    }
+    candidates = [node for node in graph.nodes if node.status in preferred_statuses]
+    if candidates:
+        return max(candidates, key=lambda item: item.updated_at)
+    return max(graph.nodes, key=lambda item: item.updated_at)
+
+
+def _last_assistant_message(session: object) -> str:
+    """Return the most recent assistant message content when present."""
+    messages = getattr(session, "messages", []) or []
+    for item in reversed(messages):
+        if getattr(item, "role", None) == "assistant" and getattr(item, "content", None):
+            return str(item.content)
+    return ""
+
+
+def _synthesized_transfer_data(node: GraphNodeState) -> list[dict[str, str]]:
+    """Build the transfer-agent `data[].answer` fallback from router-visible slots."""
+    slot_memory = dict(node.slot_memory)
+    amount = slot_memory.get("amount")
+    payee_name = slot_memory.get("payee_name")
+    if amount in (None, "") and node.output_payload.get("amount") not in (None, ""):
+        amount = node.output_payload.get("amount")
+    if payee_name in (None, "") and node.output_payload.get("payee_name") not in (None, ""):
+        payee_name = node.output_payload.get("payee_name")
+    if amount in (None, "") and payee_name in (None, ""):
+        return []
+    return [
+        {
+            "isSubAgent": "True",
+            "typIntent": "mbpTransfer",
+            "answer": f"||{'' if amount is None else amount}|{'' if payee_name is None else payee_name}|",
+        }
+    ]
+
+
+def _assistant_output_payload(session: object) -> dict[str, Any]:
+    """Build the assistant-facing response payload from live router/session state."""
+    node = _response_node(session)
+    if node is None:
+        message = _last_assistant_message(session)
+        return {
+            "status": "completed" if message else "idle",
+            "message": message,
+        }
+
+    agent_output = dict(getattr(node, "_agent_output", {}) or {})
+    if agent_output:
+        output: dict[str, Any] = {}
+        if "isHandOver" in agent_output:
+            output["isHandOver"] = agent_output["isHandOver"]
+        else:
+            output["isHandOver"] = node.status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.FAILED}
+        if "handOverReason" in agent_output and agent_output["handOverReason"] not in (None, ""):
+            output["handOverReason"] = agent_output["handOverReason"]
+        elif node.status == GraphNodeStatus.WAITING_USER_INPUT:
+            output["handOverReason"] = "waiting_user_input"
+        elif node.status == GraphNodeStatus.COMPLETED:
+            output["handOverReason"] = "completed"
+        data = agent_output.get("data")
+        if isinstance(data, list):
+            output["data"] = data
+        elif node.intent_code == "AG_TRANS":
+            output["data"] = _synthesized_transfer_data(node)
+        output["intent_code"] = node.intent_code
+        return output
+
+    message = node.blocking_reason or _last_assistant_message(session)
+    return {
+        "intent_code": node.intent_code,
+        "status": node.status.value,
+        "message": message,
+        "slot_memory": dict(node.slot_memory),
+    }
+
+
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: CreateSessionRequest | None = None,
@@ -330,31 +482,45 @@ async def get_session_snapshot(
         ) from exc
 
 
-@router.post("/sessions/{session_id}/messages", response_model=SessionSnapshotResponse)
+@router.post(
+    "/sessions/{session_id}/messages",
+    response_model=SessionSnapshotResponse | AssistantOutputResponse,
+)
 async def post_message(
     session_id: str,
     request: MessageRequest,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
-) -> SessionSnapshotResponse:
+) -> SessionSnapshotResponse | AssistantOutputResponse:
     """Submit one user message turn to the router and return the updated snapshot."""
     # Message APIs are the main entry for intent dialog. They can be called by a
     # frontend chat page, a test harness, or a backend integration that wants to
     # drive the router directly without rendering any UI.
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
+    upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(request.config_variables)
     try:
         serialized_handler = getattr(orchestrator, "handle_user_message_serialized", None)
         if callable(serialized_handler):
-            snapshot = await serialized_handler(
+            serializer = (
+                _assistant_output_payload
+                if request.uses_assistant_protocol
+                else _serialize_session
+            )
+            serialized_response = await serialized_handler(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
-                serializer=_serialize_session,
+                serializer=serializer,
                 router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
                 proactive_recommendation=request.proactive_recommendation,
+                upstream_config_variables=upstream_config_variables,
+                upstream_slots_data=upstream_slots_data,
                 emit_events=False,
             )
+            if request.uses_assistant_protocol:
+                return AssistantOutputResponse(output=serialized_response)
+            snapshot = serialized_response
         else:
             snapshot = _serialize_response_snapshot(
                 await orchestrator.handle_user_message(
@@ -365,6 +531,8 @@ async def post_message(
                     guided_selection=request.guided_selection,
                     recommendation_context=request.recommendation_context,
                     proactive_recommendation=request.proactive_recommendation,
+                    upstream_config_variables=upstream_config_variables,
+                    upstream_slots_data=upstream_slots_data,
                     emit_events=False,
                 )
             )
@@ -506,6 +674,8 @@ async def post_message_stream(
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
                 proactive_recommendation=request.proactive_recommendation,
+                upstream_config_variables=_split_upstream_config_variables(request.config_variables)[0],
+                upstream_slots_data=_split_upstream_config_variables(request.config_variables)[1],
                 return_snapshot=False,
                 emit_events=True,
             )

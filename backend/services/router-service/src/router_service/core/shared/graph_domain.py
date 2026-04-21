@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from router_service.core.shared.domain import ChatMessage, IntentMatch, SESSION_TTL, Task, utc_now
 from router_service.core.shared.diagnostics import RouterDiagnostic
@@ -143,6 +143,7 @@ class GraphNodeState(BaseModel):
     output_payload: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    _agent_output: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     def touch(
         self,
@@ -283,6 +284,8 @@ class GraphSessionState(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     expires_at: datetime = Field(default_factory=lambda: utc_now() + SESSION_TTL)
+    _upstream_config_variables: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _upstream_slots_data: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     def touch(self) -> None:
         """Refresh session timestamps and extend the expiry deadline."""
@@ -294,6 +297,24 @@ class GraphSessionState(BaseModel):
         """Return whether the session TTL has elapsed."""
         current = now or utc_now()
         return current >= self.expires_at
+
+    def set_request_context(
+        self,
+        *,
+        config_variables: dict[str, Any] | None = None,
+        slots_data: dict[str, Any] | None = None,
+    ) -> None:
+        """Store request-scoped upstream context for this session turn."""
+        self._upstream_config_variables = dict(config_variables or {})
+        self._upstream_slots_data = dict(slots_data or {})
+
+    def upstream_config_variables(self) -> dict[str, Any]:
+        """Return the ordinary upstream config variables for the current turn."""
+        return dict(self._upstream_config_variables)
+
+    def upstream_slots_data(self) -> dict[str, Any]:
+        """Return the request-scoped `slots_data` hints for the current turn."""
+        return dict(self._upstream_slots_data)
 
     def business_object(self, business_id: str | None) -> BusinessObjectState | None:
         """Return the business object with the given id when present."""

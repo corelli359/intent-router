@@ -726,6 +726,57 @@ def test_request_payload_builder_supports_config_variables_and_slots_data_mappin
     assert json.loads(config_variables["slots_data"]) == {"payee_name": "小明", "amount": 200}
 
 
+def test_request_payload_builder_supports_passthrough_upstream_config_variables() -> None:
+    task = Task(
+        session_id="session_004",
+        intent_code="AG_TRANS",
+        agent_url="https://agent.example.com/transfer",
+        intent_name="转账",
+        intent_description="执行转账",
+        intent_examples=["给小明转账 200 元"],
+        confidence=0.93,
+        request_schema={"type": "object", "required": ["session_id", "txt", "stream", "config_variables"]},
+        field_mapping={
+            "session_id": "$session.id",
+            "txt": "$message.current",
+            "stream": "true",
+            "config_variables.custID": "$config_variables.custID",
+            "config_variables.sessionID": "$config_variables.sessionID",
+            "config_variables.currentDisplay": "$config_variables.currentDisplay",
+            "config_variables.agentSessionID": "$config_variables.agentSessionID",
+            "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+            "config_variables.slots_data.amount": "$slot_memory.amount",
+        },
+        input_context={
+            "cust_id": "cust_from_session",
+            "config_variables": {
+                "custID": "cust_from_upstream",
+                "sessionID": "session_from_upstream",
+                "currentDisplay": "display_001",
+                "agentSessionID": "agent_session_001",
+            },
+            "recent_messages": ["user: 给小明转账"],
+            "long_term_memory": [],
+        },
+        slot_memory={
+            "payee_name": "小明",
+            "amount": "200",
+        },
+    )
+
+    payload = RequestPayloadBuilder().build(task, "给小明转账 200 元")
+
+    assert payload["session_id"] == "session_004"
+    assert payload["txt"] == "给小明转账 200 元"
+    assert payload["stream"] is True
+    config_variables = {item["name"]: item["value"] for item in payload["config_variables"]}
+    assert config_variables["custID"] == "cust_from_upstream"
+    assert config_variables["sessionID"] == "session_from_upstream"
+    assert config_variables["currentDisplay"] == "display_001"
+    assert config_variables["agentSessionID"] == "agent_session_001"
+    assert json.loads(config_variables["slots_data"]) == {"payee_name": "小明", "amount": "200"}
+
+
 def test_request_payload_builder_keeps_legacy_default_payload_for_unmapped_intents() -> None:
     task = Task(
         session_id="session_legacy",

@@ -571,7 +571,11 @@ def _handle_slot_extractor(system_text: str, human_text: str) -> dict[str, Any]:
         ["当前节点原始片段:\n", "意图定义(JSON):\n", "已有槽位(JSON):\n", "请输出 JSON:\n"],
     )
     intent_payload = _parse_json_section(human_text, "意图定义(JSON):", ["已有槽位(JSON):\n", "请输出 JSON:\n"]) or {}
-    existing_slot_memory = _parse_json_section(human_text, "已有槽位(JSON):", ["请输出 JSON:\n"]) or {}
+    existing_slot_memory = _parse_json_section(
+        human_text,
+        "已有槽位(JSON):",
+        ["当前任务:\n", "请输出 JSON:\n"],
+    ) or {}
     return _extract_slot_payload(intent_payload, message, existing_slot_memory)
 
 

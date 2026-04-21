@@ -183,7 +183,10 @@ class AgentExecutionResponse(BaseModel):
     event: Literal["message", "final"]
     content: str
     ishandover: bool
+    isHandOver: bool | None = None
+    handOverReason: str | None = None
     status: Literal["waiting_user_input", "completed", "failed"]
+    data: list[dict[str, Any]] = Field(default_factory=list)
     slot_memory: dict[str, Any] = Field(default_factory=dict)
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -192,6 +195,8 @@ class AgentExecutionResponse(BaseModel):
         cls,
         content: str,
         *,
+        hand_over_reason: str | None = None,
+        data: list[dict[str, Any]] | None = None,
         slot_memory: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> "AgentExecutionResponse":
@@ -199,7 +204,10 @@ class AgentExecutionResponse(BaseModel):
             event="message",
             content=content,
             ishandover=False,
+            isHandOver=False,
+            handOverReason=hand_over_reason,
             status="waiting_user_input",
+            data=data or [],
             slot_memory=slot_memory or {},
             payload=payload or {},
         )
@@ -209,6 +217,8 @@ class AgentExecutionResponse(BaseModel):
         cls,
         content: str,
         *,
+        hand_over_reason: str | None = None,
+        data: list[dict[str, Any]] | None = None,
         slot_memory: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
     ) -> "AgentExecutionResponse":
@@ -216,7 +226,10 @@ class AgentExecutionResponse(BaseModel):
             event="final",
             content=content,
             ishandover=True,
+            isHandOver=True,
+            handOverReason=hand_over_reason,
             status="completed",
+            data=data or [],
             slot_memory=slot_memory or {},
             payload=payload or {},
         )
@@ -226,12 +239,15 @@ class AgentExecutionResponse(BaseModel):
         cls,
         content: str,
         *,
+        hand_over_reason: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> "AgentExecutionResponse":
         return cls(
             event="final",
             content=content,
             ishandover=True,
+            isHandOver=True,
+            handOverReason=hand_over_reason,
             status="failed",
             payload=payload or {},
         )

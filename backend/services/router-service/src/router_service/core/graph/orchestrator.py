@@ -254,6 +254,8 @@ class GraphRouterOrchestrator:
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
+        upstream_config_variables: dict[str, Any] | None = None,
+        upstream_slots_data: dict[str, Any] | None = None,
         return_snapshot: bool = True,
         emit_events: bool = True,
     ) -> GraphRouterSnapshot | None:
@@ -276,16 +278,23 @@ class GraphRouterOrchestrator:
             with self.event_publisher.event_scope(emit_events):
                 async with self.session_store.session_lock(session_id):
                     with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
+                        message_flow_kwargs: dict[str, Any] = {
+                            "router_only": router_only,
+                            "guided_selection": guided_selection,
+                            "recommendation_context": recommendation_context,
+                            "proactive_recommendation": proactive_recommendation,
+                            "return_snapshot": False,
+                            "emit_events": emit_events,
+                        }
+                        if upstream_config_variables is not None:
+                            message_flow_kwargs["upstream_config_variables"] = upstream_config_variables
+                        if upstream_slots_data is not None:
+                            message_flow_kwargs["upstream_slots_data"] = upstream_slots_data
                         await self.message_flow.handle_user_message(
                             session_id,
                             cust_id,
                             content,
-                            router_only=router_only,
-                            guided_selection=guided_selection,
-                            recommendation_context=recommendation_context,
-                            proactive_recommendation=proactive_recommendation,
-                            return_snapshot=False,
-                            emit_events=emit_events,
+                            **message_flow_kwargs,
                         )
                     session = self.session_store.get(session_id)
                     snapshot = self._finalize_handover_business(session)
@@ -313,6 +322,8 @@ class GraphRouterOrchestrator:
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
+        upstream_config_variables: dict[str, Any] | None = None,
+        upstream_slots_data: dict[str, Any] | None = None,
         emit_events: bool = False,
     ) -> SerializedResponseT:
         """Process one user message and serialize the response while the session is still locked."""
@@ -334,16 +345,23 @@ class GraphRouterOrchestrator:
             with self.event_publisher.event_scope(emit_events):
                 async with self.session_store.session_lock(session_id):
                     with router_stage(logger, "orchestrator.handle_user_message_serialized", **trace_details):
+                        message_flow_kwargs: dict[str, Any] = {
+                            "router_only": router_only,
+                            "guided_selection": guided_selection,
+                            "recommendation_context": recommendation_context,
+                            "proactive_recommendation": proactive_recommendation,
+                            "return_snapshot": False,
+                            "emit_events": emit_events,
+                        }
+                        if upstream_config_variables is not None:
+                            message_flow_kwargs["upstream_config_variables"] = upstream_config_variables
+                        if upstream_slots_data is not None:
+                            message_flow_kwargs["upstream_slots_data"] = upstream_slots_data
                         await self.message_flow.handle_user_message(
                             session_id,
                             cust_id,
                             content,
-                            router_only=router_only,
-                            guided_selection=guided_selection,
-                            recommendation_context=recommendation_context,
-                            proactive_recommendation=proactive_recommendation,
-                            return_snapshot=False,
-                            emit_events=emit_events,
+                            **message_flow_kwargs,
                         )
                     session = self.session_store.get(session_id)
                     serialized = self._finalize_handover_business_with(session, serializer)
@@ -894,6 +912,7 @@ class GraphRouterOrchestrator:
         task.touch(chunk.status)
         node.slot_memory = dict(task.slot_memory)
         node.output_payload = dict(chunk.payload)
+        node._agent_output = dict(getattr(chunk, "output", {}) or {})
         node_status = self._node_status_for_task_status(chunk.status)
         node.touch(node_status)
 

@@ -258,6 +258,8 @@ class TransferMoneyAgentService:
         if missing_fields:
             return AgentExecutionResponse.waiting(
                 resolution.ask_message or self._ask_message(missing_fields),
+                hand_over_reason="missing_required_slots",
+                data=self._response_data(resolution),
                 slot_memory=slot_memory,
                 payload={**payload, "missing_fields": missing_fields},
             )
@@ -268,7 +270,10 @@ class TransferMoneyAgentService:
                 event="final",
                 content="账户余额不足",
                 ishandover=True,
+                isHandOver=True,
+                handOverReason="insufficient_balance",
                 status="failed",
+                data=self._response_data(resolution),
                 slot_memory=slot_memory,
                 payload={**payload, "business_status": "insufficient_balance", "balance": 8000},
             )
@@ -278,9 +283,26 @@ class TransferMoneyAgentService:
         payee_text = resolution.payee_name or resolution.payee_card_no or "收款人"
         return AgentExecutionResponse.completed(
             f"已向{payee_text}转账 {amount_text} {ccy_text}，转账成功",
+            hand_over_reason="已提供收款人和金额交易对象",
+            data=self._response_data(resolution),
             slot_memory=slot_memory,
             payload={**payload, "business_status": "success"},
         )
+
+    def _response_data(self, resolution: TransferMoneyResolution) -> list[dict[str, str]]:
+        """Build the transfer summary payload expected by the assistant-facing protocol."""
+        if resolution.amount is None and resolution.payee_name is None:
+            return []
+        return [
+            {
+                "isSubAgent": "True",
+                "typIntent": "mbpTransfer",
+                "answer": (
+                    f"||{'' if resolution.amount is None else resolution.amount}"
+                    f"|{'' if resolution.payee_name is None else resolution.payee_name}|"
+                ),
+            }
+        ]
 
     async def _resolve(
         self,

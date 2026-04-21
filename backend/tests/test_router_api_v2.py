@@ -216,6 +216,69 @@ class _TrailingTerminalChunkAgentClient:
         return None
 
 
+def _assistant_protocol_ag_trans_intent() -> IntentDefinition:
+    intent = _ag_trans_intent().model_copy(deep=True)
+    intent.field_mapping = {
+        "session_id": "$session.id",
+        "txt": "$message.current",
+        "stream": "true",
+        "config_variables.custID": "$config_variables.custID",
+        "config_variables.sessionID": "$config_variables.sessionID",
+        "config_variables.currentDisplay": "$config_variables.currentDisplay",
+        "config_variables.agentSessionID": "$config_variables.agentSessionID",
+        "config_variables.slots_data.amount": "$slot_memory.amount",
+        "config_variables.slots_data.payee_name": "$slot_memory.payee_name",
+    }
+    return intent
+
+
+class _AssistantProtocolTransferAgentClient:
+    def __init__(self) -> None:
+        self.tasks: list[Task] = []
+
+    async def stream(self, task: Task, user_input: str):
+        del user_input
+        self.tasks.append(task)
+        amount = str(task.slot_memory.get("amount") or "")
+        payee_name = str(task.slot_memory.get("payee_name") or "")
+        payload = {
+            "agent": "transfer_money",
+            "amount": amount,
+            "payee_name": payee_name,
+            "business_status": "success",
+        }
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content=f"已向{payee_name}转账 {amount} CNY，转账成功",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            payload=payload,
+            output={
+                "isHandOver": True,
+                "handOverReason": "已提供收款人和金额交易对象",
+                "data": [
+                    {
+                        "isSubAgent": "True",
+                        "typIntent": "mbpTransfer",
+                        "answer": f"||{amount}|{payee_name}|",
+                    }
+                ],
+                "status": "completed",
+                "event": "final",
+                **payload,
+                "slot_memory": {"amount": amount, "payee_name": payee_name},
+            },
+        )
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        del session_id, task_id, agent_url
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 @dataclass(frozen=True)
 class _RouterOnlyTurnExpectation:
     user_input: str
@@ -2877,6 +2940,116 @@ def test_v2_ag_trans_consumes_full_agent_stream_after_first_terminal_chunk() -> 
             assert task.field_mapping["config_variables.long_term_memory"] == "$context.long_term_memory"
             assert task.field_mapping["config_variables.slots_data.amount"] == "$slot_memory.amount"
             assert task.field_mapping["config_variables.slots_data.payee_name"] == "$slot_memory.payee_name"
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_assistant_protocol_waiting_response_for_missing_slots() -> None:
+    async def run() -> None:
+        agent_client = _AssistantProtocolTransferAgentClient()
+        app, _ = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "txt": "给小明转账",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "display_001"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert "snapshot" not in body
+        assert body["output"] == {
+            "intent_code": "AG_TRANS",
+            "status": "waiting_user_input",
+            "message": "请提供金额",
+            "slot_memory": {"payee_name": "小明"},
+        }
+        assert agent_client.tasks == []
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_assistant_protocol_returns_output_after_second_turn() -> None:
+    async def run() -> None:
+        agent_client = _AssistantProtocolTransferAgentClient()
+        app, _ = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            first_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "txt": "给小明转账",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "display_001"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert first_turn.status_code == 200
+
+            second_turn = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "txt": "200",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "display_002"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+
+        assert second_turn.status_code == 200
+        body = second_turn.json()
+        assert body["ok"] is True
+        assert body["output"] == {
+            "isHandOver": True,
+            "handOverReason": "已提供收款人和金额交易对象",
+            "data": [
+                {
+                    "isSubAgent": "True",
+                    "typIntent": "mbpTransfer",
+                    "answer": "||200|小明|",
+                }
+            ],
+            "intent_code": "AG_TRANS",
+        }
+        assert len(agent_client.tasks) == 1
+        task = agent_client.tasks[0]
+        assert task.input_context["config_variables"] == {
+            "custID": "C0001",
+            "sessionID": session_id,
+            "currentDisplay": "display_002",
+            "agentSessionID": session_id,
+        }
 
     asyncio.run(run())
 

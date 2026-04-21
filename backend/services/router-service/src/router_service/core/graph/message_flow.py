@@ -118,6 +118,8 @@ class GraphMessageFlow:
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
+        upstream_config_variables: dict[str, Any] | None = None,
+        upstream_slots_data: dict[str, Any] | None = None,
         return_snapshot: bool = True,
         emit_events: bool = False,
     ) -> GraphRouterSnapshot | None:
@@ -133,6 +135,11 @@ class GraphMessageFlow:
         ):
             session = self.session_store.get_or_create(session_id, cust_id)
             session.last_diagnostics = []
+            if hasattr(session, "set_request_context"):
+                session.set_request_context(
+                    config_variables=upstream_config_variables,
+                    slots_data=upstream_slots_data,
+                )
             if session.current_graph is None and session.pending_graph is None:
                 session.restore_latest_suspended_business()
             session.router_only_mode = router_only

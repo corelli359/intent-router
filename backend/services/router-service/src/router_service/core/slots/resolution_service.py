@@ -100,7 +100,17 @@ class SlotResolutionService:
         long_term_memory: list[str],
     ) -> dict[str, Any]:
         """Collect reusable slot values from recent task results and long-term memory."""
-        values: dict[str, Any] = dict(session.shared_slot_memory)
+        values: dict[str, Any] = {}
+
+        request_slots_data = (
+            session.upstream_slots_data()
+            if hasattr(session, "upstream_slots_data")
+            else {}
+        )
+        if request_slots_data:
+            values.update(request_slots_data)
+
+        values.update(session.shared_slot_memory)
 
         for task in reversed(session.tasks):
             if not task.slot_memory:

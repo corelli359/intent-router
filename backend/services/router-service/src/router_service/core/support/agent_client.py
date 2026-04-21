@@ -118,6 +118,7 @@ class RequestPayloadBuilder:
 
         recent_messages = task.input_context.get("recent_messages", [])
         long_term_memory = task.input_context.get("long_term_memory", [])
+        config_variables = task.input_context.get("config_variables", {})
         sources: dict[str, Any] = {
             "session": {
                 "id": task.session_id,
@@ -144,6 +145,7 @@ class RequestPayloadBuilder:
             "memory": {
                 "long_term": long_term_memory,
             },
+            "config_variables": config_variables if isinstance(config_variables, dict) else {},
             "entities": task.slot_memory,
             "slots": task.slot_memory,
             "slot_memory": task.slot_memory,
@@ -390,6 +392,16 @@ class StreamingAgentClient:
         if isinstance(slot_memory, dict):
             normalized_payload.setdefault("slot_memory", dict(task.slot_memory))
 
+        normalized_output: dict[str, Any] = {}
+        if isinstance(chunk_payload, dict):
+            normalized_output.update(chunk_payload)
+        if isinstance(slot_memory, dict):
+            normalized_output["slot_memory"] = dict(task.slot_memory)
+        for key in ("isHandOver", "handOverReason", "data", "status", "event"):
+            value = payload.get(key)
+            if value is not None:
+                normalized_output[key] = value
+
         ishandover = payload.get("ishandover")
         if not isinstance(ishandover, bool):
             ishandover = payload.get("isHandOver")
@@ -406,6 +418,7 @@ class StreamingAgentClient:
             ishandover=ishandover,
             status=status,
             payload=normalized_payload,
+            output=normalized_output,
         )
 
     def _normalized_agent_payload(self, payload: dict[str, Any]) -> dict[str, Any]:

@@ -36,6 +36,16 @@ class ContextBuilder:
             "recent_messages": self.build_recent_messages(session),
             "long_term_memory": long_term_memory,
             "shared_slot_memory": dict(getattr(session, "shared_slot_memory", {}) or {}),
+            "config_variables": (
+                session.upstream_config_variables()
+                if hasattr(session, "upstream_config_variables")
+                else {}
+            ),
+            "request_slots_data": (
+                session.upstream_slots_data()
+                if hasattr(session, "upstream_slots_data")
+                else {}
+            ),
             "business_memory_digests": [
                 digest.model_dump(mode="json") if hasattr(digest, "model_dump") else dict(digest)
                 for digest in getattr(session, "business_memory_digests", []) or []
