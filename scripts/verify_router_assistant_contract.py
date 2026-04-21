@@ -96,7 +96,7 @@ def _post_assistant_message(
 def _output_kind(output: dict[str, Any]) -> str:
     if isinstance(output.get("status"), str) and output.get("status") == "failed" and isinstance(output.get("errorCode"), str):
         return "failed"
-    if "isHandOver" in output:
+    if output.get("isHandOver") is True:
         return "handover"
     if isinstance(output.get("status"), str) and isinstance(output.get("intent_code"), str):
         return "router_state"
@@ -122,18 +122,44 @@ def _ensure_assistant_response_shape(response: dict[str, Any]) -> dict[str, Any]
     if kind == "router_state":
         if not isinstance(output.get("message"), str):
             raise AssertionError(f"router_state output requires string message, got: {response}")
+        if not isinstance(output.get("isHandOver"), bool):
+            raise AssertionError(f"router_state output requires boolean isHandOver, got: {response}")
+        if not isinstance(output.get("handOverReason"), str):
+            raise AssertionError(f"router_state output requires string handOverReason, got: {response}")
+        data = output.get("data")
+        if data is not None and not isinstance(data, list):
+            raise AssertionError(f"router_state output data must be a list when present, got: {response}")
         slot_memory = output.get("slot_memory")
         if slot_memory is not None and not isinstance(slot_memory, dict):
             raise AssertionError(f"router_state slot_memory must be a dict when present, got: {response}")
     elif kind == "handover":
         if not isinstance(output.get("intent_code"), str):
             raise AssertionError(f"handover output requires intent_code, got: {response}")
+        if output.get("isHandOver") is not True:
+            raise AssertionError(f"handover output requires isHandOver=true, got: {response}")
+        if not isinstance(output.get("handOverReason"), str):
+            raise AssertionError(f"handover output requires string handOverReason, got: {response}")
+        if not isinstance(output.get("message"), str):
+            raise AssertionError(f"handover output requires string message, got: {response}")
         data = output.get("data")
         if data is not None and not isinstance(data, list):
             raise AssertionError(f"handover output data must be a list when present, got: {response}")
+        slot_memory = output.get("slot_memory")
+        if slot_memory is not None and not isinstance(slot_memory, dict):
+            raise AssertionError(f"handover output slot_memory must be a dict when present, got: {response}")
     elif kind == "failed":
         if not isinstance(output.get("message"), str):
             raise AssertionError(f"failed output requires string message, got: {response}")
+        if output.get("isHandOver") is not False:
+            raise AssertionError(f"failed output requires isHandOver=false, got: {response}")
+        if not isinstance(output.get("handOverReason"), str):
+            raise AssertionError(f"failed output requires string handOverReason, got: {response}")
+        data = output.get("data")
+        if data is not None and not isinstance(data, list):
+            raise AssertionError(f"failed output data must be a list when present, got: {response}")
+        slot_memory = output.get("slot_memory")
+        if slot_memory is not None and not isinstance(slot_memory, dict):
+            raise AssertionError(f"failed output slot_memory must be a dict when present, got: {response}")
 
     return {
         "ok": ok,
@@ -172,6 +198,12 @@ def _strict_demo_check(
             raise AssertionError(f"turn 2 expected ok=true in execute mode, got: {response}")
         if kind != "handover":
             raise AssertionError(f"turn 2 expected handover in execute mode, got: {response}")
+
+
+def _print_json_block(title: str, payload: dict[str, Any]) -> None:
+    print(f"=== {title} ===")
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print()
 
 
 def main() -> int:
@@ -241,6 +273,12 @@ def main() -> int:
         action="store_true",
         help="Enable strict transfer-demo assertions in addition to contract shape validation.",
     )
+    parser.add_argument(
+        "--output-mode",
+        choices=("transcript", "report"),
+        default="transcript",
+        help="transcript prints raw request/response blocks; report prints one wrapped summary JSON.",
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
@@ -253,6 +291,9 @@ def main() -> int:
     )
     session_id = str(session_create["session_id"])
     agent_session_id = args.agent_session_id or session_id
+
+    if args.output_mode == "transcript":
+        _print_json_block("session.create.response", session_create)
 
     turn_results: list[dict[str, Any]] = []
     turn_specs = [
@@ -284,6 +325,9 @@ def main() -> int:
                 execution_mode=args.execution_mode,
                 inspected=inspected,
             )
+        if args.output_mode == "transcript":
+            _print_json_block(f"turn{turn_index}.request", request_payload)
+            _print_json_block(f"turn{turn_index}.response", response_payload)
         turn_results.append(
             {
                 "turn": turn_index,
@@ -293,19 +337,20 @@ def main() -> int:
             }
         )
 
-    print(
-        json.dumps(
-            {
-                "contract_ok": True,
-                "base_url": base_url,
-                "execution_mode": args.execution_mode,
-                "session": session_create,
-                "turns": turn_results,
-            },
-            ensure_ascii=False,
-            indent=2,
+    if args.output_mode == "report":
+        print(
+            json.dumps(
+                {
+                    "contract_ok": True,
+                    "base_url": base_url,
+                    "execution_mode": args.execution_mode,
+                    "session": session_create,
+                    "turns": turn_results,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
         )
-    )
     return 0
 
 

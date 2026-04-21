@@ -2999,7 +2999,10 @@ def test_v2_router_message_assistant_protocol_waiting_response_for_missing_slots
         assert body["output"] == {
             "intent_code": "AG_TRANS",
             "status": "waiting_user_input",
+            "isHandOver": False,
+            "handOverReason": "waiting_user_input",
             "message": "请提供金额",
+            "data": [],
             "slot_memory": {"payee_name": "小明"},
         }
         assert agent_client.tasks == []
@@ -3052,8 +3055,11 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
         body = second_turn.json()
         assert body["ok"] is True
         assert body["output"] == {
+            "intent_code": "AG_TRANS",
+            "status": "completed",
             "isHandOver": True,
             "handOverReason": "已提供收款人和金额交易对象",
+            "message": "已向小明转账 200 CNY，转账成功",
             "data": [
                 {
                     "isSubAgent": "True",
@@ -3061,7 +3067,10 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
                     "answer": "||200|小明|",
                 }
             ],
-            "intent_code": "AG_TRANS",
+            "slot_memory": {
+                "amount": "200",
+                "payee_name": "小明",
+            },
         }
         assert len(agent_client.tasks) == 1
         task = agent_client.tasks[0]
@@ -3101,8 +3110,12 @@ def test_v2_router_message_assistant_protocol_returns_ok_false_when_recognizer_i
         body = response.json()
         assert body["ok"] is False
         assert body["output"]["status"] == "failed"
+        assert body["output"]["isHandOver"] is False
+        assert body["output"]["handOverReason"] == "failed"
         assert body["output"]["errorCode"] == "ROUTER_LLM_UNAVAILABLE"
         assert body["output"]["message"] == "意图识别服务暂不可用，请稍后重试。"
+        assert body["output"]["data"] == []
+        assert body["output"]["slot_memory"] == {}
         assert body["output"]["details"]["error_type"] == "ConnectError"
 
     asyncio.run(run())
@@ -3157,9 +3170,13 @@ def test_v2_router_message_assistant_protocol_returns_ok_false_for_multi_intent_
         body = response.json()
         assert body["ok"] is False
         assert body["output"]["status"] == "failed"
+        assert body["output"]["isHandOver"] is False
+        assert body["output"]["handOverReason"] == "failed"
         assert body["output"]["message"] == "当前生产协议暂仅支持单意图场景，多意图输出协议待定。"
         assert body["output"]["errorCode"] == "ROUTER_MULTI_INTENT_UNSUPPORTED"
         assert body["output"]["route_mode"] == "multi_intent"
+        assert body["output"]["data"] == []
+        assert body["output"]["slot_memory"] == {}
         assert body["output"]["graph_status"] == "waiting_confirmation"
         assert body["output"]["intent_codes"] == [
             "query_account_balance",

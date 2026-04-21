@@ -421,61 +421,121 @@ def _synthesized_transfer_data(node: GraphNodeState) -> list[dict[str, str]]:
     ]
 
 
+def _assistant_output_template(
+    *,
+    status: str,
+    intent_code: str = "",
+    is_handover: bool = False,
+    handover_reason: str = "",
+    message: str = "",
+    data: list[Any] | None = None,
+    slot_memory: dict[str, Any] | None = None,
+    error_code: str | RouterErrorCode | None = None,
+    stage: str | None = None,
+    details: dict[str, Any] | None = None,
+    route_mode: str | None = None,
+    graph_status: str | None = None,
+    intent_codes: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a stable assistant-facing output shape across waiting/completed/failed states."""
+    output: dict[str, Any] = {
+        "intent_code": intent_code,
+        "status": status,
+        "isHandOver": is_handover,
+        "handOverReason": handover_reason,
+        "message": message,
+        "data": list(data or []),
+        "slot_memory": dict(slot_memory or {}),
+    }
+    if error_code is not None:
+        output["errorCode"] = str(error_code)
+    if stage is not None:
+        output["stage"] = stage
+    if details:
+        output["details"] = dict(details)
+    if route_mode is not None:
+        output["route_mode"] = route_mode
+    if graph_status is not None:
+        output["graph_status"] = graph_status
+    if intent_codes:
+        output["intent_codes"] = list(intent_codes)
+    return output
+
+
 def _assistant_output_payload(session: object) -> dict[str, Any]:
     """Build the assistant-facing response payload from live router/session state."""
     node = _response_node(session)
     if node is None:
         message = _last_assistant_message(session)
-        return {
-            "status": "completed" if message else "idle",
-            "message": message,
-        }
+        status = "completed" if message else "idle"
+        return _assistant_output_template(
+            status=status,
+            handover_reason=status,
+            message=message,
+        )
 
     agent_output = dict(getattr(node, "_agent_output", {}) or {})
     if agent_output:
-        output: dict[str, Any] = {}
-        if "isHandOver" in agent_output:
-            output["isHandOver"] = agent_output["isHandOver"]
-        else:
-            output["isHandOver"] = node.status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.FAILED}
+        is_handover = bool(
+            agent_output["isHandOver"]
+            if "isHandOver" in agent_output
+            else node.status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.FAILED}
+        )
         if "handOverReason" in agent_output and agent_output["handOverReason"] not in (None, ""):
-            output["handOverReason"] = agent_output["handOverReason"]
+            handover_reason = str(agent_output["handOverReason"])
         elif node.status == GraphNodeStatus.WAITING_USER_INPUT:
-            output["handOverReason"] = "waiting_user_input"
+            handover_reason = "waiting_user_input"
         elif node.status == GraphNodeStatus.COMPLETED:
-            output["handOverReason"] = "completed"
+            handover_reason = "completed"
+        else:
+            handover_reason = node.status.value
+        status = str(agent_output.get("status") or node.status.value)
         data = agent_output.get("data")
         if isinstance(data, list):
-            output["data"] = data
+            resolved_data = data
         elif node.intent_code == "AG_TRANS":
-            output["data"] = _synthesized_transfer_data(node)
-        output["intent_code"] = node.intent_code
-        return output
+            resolved_data = _synthesized_transfer_data(node)
+        else:
+            resolved_data = []
+        return _assistant_output_template(
+            intent_code=node.intent_code,
+            status=status,
+            is_handover=is_handover,
+            handover_reason=handover_reason,
+            message=_last_assistant_message(session),
+            data=resolved_data,
+            slot_memory=dict(node.slot_memory),
+        )
 
     message = node.blocking_reason or _last_assistant_message(session)
-    return {
-        "intent_code": node.intent_code,
-        "status": node.status.value,
-        "message": message,
-        "slot_memory": dict(node.slot_memory),
-    }
+    return _assistant_output_template(
+        intent_code=node.intent_code,
+        status=node.status.value,
+        is_handover=False,
+        handover_reason=node.status.value,
+        message=message,
+        slot_memory=dict(node.slot_memory),
+    )
 
 
 def _assistant_multi_intent_unsupported_output(session: object) -> dict[str, Any]:
     """Build the assistant-facing failure payload for multi-intent graphs not yet exposed in production."""
     graph = _response_graph(session)
-    output: dict[str, Any] = {
-        "status": "failed",
-        "message": "当前生产协议暂仅支持单意图场景，多意图输出协议待定。",
-        "errorCode": RouterErrorCode.ROUTER_MULTI_INTENT_UNSUPPORTED,
-        "route_mode": "multi_intent",
-    }
+    intent_codes = [node.intent_code for node in graph.nodes] if graph is not None else []
     if graph is not None:
-        output["graph_status"] = graph.status.value
-        intent_codes = [node.intent_code for node in graph.nodes]
-        if intent_codes:
-            output["intent_codes"] = intent_codes
-    return output
+        graph_status = graph.status.value
+    else:
+        graph_status = None
+    return _assistant_output_template(
+        status="failed",
+        is_handover=False,
+        handover_reason="failed",
+        message="当前生产协议暂仅支持单意图场景，多意图输出协议待定。",
+        error_code=RouterErrorCode.ROUTER_MULTI_INTENT_UNSUPPORTED,
+        route_mode="multi_intent",
+        graph_status=graph_status,
+        intent_codes=intent_codes,
+    )
 
 
 def _assistant_response_envelope(session: object) -> dict[str, Any]:
@@ -493,15 +553,15 @@ def _assistant_response_envelope(session: object) -> dict[str, Any]:
 
 def _assistant_llm_unavailable_output(exc: LLMServiceUnavailableError) -> dict[str, Any]:
     """Build the assistant-facing failure payload for semantic-model outages."""
-    output: dict[str, Any] = {
-        "status": "failed",
-        "message": str(exc),
-        "errorCode": RouterErrorCode.ROUTER_LLM_UNAVAILABLE,
-        "stage": exc.stage,
-    }
-    if exc.details:
-        output["details"] = dict(exc.details)
-    return output
+    return _assistant_output_template(
+        status="failed",
+        is_handover=False,
+        handover_reason="failed",
+        message=str(exc),
+        error_code=RouterErrorCode.ROUTER_LLM_UNAVAILABLE,
+        stage=exc.stage,
+        details=dict(exc.details),
+    )
 
 
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
