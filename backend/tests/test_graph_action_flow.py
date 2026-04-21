@@ -10,7 +10,6 @@ from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeState,
     GraphNodeStatus,
-    GraphRouterSnapshot,
     GraphSessionState,
     GraphStatus,
 )
@@ -87,23 +86,6 @@ class ActionFlowHelper:
         )
 
 
-def snapshot_builder(session_store: GraphSessionStore):
-    def snapshot(session_id: str) -> GraphRouterSnapshot:
-        session = session_store.get(session_id)
-        return GraphRouterSnapshot(
-            session_id=session.session_id,
-            cust_id=session.cust_id,
-            messages=list(session.messages),
-            candidate_intents=list(session.candidate_intents),
-            current_graph=session.current_graph,
-            pending_graph=session.pending_graph,
-            active_node_id=session.active_node_id,
-            expires_at=session.expires_at,
-        )
-
-    return snapshot
-
-
 def waiting_node_selector(session: GraphSessionState) -> GraphNodeState | None:
     graph = session.current_graph
     if graph is None:
@@ -131,7 +113,6 @@ def build_action_flow(*, fail_cancel_tasks: set[str] | None = None) -> tuple[Gra
         session_store=session_store,
         agent_client=agent_client,
         event_publisher=helper.publisher,
-        snapshot_session=snapshot_builder(session_store),
         get_waiting_node=waiting_node_selector,
         get_task=get_task,
         activate_graph=helper.activate_graph,

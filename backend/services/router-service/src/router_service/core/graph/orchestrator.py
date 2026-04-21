@@ -173,7 +173,6 @@ class GraphRouterOrchestrator:
             session_store=self.session_store,
             agent_client=self.agent_client,
             event_publisher=self.event_publisher,
-            snapshot_session=self.snapshot,
             get_waiting_node=self._get_waiting_node,
             get_task=self._get_task,
             activate_graph=self._activate_graph,
@@ -189,7 +188,6 @@ class GraphRouterOrchestrator:
             recommendation_router=self.recommendation_router,
             understanding_service=self.understanding_service,
             state_sync=self.state_sync,
-            snapshot_session=self.snapshot,
             get_waiting_node=self._get_waiting_node,
             build_session_context=self._build_session_context,
             activate_graph=self._activate_graph,
@@ -244,6 +242,15 @@ class GraphRouterOrchestrator:
         """Compact the current handover-ready business after preserving the response dump."""
         return self._finalize_handover_business_with(session, self._build_session_dump)
 
+    def _finalize_handover_business_without_response(self, session: GraphSessionState) -> bool:
+        """Compact a handover-ready business without building any response snapshot."""
+        business = session.handover_business()
+        if business is None:
+            return False
+        session.finalize_business(business.business_id)
+        session.touch()
+        return True
+
     async def handle_user_message(
         self,
         session_id: str,
@@ -283,7 +290,6 @@ class GraphRouterOrchestrator:
                             "guided_selection": guided_selection,
                             "recommendation_context": recommendation_context,
                             "proactive_recommendation": proactive_recommendation,
-                            "return_snapshot": False,
                             "emit_events": emit_events,
                         }
                         if upstream_config_variables is not None:
@@ -297,19 +303,33 @@ class GraphRouterOrchestrator:
                             **message_flow_kwargs,
                         )
                     session = self.session_store.get(session_id)
-                    snapshot = self._finalize_handover_business(session)
-                    if snapshot is None and return_snapshot:
-                        snapshot = self._build_session_dump(session)
+                    snapshot: GraphRouterSnapshot | None = None
+                    handover_finalized = False
+                    if return_snapshot:
+                        snapshot = self._finalize_handover_business(session)
+                        if snapshot is None:
+                            snapshot = self._build_session_dump(session)
+                    else:
+                        handover_finalized = self._finalize_handover_business_without_response(session)
             logger.debug(
-                "Router message snapshot (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s)",
+                "Router message result (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s, handover_finalized=%s)",
                 current_trace_id(),
                 session_id,
-                snapshot.current_graph.status.value if snapshot is not None and snapshot.current_graph is not None else None,
-                snapshot.pending_graph.status.value if snapshot is not None and snapshot.pending_graph is not None else None,
-                snapshot.active_node_id if snapshot is not None else None,
+                snapshot.current_graph.status.value
+                if snapshot is not None and snapshot.current_graph is not None
+                else session.current_graph.status.value
+                if session.current_graph is not None
+                else None,
+                snapshot.pending_graph.status.value
+                if snapshot is not None and snapshot.pending_graph is not None
+                else session.pending_graph.status.value
+                if session.pending_graph is not None
+                else None,
+                snapshot.active_node_id if snapshot is not None else session.active_node_id,
                 len(snapshot.candidate_intents) if snapshot is not None else len(session.candidate_intents),
+                handover_finalized,
             )
-            return snapshot if return_snapshot or snapshot is not None else None
+            return snapshot
 
     async def handle_user_message_serialized(
         self,
@@ -350,7 +370,6 @@ class GraphRouterOrchestrator:
                             "guided_selection": guided_selection,
                             "recommendation_context": recommendation_context,
                             "proactive_recommendation": proactive_recommendation,
-                            "return_snapshot": False,
                             "emit_events": emit_events,
                         }
                         if upstream_config_variables is not None:
@@ -421,13 +440,16 @@ class GraphRouterOrchestrator:
                     task_id=task_id,
                     confirm_token=confirm_token,
                     payload=payload,
-                    return_snapshot=False,
                 )
                 session = self.session_store.get(session_id)
-                snapshot = self._finalize_handover_business(session)
-                if snapshot is None and return_snapshot:
-                    snapshot = self._build_session_dump(session)
-        return snapshot if return_snapshot or snapshot is not None else None
+                snapshot: GraphRouterSnapshot | None = None
+                if return_snapshot:
+                    snapshot = self._finalize_handover_business(session)
+                    if snapshot is None:
+                        snapshot = self._build_session_dump(session)
+                else:
+                    self._finalize_handover_business_without_response(session)
+        return snapshot
 
     async def handle_action_serialized(
         self,
@@ -453,7 +475,6 @@ class GraphRouterOrchestrator:
                     task_id=task_id,
                     confirm_token=confirm_token,
                     payload=payload,
-                    return_snapshot=False,
                 )
                 session = self.session_store.get(session_id)
                 serialized = self._finalize_handover_business_with(session, serializer)

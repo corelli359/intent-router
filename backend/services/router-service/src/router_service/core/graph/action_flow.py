@@ -10,7 +10,6 @@ from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeState,
     GraphNodeStatus,
-    GraphRouterSnapshot,
     GraphSessionState,
     GraphStatus,
 )
@@ -31,7 +30,6 @@ class GraphActionFlow:
         session_store: GraphSessionStore,
         agent_client: AgentClient,
         event_publisher: GraphEventPublisher,
-        snapshot_session: Callable[[str], GraphRouterSnapshot],
         get_waiting_node: Callable[[GraphSessionState], GraphNodeState | None],
         get_task: Callable[[GraphSessionState, str | None], Task | None],
         activate_graph: Callable[[ExecutionGraphState], None],
@@ -48,7 +46,6 @@ class GraphActionFlow:
         self.session_store = session_store
         self.agent_client = agent_client
         self.event_publisher = event_publisher
-        self.snapshot_session = snapshot_session
         self.get_waiting_node = get_waiting_node
         self.get_task = get_task
         self.activate_graph = activate_graph
@@ -68,8 +65,7 @@ class GraphActionFlow:
         task_id: str | None = None,
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
-        return_snapshot: bool = True,
-    ) -> GraphRouterSnapshot | None:
+    ) -> None:
         """Entry point for action APIs and graph-originated control actions."""
         session = self.session_store.get_or_create(session_id, cust_id)
         if source not in {None, "router", "graph"}:
@@ -77,16 +73,16 @@ class GraphActionFlow:
 
         if action_code in {"confirm_graph", "confirm_plan"}:
             await self.confirm_pending_graph(session, graph_id=task_id, confirm_token=confirm_token)
-            return self.snapshot_session(session.session_id) if return_snapshot else None
+            return None
         if action_code in {"cancel_graph", "cancel_plan"}:
             await self.cancel_pending_graph(session, graph_id=task_id, confirm_token=confirm_token)
-            return self.snapshot_session(session.session_id) if return_snapshot else None
+            return None
         if action_code == "cancel_node":
             await self.cancel_current_node(
                 session,
                 reason=(payload or {}).get("reason") or "用户取消当前节点",
             )
-            return self.snapshot_session(session.session_id) if return_snapshot else None
+            return None
 
         raise ValueError(f"Unsupported action_code: {action_code}")
 

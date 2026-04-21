@@ -199,10 +199,9 @@ def test_graph_orchestrator_serialized_message_response_preserves_handover_graph
             guided_selection=None,
             recommendation_context=None,
             proactive_recommendation=None,
-            return_snapshot: bool,
             emit_events: bool,
         ) -> None:
-            del content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
+            del content, guided_selection, recommendation_context, proactive_recommendation
             assert emit_events is False
             session = orchestrator.session_store.get_or_create(session_id, cust_id)
             session.attach_business(graph, router_only_mode=router_only, pending=False)
@@ -259,10 +258,9 @@ def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default()
             guided_selection=None,
             recommendation_context=None,
             proactive_recommendation=None,
-            return_snapshot: bool,
             emit_events: bool,
         ) -> None:
-            del content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
+            del content, guided_selection, recommendation_context, proactive_recommendation
             captured["emit_events"] = emit_events
             session = orchestrator.session_store.get_or_create(session_id, cust_id)
             session.router_only_mode = router_only
@@ -279,6 +277,130 @@ def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default()
 
         assert payload is not None
         assert captured["emit_events"] is True
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_non_snapshot_message_path_finalizes_handover_without_building_snapshot() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        graph = ExecutionGraphState(
+            source_message="转 500 给王芳的卡",
+            summary="router_only handover",
+            status=GraphStatus.READY_FOR_DISPATCH,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="transfer_money",
+                title="转账",
+                confidence=0.96,
+                position=0,
+                status=GraphNodeStatus.READY_FOR_DISPATCH,
+                slot_memory={
+                    "amount": "500",
+                    "payee_name": "王芳",
+                },
+            )
+        )
+
+        async def handle_user_message(
+            session_id: str,
+            cust_id: str,
+            content: str,
+            *,
+            router_only: bool,
+            guided_selection=None,
+            recommendation_context=None,
+            proactive_recommendation=None,
+            emit_events: bool,
+        ) -> None:
+            del content, guided_selection, recommendation_context, proactive_recommendation, emit_events
+            assert router_only is True
+            session = orchestrator.session_store.get_or_create(session_id, cust_id)
+            session.attach_business(graph, router_only_mode=router_only, pending=False)
+            session.touch()
+
+        orchestrator.message_flow.handle_user_message = AsyncMock(side_effect=handle_user_message)
+        orchestrator._build_session_dump = lambda session: (_ for _ in ()).throw(
+            AssertionError("return_snapshot=False should not build a snapshot")
+        )
+
+        payload = await orchestrator.handle_user_message(
+            session_id="session_no_snapshot",
+            cust_id="cust_no_snapshot",
+            content="转 500 给王芳的卡",
+            router_only=True,
+            return_snapshot=False,
+            emit_events=False,
+        )
+
+        session = orchestrator.session_store.get("session_no_snapshot")
+
+        assert payload is None
+        assert session.current_graph is None
+        assert session.pending_graph is None
+        assert session.shared_slot_memory == {
+            "amount": "500",
+            "payee_name": "王芳",
+        }
+        assert session.business_memory_digests[-1].status == "ready_for_dispatch"
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_non_snapshot_action_path_finalizes_handover_without_building_snapshot() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        session = orchestrator.session_store.create(cust_id="cust_action_no_snapshot", session_id="session_action_no_snapshot")
+        graph = ExecutionGraphState(
+            source_message="转账业务已准备交接",
+            summary="action handover",
+            status=GraphStatus.READY_FOR_DISPATCH,
+        )
+        graph.nodes.append(
+            GraphNodeState(
+                intent_code="transfer_money",
+                title="转账",
+                confidence=0.95,
+                position=0,
+                status=GraphNodeStatus.READY_FOR_DISPATCH,
+                slot_memory={"amount": "200", "payee_name": "小明"},
+            )
+        )
+        session.attach_business(graph, router_only_mode=True, pending=False)
+
+        async def handle_action(
+            *,
+            session_id: str,
+            cust_id: str,
+            action_code: str,
+            source: str | None = None,
+            task_id: str | None = None,
+            confirm_token: str | None = None,
+            payload: dict[str, object] | None = None,
+        ) -> None:
+            del session_id, cust_id, action_code, source, task_id, confirm_token, payload
+
+        orchestrator.action_flow.handle_action = AsyncMock(side_effect=handle_action)
+        orchestrator._build_session_dump = lambda state: (_ for _ in ()).throw(
+            AssertionError("return_snapshot=False should not build a snapshot")
+        )
+
+        payload = await orchestrator.handle_action(
+            session_id=session.session_id,
+            cust_id=session.cust_id,
+            action_code="confirm_graph",
+            return_snapshot=False,
+            emit_events=False,
+        )
+
+        refreshed = orchestrator.session_store.get(session.session_id)
+
+        assert payload is None
+        assert refreshed.current_graph is None
+        assert refreshed.pending_graph is None
+        assert refreshed.shared_slot_memory == {"amount": "200", "payee_name": "小明"}
+        assert refreshed.business_memory_digests[-1].status == "ready_for_dispatch"
 
     asyncio.run(run())
 

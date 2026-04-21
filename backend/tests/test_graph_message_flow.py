@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from typing import Any
 
 from router_service.core.graph.message_flow import GraphMessageFlow
@@ -13,7 +12,6 @@ from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeState,
     GraphNodeStatus,
-    GraphRouterSnapshot,
     GraphStatus,
 )
 
@@ -125,23 +123,6 @@ class CallbackTracker:
         self.actions.append(("route_new_message", content, kwargs))
 
 
-def snapshot_builder(session_store: GraphSessionStore) -> Callable[[str], GraphRouterSnapshot]:
-    def snapshot(session_id: str) -> GraphRouterSnapshot:
-        session = session_store.get(session_id)
-        return GraphRouterSnapshot(
-            session_id=session.session_id,
-            cust_id=session.cust_id,
-            messages=list(session.messages),
-            candidate_intents=list(session.candidate_intents),
-            current_graph=session.current_graph,
-            pending_graph=session.pending_graph,
-            active_node_id=session.active_node_id,
-            expires_at=session.expires_at,
-        )
-
-    return snapshot
-
-
 def waiting_node_selector(session: Any) -> GraphNodeState | None:
     graph = session.current_graph
     if graph is None:
@@ -162,7 +143,6 @@ def build_message_flow(understanding_service: StubUnderstandingService) -> tuple
         understanding_service=understanding_service,
         recommendation_router=DummyRecommendationRouter(),
         state_sync=state_sync,
-        snapshot_session=snapshot_builder(session_store),
         get_waiting_node=waiting_node_selector,
         build_session_context=lambda _: {"recent_messages": [], "long_term_memory": []},
         activate_graph=callbacks.activate_graph,
@@ -332,7 +312,6 @@ def test_route_new_message_forwards_emit_events_to_graph_compiler() -> None:
         understanding_service=understanding_service,
         recommendation_router=DummyRecommendationRouter(),
         state_sync=state_sync,
-        snapshot_session=snapshot_builder(session_store),
         get_waiting_node=waiting_node_selector,
         build_session_context=lambda _: {"recent_messages": [], "long_term_memory": []},
         activate_graph=callbacks.activate_graph,
