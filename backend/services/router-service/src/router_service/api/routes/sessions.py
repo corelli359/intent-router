@@ -386,6 +386,12 @@ def _response_node(session: object) -> GraphNodeState | None:
     return max(graph.nodes, key=lambda item: item.updated_at)
 
 
+def _assistant_uses_multi_intent_graph(session: object) -> bool:
+    """Return whether the current assistant-facing response has entered multi-intent graph mode."""
+    graph = _response_graph(session)
+    return graph is not None and len(graph.nodes) > 1
+
+
 def _last_assistant_message(session: object) -> str:
     """Return the most recent assistant message content when present."""
     messages = getattr(session, "messages", []) or []
@@ -455,6 +461,36 @@ def _assistant_output_payload(session: object) -> dict[str, Any]:
     }
 
 
+def _assistant_multi_intent_unsupported_output(session: object) -> dict[str, Any]:
+    """Build the assistant-facing failure payload for multi-intent graphs not yet exposed in production."""
+    graph = _response_graph(session)
+    output: dict[str, Any] = {
+        "status": "failed",
+        "message": "当前生产协议暂仅支持单意图场景，多意图输出协议待定。",
+        "errorCode": RouterErrorCode.ROUTER_MULTI_INTENT_UNSUPPORTED,
+        "route_mode": "multi_intent",
+    }
+    if graph is not None:
+        output["graph_status"] = graph.status.value
+        intent_codes = [node.intent_code for node in graph.nodes]
+        if intent_codes:
+            output["intent_codes"] = intent_codes
+    return output
+
+
+def _assistant_response_envelope(session: object) -> dict[str, Any]:
+    """Build the assistant-facing `ok + output` envelope from live router/session state."""
+    if _assistant_uses_multi_intent_graph(session):
+        return {
+            "ok": False,
+            "output": _assistant_multi_intent_unsupported_output(session),
+        }
+    return {
+        "ok": True,
+        "output": _assistant_output_payload(session),
+    }
+
+
 def _assistant_llm_unavailable_output(exc: LLMServiceUnavailableError) -> dict[str, Any]:
     """Build the assistant-facing failure payload for semantic-model outages."""
     output: dict[str, Any] = {
@@ -515,7 +551,7 @@ async def post_message(
         serialized_handler = getattr(orchestrator, "handle_user_message_serialized", None)
         if callable(serialized_handler):
             serializer = (
-                _assistant_output_payload
+                _assistant_response_envelope
                 if request.uses_assistant_protocol
                 else _serialize_session
             )
@@ -533,23 +569,24 @@ async def post_message(
                 emit_events=False,
             )
             if request.uses_assistant_protocol:
-                return AssistantOutputResponse(output=serialized_response)
+                return AssistantOutputResponse(**serialized_response)
             snapshot = serialized_response
         else:
-            snapshot = _serialize_response_snapshot(
-                await orchestrator.handle_user_message(
-                    session_id=session_id,
-                    cust_id=resolved_cust_id,
-                    content=request.content or "",
-                    router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
-                    guided_selection=request.guided_selection,
-                    recommendation_context=request.recommendation_context,
-                    proactive_recommendation=request.proactive_recommendation,
-                    upstream_config_variables=upstream_config_variables,
-                    upstream_slots_data=upstream_slots_data,
-                    emit_events=False,
-                )
+            response_state = await orchestrator.handle_user_message(
+                session_id=session_id,
+                cust_id=resolved_cust_id,
+                content=request.content or "",
+                router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
+                guided_selection=request.guided_selection,
+                recommendation_context=request.recommendation_context,
+                proactive_recommendation=request.proactive_recommendation,
+                upstream_config_variables=upstream_config_variables,
+                upstream_slots_data=upstream_slots_data,
+                emit_events=False,
             )
+            if request.uses_assistant_protocol:
+                return AssistantOutputResponse(**_assistant_response_envelope(response_state))
+            snapshot = _serialize_response_snapshot(response_state)
     except LLMServiceUnavailableError as exc:
         if request.uses_assistant_protocol:
             return AssistantOutputResponse(

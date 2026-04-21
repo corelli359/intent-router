@@ -105,6 +105,27 @@ def test_router_execute_snapshot_includes_last_diagnostics() -> None:
     asyncio.run(run())
 
 
+def test_router_execute_assistant_protocol_without_serialized_handler_returns_output_envelope() -> None:
+    async def run() -> None:
+        app, _ = _app_with_stub_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/router/v2/sessions/session_demo/messages",
+                json={"txt": "帮我转账"},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert "snapshot" not in payload
+        assert payload["output"]["status"] == "idle"
+
+    asyncio.run(run())
+
+
 def test_router_api_returns_structured_agent_barrier_error() -> None:
     class _AgentBarrierOrchestrator(_StubOrchestrator):
         async def handle_user_message(self, *args, **kwargs):

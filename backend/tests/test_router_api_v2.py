@@ -3134,6 +3134,41 @@ def test_v2_router_message_returns_503_when_recognizer_is_unavailable() -> None:
     asyncio.run(run())
 
 
+def test_v2_router_message_assistant_protocol_returns_ok_false_for_multi_intent_graph() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "txt": "先查余额，再给张三转账 200 元，卡号 6222020100049999999，尾号 1234",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert body["output"]["status"] == "failed"
+        assert body["output"]["message"] == "当前生产协议暂仅支持单意图场景，多意图输出协议待定。"
+        assert body["output"]["errorCode"] == "ROUTER_MULTI_INTENT_UNSUPPORTED"
+        assert body["output"]["route_mode"] == "multi_intent"
+        assert body["output"]["graph_status"] == "waiting_confirmation"
+        assert body["output"]["intent_codes"] == [
+            "query_account_balance",
+            "transfer_money",
+        ]
+
+    asyncio.run(run())
+
+
 def test_v2_router_message_first_turn_excludes_current_input_from_recent_messages() -> None:
     async def run() -> None:
         graph_builder = _RecentMessagesRecordingGraphBuilder()
