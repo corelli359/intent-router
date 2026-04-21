@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from router_service.core.shared.domain import ChatMessage, utc_now
+from router_service.core.shared.diagnostics import RouterDiagnostic, RouterDiagnosticCode
 from router_service.core.graph.compiler import GraphCompiler
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
@@ -21,7 +22,7 @@ from router_service.core.shared.graph_domain import (
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.state_sync import GraphStateSync
 from router_service.core.recognition.understanding_service import IntentUnderstandingService
-from router_service.core.support.llm_client import llm_exception_is_retryable
+from router_service.core.support.llm_client import LLMServiceUnavailableError, llm_exception_is_retryable
 from router_service.core.graph.recommendation_router import ProactiveRecommendationRouter
 from router_service.core.support.trace_logging import current_trace_id, router_stage
 
@@ -41,6 +42,10 @@ TERMINAL_GRAPH_STATUSES = {
     GraphStatus.PARTIALLY_COMPLETED,
     GraphStatus.FAILED,
     GraphStatus.CANCELLED,
+}
+
+BLOCKING_LLM_DIAGNOSTIC_CODES = {
+    RouterDiagnosticCode.RECOGNIZER_LLM_FAILED,
 }
 
 
@@ -107,6 +112,25 @@ class GraphMessageFlow:
             pending=pending,
         )
         session.enforce_business_limit(self.session_business_limit)
+
+    def _raise_if_blocking_llm_failure(
+        self,
+        diagnostics: list[RouterDiagnostic] | None,
+    ) -> None:
+        """Surface fatal semantic-model failures instead of converting them into business no-match."""
+        for item in diagnostics or []:
+            if item.code not in BLOCKING_LLM_DIAGNOSTIC_CODES:
+                continue
+            raise LLMServiceUnavailableError(
+                "意图识别服务暂不可用，请稍后重试。",
+                stage=str(item.source or "recognizer"),
+                details={
+                    "diagnostic_code": item.code,
+                    "source": item.source,
+                    "diagnostic_message": item.message,
+                    **dict(item.details or {}),
+                },
+            )
 
     async def handle_user_message(
         self,
@@ -336,6 +360,7 @@ class GraphMessageFlow:
             )
             session.candidate_intents = compile_result.recognition.candidates
             session.last_diagnostics = list(compile_result.diagnostics or [])
+            self._raise_if_blocking_llm_failure(session.last_diagnostics)
             graph = compile_result.graph
             if compile_result.no_match or graph is None:
                 await self.state_sync.publish_no_match_hint(session)
@@ -401,6 +426,7 @@ class GraphMessageFlow:
             )
             session.candidate_intents = compile_result.recognition.candidates
             session.last_diagnostics = list(compile_result.diagnostics or [])
+            self._raise_if_blocking_llm_failure(session.last_diagnostics)
             graph = compile_result.graph
             if compile_result.no_match or graph is None:
                 await self.state_sync.publish_no_match_hint(session)

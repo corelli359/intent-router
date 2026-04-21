@@ -25,6 +25,7 @@ from router_service.core.shared.graph_domain import (
     RecommendationContextPayload,
 )
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator
+from router_service.core.support.llm_client import LLMServiceUnavailableError
 from router_service.core.support.json_codec import JSONDecodeError, json_dumps, json_loads
 
 
@@ -454,6 +455,19 @@ def _assistant_output_payload(session: object) -> dict[str, Any]:
     }
 
 
+def _assistant_llm_unavailable_output(exc: LLMServiceUnavailableError) -> dict[str, Any]:
+    """Build the assistant-facing failure payload for semantic-model outages."""
+    output: dict[str, Any] = {
+        "status": "failed",
+        "message": str(exc),
+        "errorCode": RouterErrorCode.ROUTER_LLM_UNAVAILABLE,
+        "stage": exc.stage,
+    }
+    if exc.details:
+        output["details"] = dict(exc.details)
+    return output
+
+
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: CreateSessionRequest | None = None,
@@ -536,6 +550,21 @@ async def post_message(
                     emit_events=False,
                 )
             )
+    except LLMServiceUnavailableError as exc:
+        if request.uses_assistant_protocol:
+            return AssistantOutputResponse(
+                ok=False,
+                output=_assistant_llm_unavailable_output(exc),
+            )
+        raise RouterApiException(
+            status_code=503,
+            code=RouterErrorCode.ROUTER_LLM_UNAVAILABLE,
+            message=str(exc),
+            details={
+                "stage": exc.stage,
+                **dict(exc.details),
+            },
+        ) from exc
     except ValueError as exc:
         raise RouterApiException(
             status_code=400,

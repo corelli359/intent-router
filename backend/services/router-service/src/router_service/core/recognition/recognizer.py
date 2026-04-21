@@ -12,7 +12,12 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
 )
 from router_service.core.support.json_codec import json_dumps
-from router_service.core.support.llm_client import IntentRecognitionPayload, JsonLLMClient, llm_exception_is_retryable
+from router_service.core.support.llm_client import (
+    IntentRecognitionPayload,
+    JsonLLMClient,
+    llm_exception_details,
+    llm_exception_is_retryable,
+)
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_RECOGNIZER_HUMAN_PROMPT,
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
@@ -196,7 +201,7 @@ class LLMIntentRecognizer:
                         RouterDiagnosticCode.RECOGNIZER_LLM_FAILED,
                         source="recognizer",
                         message="意图识别 LLM 失败，当前不执行本地兜底识别",
-                        details={"error_type": type(exc).__name__},
+                        details=llm_exception_details(exc),
                     )
                 ],
             )

@@ -25,6 +25,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from tests.support.mock_agent_client import MockStreamingAgentClient
 from router_service.core.support.agent_client import StreamingAgentClient
+from router_service.core.shared.diagnostics import RouterDiagnosticCode, diagnostic
 from router_service.core.shared.domain import AgentStreamChunk, IntentDefinition, IntentMatch, Task, TaskStatus
 from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.shared.graph_domain import (
@@ -128,6 +129,26 @@ class _TransferOnlyRecognizer:
                 candidates=[],
             )
         return RecognitionResult(primary=[], candidates=[])
+
+
+class _RecognizerFailureRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del message, intents, recent_messages, long_term_memory, on_delta
+        return RecognitionResult(
+            primary=[],
+            candidates=[],
+            diagnostics=[
+                diagnostic(
+                    RouterDiagnosticCode.RECOGNIZER_LLM_FAILED,
+                    source="recognizer",
+                    message="意图识别 LLM 失败，当前不执行本地兜底识别",
+                    details={
+                        "error_type": "ConnectError",
+                        "error": "ConnectError: model backend unavailable",
+                    },
+                )
+            ],
+        )
 
 
 @dataclass
@@ -3050,6 +3071,65 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
             "currentDisplay": "display_002",
             "agentSessionID": session_id,
         }
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_assistant_protocol_returns_ok_false_when_recognizer_is_unavailable() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_RecognizerFailureRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={
+                    "txt": "我要跟家里缴3000电费",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is False
+        assert body["output"]["status"] == "failed"
+        assert body["output"]["errorCode"] == "ROUTER_LLM_UNAVAILABLE"
+        assert body["output"]["message"] == "意图识别服务暂不可用，请稍后重试。"
+        assert body["output"]["details"]["error_type"] == "ConnectError"
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_returns_503_when_recognizer_is_unavailable() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_RecognizerFailureRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            response = await client.post(
+                f"/api/router/v2/sessions/{session_id}/messages",
+                json={"content": "我要跟家里缴3000电费"},
+            )
+
+        assert response.status_code == 503
+        body = response.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "ROUTER_LLM_UNAVAILABLE"
+        assert body["error"]["message"] == "意图识别服务暂不可用，请稍后重试。"
+        assert body["error"]["details"]["error_type"] == "ConnectError"
 
     asyncio.run(run())
 

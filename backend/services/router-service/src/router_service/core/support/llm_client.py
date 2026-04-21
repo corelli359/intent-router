@@ -37,6 +37,21 @@ class LLMHTTPStatusError(RuntimeError):
         super().__init__(message)
 
 
+class LLMServiceUnavailableError(RuntimeError):
+    """Semantic wrapper used when router business flow must surface LLM unavailability."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stage: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.stage = stage
+        self.details = dict(details or {})
+        super().__init__(message)
+
+
 def extract_json_value(raw_text: str) -> Any:
     """Extract the first valid JSON object or array from raw LLM output text."""
     return extract_first_json_value(raw_text)
@@ -108,6 +123,23 @@ class JsonLLMClient(Protocol):
 def llm_exception_is_retryable(exc: Exception) -> bool:
     """Return whether an exception should be retried as a transient LLM failure."""
     return getattr(exc, "status_code", None) == 429
+
+
+def llm_exception_details(exc: Exception) -> dict[str, Any]:
+    """Extract stable debugging details from one LLM exception."""
+    details: dict[str, Any] = {
+        "error_type": type(exc).__name__,
+    }
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        details["status_code"] = status_code
+    body = getattr(exc, "body", None)
+    if body is not None:
+        details["body"] = body
+    error_message = str(exc).strip()
+    if error_message:
+        details["error"] = error_message
+    return details
 
 
 @dataclass(slots=True)
