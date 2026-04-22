@@ -550,6 +550,38 @@ def _assistant_default_node_id(
     return ""
 
 
+def _assistant_router_placeholder_message(
+    *,
+    status: str,
+    blocking_reason: str | None = None,
+    graph_status: str | None = None,
+    fallback: str = "",
+) -> str:
+    """Resolve the assistant-facing message from router state instead of agent text."""
+    if blocking_reason not in (None, ""):
+        return str(blocking_reason)
+
+    normalized_graph_status = str(graph_status or "")
+    if normalized_graph_status == "partially_completed":
+        return "执行图部分完成，存在已完成节点之外的未执行或异常终止节点"
+    if normalized_graph_status == "failed" or status == "failed":
+        return "执行图执行失败"
+    if normalized_graph_status == "cancelled" or status == "cancelled":
+        return "执行图已取消"
+    if normalized_graph_status == "completed" or status == "completed":
+        return "执行图已完成"
+
+    if status in {"waiting_user_input", "waiting_confirmation", "ready_for_dispatch"} and fallback:
+        return fallback
+    if normalized_graph_status == "waiting_user_input" or status == "waiting_user_input":
+        return "执行图等待用户补充信息"
+    if normalized_graph_status in {"waiting_confirmation", "waiting_confirmation_node"} or status == "waiting_confirmation":
+        return "执行图等待节点确认"
+    if normalized_graph_status == "ready_for_dispatch" or status == "ready_for_dispatch":
+        return "路由识别完成，已具备执行条件；当前为 router_only 模式，未调用执行 agent"
+    return fallback
+
+
 def _assistant_synthesized_transfer_data(
     *,
     intent_code: str,
@@ -718,7 +750,12 @@ def _assistant_output_from_node(
         status=status,
         is_handover=is_handover,
         handover_reason=handover_reason,
-        message=message,
+        message=_assistant_router_placeholder_message(
+            status=status,
+            blocking_reason=node.blocking_reason,
+            graph_status=graph.status.value if graph is not None else None,
+            fallback=message,
+        ),
         data=data,
         slot_memory=slot_memory,
     )
@@ -808,7 +845,12 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
         status=status,
         is_handover=is_handover,
         handover_reason=handover_reason,
-        message=event.message or "",
+        message=_assistant_router_placeholder_message(
+            status=status,
+            blocking_reason=str(node_payload.get("blocking_reason")) if node_payload.get("blocking_reason") not in (None, "") else None,
+            graph_status=str(graph_payload.get("status") or "") if graph_payload is not None else None,
+            fallback=event.message or "",
+        ),
         data=data,
         slot_memory=slot_memory,
     )

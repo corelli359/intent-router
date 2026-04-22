@@ -3082,7 +3082,7 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
         assert output["isHandOver"] is True
         assert output["handOverReason"] == "已提供收款人和金额交易对象"
         assert output["node_id"] == "end"
-        assert output["message"] == "已向小明转账 200 CNY，转账成功"
+        assert output["message"] == "执行图已完成"
         assert output["data"] == [
             {
                 "isSubAgent": "True",
@@ -3264,6 +3264,7 @@ def test_v2_router_message_stream_assistant_protocol_waiting_then_completed() ->
         assert completed_payload["status"] == "completed"
         assert completed_payload["completion_state"] == 2
         assert completed_payload["completion_reason"] == "agent_final_done"
+        assert completed_payload["message"] == "执行图已完成"
         assert completed_payload["task_list"] == [{"name": completed_payload["current_task"], "status": "completed"}]
         assert completed_payload["data"][0]["answer"] == "||200|小明|"
 
