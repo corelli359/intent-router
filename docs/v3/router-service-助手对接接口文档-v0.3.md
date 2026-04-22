@@ -628,7 +628,7 @@ Content-Type: application/json
 
 `scripts/demo_router_task_completion_api.py`
 
-该脚本当前默认会直接演示两种链路：
+该脚本当前默认会直接直连真实 Router，并演示两种链路：
 
 1. `agent 1 + assistant 1 => 2`
 2. `agent 1 + assistant 2 => 2`

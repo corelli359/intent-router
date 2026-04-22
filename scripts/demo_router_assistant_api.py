@@ -13,12 +13,12 @@ It intentionally does not call any session-create API. The assistant side only
 needs to keep one stable `sessionId` across turns. Router will bind and
 continue the session by that id.
 
-If you want to demo the assistant completion callback, use:
+If you want to demo the assistant completion callback against a real router, use:
 
     python scripts/demo_router_task_completion_api.py
 
 Reason:
-That script now runs a deterministic callback chain and demonstrates:
+That script now runs a real callback chain and demonstrates:
 1. agent 1 + assistant 1 => 2
 2. agent 1 + assistant 2 => 2
 """
