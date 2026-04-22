@@ -141,6 +141,82 @@ def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
     asyncio.run(run())
 
 
+def test_intent_recognition_payload_normalizes_singular_aliases_and_single_match_objects() -> None:
+    from router_service.core.support.llm_client import IntentRecognitionPayload
+
+    payload_from_intent_list = IntentRecognitionPayload.model_validate(
+        {
+            "intent": [
+                {
+                    "intent_code": "AG_TRANS",
+                    "confidence": 0.99,
+                }
+            ]
+        }
+    )
+    assert [match.intent_code for match in payload_from_intent_list.matches] == ["AG_TRANS"]
+
+    payload_from_match_object = IntentRecognitionPayload.model_validate(
+        {
+            "match": {
+                "intent_code": "AG_TRANS",
+                "confidence": 0.99,
+            }
+        }
+    )
+    assert [match.intent_code for match in payload_from_match_object.matches] == ["AG_TRANS"]
+
+    payload_from_single_match_object = IntentRecognitionPayload.model_validate(
+        {
+            "intent_code": "AG_TRANS",
+            "confidence": 0.99,
+        }
+    )
+    assert [match.intent_code for match in payload_from_single_match_object.matches] == ["AG_TRANS"]
+
+
+def test_llm_intent_recognizer_accepts_provider_payload_with_intent_key() -> None:
+    class IntentKeyClient:
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, variables, model, on_delta
+            return {
+                "intent": [
+                    {
+                        "intent_code": "transfer_money",
+                        "confidence": 0.91,
+                    }
+                ]
+            }
+
+    async def run() -> None:
+        intents = [
+            IntentDefinition(
+                intent_code="transfer_money",
+                name="转账",
+                description="执行转账",
+                examples=["给张三转 200 元"],
+                keywords=["转账"],
+                agent_url="https://agent.example.com/transfer",
+                dispatch_priority=100,
+                primary_threshold=0.7,
+                candidate_threshold=0.5,
+            ),
+        ]
+
+        recognizer = LLMIntentRecognizer(IntentKeyClient())
+        result = await recognizer.recognize(
+            message="给小明转账",
+            intents=intents,
+            recent_messages=[],
+            long_term_memory=[],
+        )
+
+        assert [match.intent_code for match in result.primary] == ["transfer_money"]
+        assert result.candidates == []
+
+    asyncio.run(run())
+
+
 def test_llm_intent_recognizer_can_fail_closed_without_regex_fallback() -> None:
     class FailingClient:
         async def run_json(self, *, prompt, variables, model=None, on_delta=None):
