@@ -37,7 +37,8 @@ from typing import Any, Iterator
 # Change only these constants before running on VPS / K8s.
 # ---------------------------------------------------------------------------
 
-ASSISTANT_BASE_URL = "http://127.0.0.1:8000"
+# ASSISTANT_BASE_URL = "http://127.0.0.1:8000"
+ASSISTANT_BASE_URL = "http://intent-router.kkrrc-359.top"
 CUST_ID = "C0001"
 SESSION_ID = f"assistant_stream_{int(time.time())}"
 EXECUTION_MODE = "execute"  # "execute" or "router_only"
