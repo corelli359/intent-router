@@ -5,6 +5,7 @@
 - `v3/router-service-需求说明文档.md`
 - `v3/router-service-功能说明文档.md`
 - `v3/router-service-架构设计文档.md`
+- `v3/router-service-LLM架构定位说明.md`
 - `v3/router-service-用户故事文档.md`
 - `v3/router-service-用户旅程文档.md`
 
