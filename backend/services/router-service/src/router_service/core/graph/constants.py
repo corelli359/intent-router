@@ -15,4 +15,5 @@ ACTIVE_NODE_STATUSES = {
     GraphNodeStatus.RUNNING,
     GraphNodeStatus.WAITING_USER_INPUT,
     GraphNodeStatus.WAITING_CONFIRMATION,
+    GraphNodeStatus.WAITING_ASSISTANT_COMPLETION,
 }

@@ -28,6 +28,7 @@ class TaskStatus(StrEnum):
     RUNNING = "running"
     WAITING_USER_INPUT = "waiting_user_input"
     WAITING_CONFIRMATION = "waiting_confirmation"
+    WAITING_ASSISTANT_COMPLETION = "waiting_assistant_completion"
     READY_FOR_DISPATCH = "ready_for_dispatch"
     RESUMING = "resuming"
     COMPLETED = "completed"

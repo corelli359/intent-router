@@ -36,6 +36,7 @@ from router_service.core.shared.graph_domain import (
     GraphEdge,
     GraphEdgeType,
     GraphNodeState,
+    GraphNodeStatus,
     GraphStatus,
     ProactiveRecommendationPayload,
     ProactiveRecommendationRouteDecision,
@@ -294,6 +295,54 @@ class _AssistantProtocolTransferAgentClient:
             output={
                 "isHandOver": True,
                 "handOverReason": "已提供收款人和金额交易对象",
+                "data": [
+                    {
+                        "isSubAgent": "True",
+                        "typIntent": "mbpTransfer",
+                        "answer": f"||{amount}|{payee_name}|",
+                    }
+                ],
+                "status": "completed",
+                "event": "final",
+                **payload,
+                "slot_memory": {"amount": amount, "payee_name": payee_name},
+            },
+        )
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        del session_id, task_id, agent_url
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+class _AssistantProtocolPartialCompletionAgentClient:
+    def __init__(self) -> None:
+        self.tasks: list[Task] = []
+
+    async def stream(self, task: Task, user_input: str):
+        del user_input
+        self.tasks.append(task)
+        amount = str(task.slot_memory.get("amount") or "")
+        payee_name = str(task.slot_memory.get("payee_name") or "")
+        payload = {
+            "agent": "transfer_money",
+            "amount": amount,
+            "payee_name": payee_name,
+            "business_status": "accepted",
+        }
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content=f"已受理向{payee_name}转账 {amount} CNY，等待助手确认完成态",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            payload=payload,
+            output={
+                "completion_state": 1,
+                "isHandOver": True,
+                "handOverReason": "等待助手确认完成态",
                 "data": [
                     {
                         "isSubAgent": "True",
@@ -3103,6 +3152,176 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
             "sessionID": session_id,
             "currentDisplay": "display_002",
             "agentSessionID": session_id,
+        }
+
+    asyncio.run(run())
+
+
+def test_v1_task_completion_with_real_router_app_returns_completed_output() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=_AssistantProtocolTransferAgentClient(),
+        )
+        session = orchestrator.session_store.create(cust_id="C0001", session_id="assistant_completion_demo")
+        graph = ExecutionGraphState(
+            source_message="给小明转账",
+            summary="transfer",
+            status=GraphStatus.RUNNING,
+        )
+        node = GraphNodeState(
+            intent_code="AG_TRANS",
+            title="转账",
+            confidence=0.96,
+            position=0,
+            status=GraphNodeStatus.WAITING_USER_INPUT,
+            slot_memory={"payee_name": "小明", "amount": "200"},
+        )
+        graph.nodes.append(node)
+        session.attach_business(graph, router_only_mode=False, pending=False)
+        task = Task(
+            session_id=session.session_id,
+            intent_code="AG_TRANS",
+            agent_url="http://test-agent/ag_trans",
+            intent_name="转账",
+            intent_description="执行转账",
+            confidence=0.96,
+            status=TaskStatus.WAITING_USER_INPUT,
+            slot_memory={"payee_name": "小明", "amount": "200"},
+        )
+        task.touch(TaskStatus.WAITING_USER_INPUT)
+        session.tasks.append(task)
+        node.task_id = task.task_id
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/task/completion",
+                json={
+                    "sessionId": session.session_id,
+                    "taskId": task.task_id,
+                    "completionSignal": 2,
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        output = body["output"]
+        assert output["current_task"] == task.task_id
+        assert output["task_list"] == [{"name": task.task_id, "status": "completed"}]
+        assert output["completion_state"] == 2
+        assert output["completion_reason"] == "assistant_final_done"
+        assert output["intent_code"] == "AG_TRANS"
+        assert output["status"] == "completed"
+        assert output["isHandOver"] is True
+        assert output["handOverReason"] == "completed"
+        assert output["node_id"] == "end"
+        assert output["slot_memory"] == {"payee_name": "小明", "amount": "200"}
+
+        session_after = orchestrator.session_store.get(session.session_id)
+        assert session_after.current_graph is None
+        assert session_after.pending_graph is None
+        assert session_after.tasks == []
+        assert session_after.shared_slot_memory == {
+            "payee_name": "小明",
+            "amount": "200",
+        }
+
+    asyncio.run(run())
+
+
+def test_v1_task_completion_real_chain_waits_for_assistant_then_joins_to_completed() -> None:
+    async def run() -> None:
+        agent_client = _AssistantProtocolPartialCompletionAgentClient()
+        app, orchestrator = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            first_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": "assistant_partial_completion_demo",
+                    "txt": "给小明转账",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": "assistant_partial_completion_demo"},
+                        {"name": "currentDisplay", "value": "display_001"},
+                        {"name": "agentSessionID", "value": "assistant_partial_completion_demo"},
+                    ],
+                },
+            )
+            assert first_turn.status_code == 200
+
+            second_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": "assistant_partial_completion_demo",
+                    "txt": "200",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": "assistant_partial_completion_demo"},
+                        {"name": "currentDisplay", "value": "display_002"},
+                        {"name": "agentSessionID", "value": "assistant_partial_completion_demo"},
+                    ],
+                },
+            )
+            assert second_turn.status_code == 200
+            second_body = second_turn.json()
+            second_output = second_body["output"]
+
+            completion = await client.post(
+                "/api/v1/task/completion",
+                json={
+                    "sessionId": "assistant_partial_completion_demo",
+                    "taskId": second_output["current_task"],
+                    "completionSignal": 1,
+                },
+            )
+
+        assert second_body["ok"] is True
+        assert second_output["current_task"].startswith("task_")
+        assert second_output["task_list"] == [{"name": second_output["current_task"], "status": "waiting"}]
+        assert second_output["status"] == "waiting_assistant_completion"
+        assert second_output["completion_state"] == 1
+        assert second_output["completion_reason"] == "agent_partial_done"
+        assert second_output["isHandOver"] is True
+        assert second_output["handOverReason"] == "等待助手确认完成态"
+        assert second_output["node_id"] == "end"
+        assert second_output["slot_memory"] == {"amount": "200", "payee_name": "小明"}
+
+        assert completion.status_code == 200
+        completion_body = completion.json()
+        completion_output = completion_body["output"]
+        assert completion_body["ok"] is True
+        assert completion_output["current_task"] == second_output["current_task"]
+        assert completion_output["task_list"] == [{"name": second_output["current_task"], "status": "completed"}]
+        assert completion_output["status"] == "completed"
+        assert completion_output["completion_state"] == 2
+        assert completion_output["completion_reason"] == "joint_done"
+        assert completion_output["isHandOver"] is True
+        assert completion_output["handOverReason"] == "等待助手确认完成态"
+        assert completion_output["slot_memory"] == {"amount": "200", "payee_name": "小明"}
+
+        session_after = orchestrator.session_store.get("assistant_partial_completion_demo")
+        assert session_after.current_graph is None
+        assert session_after.pending_graph is None
+        assert session_after.tasks == []
+        assert session_after.shared_slot_memory == {
+            "payee_name": "小明",
+            "amount": "200",
         }
 
     asyncio.run(run())

@@ -253,6 +253,29 @@ Accept: text/event-stream
 
 如果助手后续需要补任务完成态，应把 `current_task` 原样作为 `taskId` 传回 Router。
 
+#### 5. `status=waiting_assistant_completion` 的语义
+
+当下游 Agent 返回：
+
+1. 已完成自己的处理
+2. 但仅给出 `completion_state=1`
+
+那么 Router 会把当前任务收敛成：
+
+- `status=waiting_assistant_completion`
+- `completion_state=1`
+- `completion_reason=agent_partial_done`
+
+这时说明：
+
+1. Agent 已经单侧完成
+2. 任务还不能算最终完成
+3. 助手后续还需要调用 `/api/v1/task/completion`
+
+这一点非常关键：
+
+**Agent 完成不等于任务最终完成。**
+
 ---
 
 ## 4.5 SSE 响应
@@ -402,6 +425,43 @@ data: [DONE]
   }
 }
 ```
+
+### 示例三：Agent 单侧完成，等待助手补完成态
+
+如果下游 Agent 返回 `completion_state=1`，则典型返回会是：
+
+```json
+{
+  "ok": true,
+  "output": {
+    "current_task": "task_123",
+    "task_list": [
+      { "name": "task_123", "status": "waiting" }
+    ],
+    "completion_state": 1,
+    "completion_reason": "agent_partial_done",
+    "node_id": "end",
+    "intent_code": "AG_TRANS",
+    "status": "waiting_assistant_completion",
+    "isHandOver": true,
+    "handOverReason": "等待助手确认完成态",
+    "message": "已受理向小明转账 200 CNY，等待助手确认完成态",
+    "data": [
+      {
+        "isSubAgent": "True",
+        "typIntent": "mbpTransfer",
+        "answer": "||200|小明|"
+      }
+    ],
+    "slot_memory": {
+      "payee_name": "小明",
+      "amount": "200"
+    }
+  }
+}
+```
+
+此时助手侧应继续调用 `/api/v1/task/completion`，而不是把本任务直接当成最终完成。
 
 ---
 
@@ -563,6 +623,15 @@ Content-Type: application/json
 2. 使用真实助手协议字段
 3. 两轮演示 `给小明转账` -> `200`
 4. 直观看 Router 如何复用短期记忆
+
+如果要单独演示完成态汇报接口，再使用：
+
+`scripts/demo_router_task_completion_api.py`
+
+该脚本当前默认会直接演示两种链路：
+
+1. `agent 1 + assistant 1 => 2`
+2. `agent 1 + assistant 2 => 2`
 
 ---
 

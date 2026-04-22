@@ -176,6 +176,8 @@ class GraphRuntimeEngine:
                 return GraphStatus.WAITING_CONFIRMATION_NODE
             if status == GraphNodeStatus.WAITING_USER_INPUT:
                 return GraphStatus.WAITING_USER_INPUT
+            if status == GraphNodeStatus.WAITING_ASSISTANT_COMPLETION:
+                return GraphStatus.WAITING_ASSISTANT_COMPLETION
             if status not in {GraphNodeStatus.READY_FOR_DISPATCH, GraphNodeStatus.SKIPPED}:
                 all_ready_for_dispatch = False
             if status in {GraphNodeStatus.READY, GraphNodeStatus.BLOCKED, GraphNodeStatus.RUNNING}:
@@ -255,6 +257,7 @@ class GraphRuntimeEngine:
             TaskStatus.RUNNING: GraphNodeStatus.RUNNING,
             TaskStatus.WAITING_USER_INPUT: GraphNodeStatus.WAITING_USER_INPUT,
             TaskStatus.WAITING_CONFIRMATION: GraphNodeStatus.WAITING_CONFIRMATION,
+            TaskStatus.WAITING_ASSISTANT_COMPLETION: GraphNodeStatus.WAITING_ASSISTANT_COMPLETION,
             TaskStatus.READY_FOR_DISPATCH: GraphNodeStatus.READY_FOR_DISPATCH,
             TaskStatus.RESUMING: GraphNodeStatus.RUNNING,
             TaskStatus.COMPLETED: GraphNodeStatus.COMPLETED,
@@ -271,6 +274,7 @@ class GraphRuntimeEngine:
             GraphStatus.RUNNING: TaskStatus.RUNNING,
             GraphStatus.WAITING_USER_INPUT: TaskStatus.WAITING_USER_INPUT,
             GraphStatus.WAITING_CONFIRMATION_NODE: TaskStatus.WAITING_CONFIRMATION,
+            GraphStatus.WAITING_ASSISTANT_COMPLETION: TaskStatus.WAITING_ASSISTANT_COMPLETION,
             GraphStatus.READY_FOR_DISPATCH: TaskStatus.READY_FOR_DISPATCH,
             GraphStatus.PARTIALLY_COMPLETED: TaskStatus.COMPLETED,
             GraphStatus.COMPLETED: TaskStatus.COMPLETED,

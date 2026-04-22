@@ -107,3 +107,19 @@ def test_graph_runtime_engine_logs_condition_type_mismatch() -> None:
     assert matched is False
     mock_warning.assert_called_once()
     assert "Graph condition type mismatch" in mock_warning.call_args.args[0]
+
+
+def test_graph_runtime_engine_keeps_partial_completion_out_of_completed_graph() -> None:
+    engine = GraphRuntimeEngine()
+    graph = ExecutionGraphState(source_message="测试等待助手完成态")
+    graph.nodes.append(
+        GraphNodeState(
+            intent_code="AG_TRANS",
+            title="转账",
+            confidence=0.97,
+            position=0,
+            status=GraphNodeStatus.WAITING_ASSISTANT_COMPLETION,
+        )
+    )
+
+    assert engine.graph_status(graph) == GraphStatus.WAITING_ASSISTANT_COMPLETION

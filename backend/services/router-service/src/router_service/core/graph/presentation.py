@@ -60,6 +60,8 @@ class GraphSnapshotPresenter:
             return "执行图等待用户补充信息"
         if status == GraphStatus.WAITING_CONFIRMATION_NODE:
             return "执行图等待节点确认"
+        if status == GraphStatus.WAITING_ASSISTANT_COMPLETION:
+            return "执行图等待助手确认完成态"
         if status == GraphStatus.READY_FOR_DISPATCH:
             return "路由识别完成，已具备执行条件；当前为 router_only 模式，未调用执行 agent"
         return "执行图状态更新"

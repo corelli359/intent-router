@@ -28,6 +28,7 @@ class GraphNodeStatus(StrEnum):
     RUNNING = "running"
     WAITING_USER_INPUT = "waiting_user_input"
     WAITING_CONFIRMATION = "waiting_confirmation"
+    WAITING_ASSISTANT_COMPLETION = "waiting_assistant_completion"
     READY_FOR_DISPATCH = "ready_for_dispatch"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -52,6 +53,7 @@ class GraphStatus(StrEnum):
     RUNNING = "running"
     WAITING_USER_INPUT = "waiting_user_input"
     WAITING_CONFIRMATION_NODE = "waiting_confirmation_node"
+    WAITING_ASSISTANT_COMPLETION = "waiting_assistant_completion"
     READY_FOR_DISPATCH = "ready_for_dispatch"
     PARTIALLY_COMPLETED = "partially_completed"
     COMPLETED = "completed"
@@ -65,6 +67,7 @@ class BusinessObjectStatus(StrEnum):
     ACTIVE = "active"
     PENDING_CONFIRMATION = "pending_confirmation"
     SUSPENDED = "suspended"
+    WAITING_ASSISTANT_COMPLETION = "waiting_assistant_completion"
     READY_FOR_DISPATCH = "ready_for_dispatch"
     COMPLETED = "completed"
     PARTIALLY_COMPLETED = "partially_completed"
@@ -262,6 +265,9 @@ class BusinessObjectState(BaseModel):
         graph_status = self.graph.status
         if graph_status == GraphStatus.WAITING_CONFIRMATION:
             self.status = BusinessObjectStatus.PENDING_CONFIRMATION
+            self.ishandover = False
+        elif graph_status == GraphStatus.WAITING_ASSISTANT_COMPLETION:
+            self.status = BusinessObjectStatus.WAITING_ASSISTANT_COMPLETION
             self.ishandover = False
         elif graph_status == GraphStatus.READY_FOR_DISPATCH:
             self.status = BusinessObjectStatus.READY_FOR_DISPATCH

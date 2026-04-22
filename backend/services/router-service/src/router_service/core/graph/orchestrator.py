@@ -296,6 +296,7 @@ class GraphRouterOrchestrator:
             TaskStatus.RUNNING,
             TaskStatus.WAITING_USER_INPUT,
             TaskStatus.WAITING_CONFIRMATION,
+            TaskStatus.WAITING_ASSISTANT_COMPLETION,
             TaskStatus.READY_FOR_DISPATCH,
             TaskStatus.RESUMING,
         }:
@@ -1038,7 +1039,7 @@ class GraphRouterOrchestrator:
         chunk: Any,
     ) -> None:
         """Project each streamed agent chunk back into node/session/graph state."""
-        task.touch(chunk.status)
+        raw_task_status = chunk.status
         node.slot_memory = dict(task.slot_memory)
         node.output_payload = dict(chunk.payload)
         node._agent_output = dict(getattr(chunk, "output", {}) or {})
@@ -1049,12 +1050,19 @@ class GraphRouterOrchestrator:
             apply_completion_signal = getattr(node, "apply_completion_signal", None)
             if callable(apply_completion_signal):
                 apply_completion_signal(source="agent", signal=explicit_completion_state)
-        node_status = self._node_status_for_task_status(chunk.status)
+
+        effective_task_status = raw_task_status
+        if explicit_completion_state == 1 and raw_task_status == TaskStatus.COMPLETED:
+            effective_task_status = TaskStatus.WAITING_ASSISTANT_COMPLETION
+
+        task.touch(effective_task_status)
+        node_status = self._node_status_for_task_status(effective_task_status)
         node.touch(node_status)
 
-        if chunk.status in {
+        if effective_task_status in {
             TaskStatus.WAITING_USER_INPUT,
             TaskStatus.WAITING_CONFIRMATION,
+            TaskStatus.WAITING_ASSISTANT_COMPLETION,
             TaskStatus.COMPLETED,
             TaskStatus.FAILED,
         } and chunk.content:
@@ -1064,15 +1072,16 @@ class GraphRouterOrchestrator:
         event_name = {
             TaskStatus.WAITING_USER_INPUT: "node.waiting_user_input",
             TaskStatus.WAITING_CONFIRMATION: "node.waiting_confirmation",
+            TaskStatus.WAITING_ASSISTANT_COMPLETION: "node.waiting_assistant_completion",
             TaskStatus.COMPLETED: "node.completed",
             TaskStatus.FAILED: "node.failed",
-        }.get(chunk.status, "node.message")
+        }.get(effective_task_status, "node.message")
 
         await self.event_publisher.publish_node_runtime_event(
             session,
             graph,
             node,
-            task_status=chunk.status,
+            task_status=effective_task_status,
             event=event_name,
             message=chunk.content,
             ishandover=chunk.ishandover,
@@ -1082,9 +1091,10 @@ class GraphRouterOrchestrator:
             },
             source="agent",
         )
-        if chunk.status in {
+        if effective_task_status in {
             TaskStatus.WAITING_USER_INPUT,
             TaskStatus.WAITING_CONFIRMATION,
+            TaskStatus.WAITING_ASSISTANT_COMPLETION,
             TaskStatus.COMPLETED,
             TaskStatus.FAILED,
         }:

@@ -12,6 +12,15 @@ This script uses only the assistant-facing production router endpoint:
 It intentionally does not call any session-create API. The assistant side only
 needs to keep one stable `sessionId` across turns. Router will bind and
 continue the session by that id.
+
+If you want to demo the assistant completion callback, use:
+
+    python scripts/demo_router_task_completion_api.py
+
+Reason:
+That script now runs a deterministic callback chain and demonstrates:
+1. agent 1 + assistant 1 => 2
+2. agent 1 + assistant 2 => 2
 """
 
 from __future__ import annotations
@@ -214,6 +223,7 @@ def main() -> int:
     print("2. turn2 继续沿用同一个 sessionId，只传当前用户输入。")
     print("3. 如果短期记忆生效，turn2 的 slot_memory 里会同时看到收款人和金额。")
     print("4. execute 模式下，槽位齐全后会继续路由到下游 agent。")
+    print("5. /api/v1/task/completion 的汇报接口演示，请使用 scripts/demo_router_task_completion_api.py。")
     print()
 
     return 0

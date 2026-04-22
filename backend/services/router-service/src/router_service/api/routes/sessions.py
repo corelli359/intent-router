@@ -430,12 +430,13 @@ def _response_node(session: object) -> GraphNodeState | None:
     status_priority = {
         GraphNodeStatus.WAITING_USER_INPUT: 0,
         GraphNodeStatus.WAITING_CONFIRMATION: 1,
-        GraphNodeStatus.RUNNING: 2,
-        GraphNodeStatus.READY_FOR_DISPATCH: 3,
-        GraphNodeStatus.COMPLETED: 4,
-        GraphNodeStatus.FAILED: 5,
-        GraphNodeStatus.CANCELLED: 6,
-        GraphNodeStatus.SKIPPED: 7,
+        GraphNodeStatus.WAITING_ASSISTANT_COMPLETION: 2,
+        GraphNodeStatus.RUNNING: 3,
+        GraphNodeStatus.READY_FOR_DISPATCH: 4,
+        GraphNodeStatus.COMPLETED: 5,
+        GraphNodeStatus.FAILED: 6,
+        GraphNodeStatus.CANCELLED: 7,
+        GraphNodeStatus.SKIPPED: 8,
     }
     candidates = [node for node in graph.nodes if node.status in status_priority]
     if candidates:
@@ -518,6 +519,26 @@ def _assistant_task_status(node_status: str | GraphNodeStatus | None) -> str:
     return "waiting"
 
 
+def _assistant_effective_status(
+    *,
+    node_status: str | GraphNodeStatus | None,
+    agent_output_status: object | None,
+) -> str:
+    """Resolve the assistant-facing status, preferring router-owned transitional states."""
+    if isinstance(node_status, GraphNodeStatus):
+        node_status_value = node_status.value
+    elif node_status is None:
+        node_status_value = ""
+    else:
+        node_status_value = str(node_status)
+
+    if node_status_value == GraphNodeStatus.WAITING_ASSISTANT_COMPLETION.value:
+        return node_status_value
+    if agent_output_status not in (None, ""):
+        return str(agent_output_status)
+    return node_status_value
+
+
 def _assistant_task_name(
     *,
     task_id: str | None,
@@ -585,7 +606,7 @@ def _assistant_default_node_id(
     """Resolve the assistant-facing node id while preserving agent-provided values when present."""
     if explicit_node_id not in (None, ""):
         return str(explicit_node_id)
-    if status in {"waiting_user_input", "waiting_confirmation", "completed", "failed"}:
+    if status in {"waiting_user_input", "waiting_confirmation", "waiting_assistant_completion", "completed", "failed"}:
         return "end"
     return ""
 
@@ -611,12 +632,14 @@ def _assistant_router_placeholder_message(
     if normalized_graph_status == "completed" or status == "completed":
         return "执行图已完成"
 
-    if status in {"waiting_user_input", "waiting_confirmation", "ready_for_dispatch"} and fallback:
+    if status in {"waiting_user_input", "waiting_confirmation", "waiting_assistant_completion", "ready_for_dispatch"} and fallback:
         return fallback
     if normalized_graph_status == "waiting_user_input" or status == "waiting_user_input":
         return "执行图等待用户补充信息"
     if normalized_graph_status in {"waiting_confirmation", "waiting_confirmation_node"} or status == "waiting_confirmation":
         return "执行图等待节点确认"
+    if normalized_graph_status == "waiting_assistant_completion" or status == "waiting_assistant_completion":
+        return "执行图等待助手确认完成态"
     if normalized_graph_status == "ready_for_dispatch" or status == "ready_for_dispatch":
         return "路由识别完成，已具备执行条件；当前为 router_only 模式，未调用执行 agent"
     return fallback
@@ -665,7 +688,11 @@ def _assistant_completion_fields(
         explicit_reason = normalized_output.get("completion_reason")
         if explicit_reason not in (None, ""):
             return explicit_state, str(explicit_reason)
-        return explicit_state, "agent_final_done" if explicit_state == 2 else "running"
+        if explicit_state == 2:
+            return 2, "agent_final_done"
+        if explicit_state == 1:
+            return 1, "agent_partial_done"
+        return 0, "running"
 
     if isinstance(node_status, GraphNodeStatus):
         node_status_value = node_status.value
@@ -678,6 +705,11 @@ def _assistant_completion_fields(
         return 0, "router_waiting_user_input"
     if status in {"waiting_confirmation"} or node_status_value == GraphNodeStatus.WAITING_CONFIRMATION.value:
         return 0, "router_waiting_confirmation"
+    if (
+        status in {"waiting_assistant_completion"}
+        or node_status_value == GraphNodeStatus.WAITING_ASSISTANT_COMPLETION.value
+    ):
+        return 1, "agent_partial_done"
     if status in {"ready_for_dispatch"} or node_status_value == GraphNodeStatus.READY_FOR_DISPATCH.value:
         return 0, "router_ready_for_dispatch"
     if status in {"running", "dispatching"} or node_status_value == GraphNodeStatus.RUNNING.value:
@@ -743,7 +775,10 @@ def _assistant_output_from_node(
     agent_output = dict(getattr(node, "_agent_output", {}) or {})
     slot_memory = dict(node.slot_memory)
     output_payload = dict(node.output_payload)
-    status = str(agent_output.get("status") or node.status.value)
+    status = _assistant_effective_status(
+        node_status=node.status,
+        agent_output_status=agent_output.get("status"),
+    )
     is_handover = bool(
         agent_output["isHandOver"]
         if "isHandOver" in agent_output
@@ -755,6 +790,8 @@ def _assistant_output_from_node(
         handover_reason = "waiting_user_input"
     elif node.status == GraphNodeStatus.WAITING_CONFIRMATION:
         handover_reason = "waiting_confirmation"
+    elif node.status == GraphNodeStatus.WAITING_ASSISTANT_COMPLETION:
+        handover_reason = "waiting_assistant_completion"
     elif node.status == GraphNodeStatus.COMPLETED:
         handover_reason = "completed"
     else:
@@ -814,6 +851,7 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
         "graph.unrecognized",
         "node.waiting_user_input",
         "node.waiting_confirmation",
+        "node.waiting_assistant_completion",
         "node.ready_for_dispatch",
         "node.completed",
         "node.failed",
@@ -846,7 +884,10 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
 
     slot_memory = dict(node_payload.get("slot_memory") or {})
     output_payload = dict(node_payload.get("output_payload") or {})
-    status = str(agent_output.get("status") or node_payload.get("status") or event.status.value)
+    status = _assistant_effective_status(
+        node_status=str(node_payload.get("status") or ""),
+        agent_output_status=agent_output.get("status"),
+    )
     is_handover = bool(
         agent_output["isHandOver"]
         if "isHandOver" in agent_output
@@ -854,7 +895,7 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     )
     if "handOverReason" in agent_output and agent_output["handOverReason"] not in (None, ""):
         handover_reason = str(agent_output["handOverReason"])
-    elif status in {"waiting_user_input", "waiting_confirmation"}:
+    elif status in {"waiting_user_input", "waiting_confirmation", "waiting_assistant_completion"}:
         handover_reason = status
     elif status == "completed":
         handover_reason = "completed"
