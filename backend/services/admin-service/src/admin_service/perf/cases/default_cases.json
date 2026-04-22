@@ -11,7 +11,7 @@
       "slot_extraction",
       "no_agent"
     ],
-    "target_route": "/api/router/v2/sessions/{session_id}/messages",
+    "target_route": "/api/v1/message",
     "notes": [
       "只保留一个转账输入，直接校验意图和提槽结果。",
       "通过 admin-api 使用 svc 访问 router-api-test，不走浏览器直连。",
@@ -21,8 +21,9 @@
       "cust_id": "perf_transfer_router_only_case"
     },
     "message_request": {
-      "content": "给小明转500元",
-      "executionMode": "router_only"
+      "txt": "给小明转500元",
+      "executionMode": "router_only",
+      "stream": false
     },
     "default_steps": [
       {

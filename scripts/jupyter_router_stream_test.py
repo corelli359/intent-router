@@ -74,7 +74,13 @@ def create_session_url(base_url: str = ROUTER_BASE_URL) -> str:
     return f"{base_url.rstrip('/')}/api/router/v2/sessions"
 
 
-def router_stream_url(session_id: str, base_url: str = ROUTER_BASE_URL) -> str:
+def router_stream_url(
+    session_id: str,
+    base_url: str = ROUTER_BASE_URL,
+    protocol: ProtocolMode = DEFAULT_PROTOCOL,
+) -> str:
+    if protocol == "assistant":
+        return f"{base_url.rstrip('/')}/api/v1/message"
     return f"{base_url.rstrip('/')}/api/router/v2/sessions/{session_id}/messages/stream"
 
 
@@ -154,6 +160,7 @@ def build_assistant_payload(
         "txt": txt,
         "custId": cust_id,
         "executionMode": execution_mode,
+        "stream": True,
         "config_variables": config_variables,
     }
 
@@ -319,10 +326,10 @@ def run_one_turn(
         protocol=protocol,
     )
     print("=== request ===")
-    print(f"POST {router_stream_url(session_id, base_url)}")
+    print(f"POST {router_stream_url(session_id, base_url, protocol)}")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     print()
-    frames = _post_stream(url=router_stream_url(session_id, base_url), payload=payload)
+    frames = _post_stream(url=router_stream_url(session_id, base_url, protocol), payload=payload)
     print("=== response frames ===")
     print_frames(frames)
     print()
@@ -352,11 +359,11 @@ def run_one_turn_live(
         protocol=protocol,
     )
     print("=== request ===")
-    print(f"POST {router_stream_url(session_id, base_url)}")
+    print(f"POST {router_stream_url(session_id, base_url, protocol)}")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     print()
     print("=== live response frames ===", flush=True)
-    return print_live_frames(url=router_stream_url(session_id, base_url), payload=payload)
+    return print_live_frames(url=router_stream_url(session_id, base_url, protocol), payload=payload)
 
 
 def run_transfer_two_turn_demo(

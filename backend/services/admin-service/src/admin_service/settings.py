@@ -102,7 +102,7 @@ class Settings(BaseModel):
         max_length=512,
     )
     perf_test_message_path_template: str = Field(
-        default="/api/router/v2/sessions/{session_id}/messages",
+        default="/api/v1/message",
         min_length=1,
         max_length=1024,
     )
@@ -157,7 +157,7 @@ class Settings(BaseModel):
             ),
             perf_test_message_path_template=os.getenv(
                 "ADMIN_PERF_TEST_MESSAGE_PATH_TEMPLATE",
-                "/api/router/v2/sessions/{session_id}/messages",
+                "/api/v1/message",
             ),
             perf_test_request_timeout_seconds=float(
                 os.getenv("ADMIN_PERF_TEST_REQUEST_TIMEOUT_SECONDS", "15")

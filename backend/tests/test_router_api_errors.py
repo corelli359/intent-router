@@ -40,6 +40,10 @@ class _StubOrchestrator:
             raise KeyError("missing")
         return self.snapshot_payload
 
+    async def handle_user_message_serialized(self, *, serializer, **kwargs):
+        del kwargs
+        return serializer(self.snapshot_payload)
+
     async def handle_user_message(self, *args, **kwargs):
         return self.snapshot_payload
 
@@ -126,8 +130,37 @@ def test_router_execute_assistant_protocol_without_serialized_handler_returns_ou
     asyncio.run(run())
 
 
+def test_router_v1_message_non_stream_returns_output_without_snapshot() -> None:
+    async def run() -> None:
+        app, _ = _app_with_stub_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": "session_demo",
+                    "txt": "帮我转账",
+                    "stream": False,
+                },
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert "snapshot" not in payload
+        assert payload["output"]["status"] == "idle"
+
+    asyncio.run(run())
+
+
 def test_router_api_returns_structured_agent_barrier_error() -> None:
     class _AgentBarrierOrchestrator(_StubOrchestrator):
+        async def handle_user_message_serialized(self, **kwargs):
+            del kwargs
+            raise AgentBarrierTriggeredError("ROUTER_AGENT_BARRIER_ENABLED=true blocked a real agent call")
+
         async def handle_user_message(self, *args, **kwargs):
             raise AgentBarrierTriggeredError("ROUTER_AGENT_BARRIER_ENABLED=true blocked a real agent call")
 

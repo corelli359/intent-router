@@ -44,15 +44,17 @@ class RouterForwardService:
         self._owns_http_client = http_client is None
         self.http_client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
 
-    def _router_payload(self, request: AssistantRunRequest) -> dict[str, Any]:
-        """Build the shared router payload without rewriting the upstream contract fields."""
-        return request.model_dump(mode="json", by_alias=True, exclude_none=True)
+    def _router_payload(self, request: AssistantRunRequest, *, stream: bool) -> dict[str, Any]:
+        """Build the shared router payload while selecting the router-side response mode."""
+        payload = request.model_dump(mode="json", by_alias=True, exclude_none=True)
+        payload["stream"] = stream
+        return payload
 
     async def run(self, request: AssistantRunRequest) -> dict[str, Any]:
         """Forward one assistant request into the router message endpoint."""
         response = await self.http_client.post(
-            f"{self.router_base_url}/api/router/v2/sessions/{request.session_id}/messages",
-            json=self._router_payload(request),
+            f"{self.router_base_url}/api/v1/message",
+            json=self._router_payload(request, stream=False),
         )
         try:
             body = response.json()
@@ -72,8 +74,8 @@ class RouterForwardService:
         response = await self.http_client.send(
             self.http_client.build_request(
                 "POST",
-                f"{self.router_base_url}/api/router/v2/sessions/{request.session_id}/messages/stream",
-                json=self._router_payload(request),
+                f"{self.router_base_url}/api/v1/message",
+                json=self._router_payload(request, stream=True),
                 headers={"Accept": "text/event-stream"},
             ),
             stream=True,

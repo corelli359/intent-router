@@ -56,9 +56,11 @@ def assistant_message_payload(
     current_display: str,
 ) -> dict[str, Any]:
     return {
+        "sessionId": session_id,
         "txt": txt,
-        "cust_id": CUST_ID,
+        "custId": CUST_ID,
         "executionMode": EXECUTION_MODE,
+        "stream": False,
         "config_variables": [
             {"name": "custID", "value": CUST_ID},
             {"name": "sessionID", "value": session_id},
@@ -123,7 +125,7 @@ def main() -> int:
     )
     turn1_response = request_json(
         "POST",
-        f"{BASE_URL}/api/router/v2/sessions/{session_id}/messages",
+        f"{BASE_URL}/api/v1/message",
         turn1_request,
     )
     assert_assistant_response_shape(turn1_response)
@@ -137,7 +139,7 @@ def main() -> int:
     )
     turn2_response = request_json(
         "POST",
-        f"{BASE_URL}/api/router/v2/sessions/{session_id}/messages",
+        f"{BASE_URL}/api/v1/message",
         turn2_request,
     )
     assert_assistant_response_shape(turn2_response)

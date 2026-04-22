@@ -45,9 +45,8 @@ def test_assistant_service_forwards_non_stream_request_to_router() -> None:
         router_app = FastAPI()
         received: dict[str, object] = {}
 
-        @router_app.post("/api/router/v2/sessions/{session_id}/messages")
-        async def router_message(session_id: str, payload: dict[str, object]) -> dict[str, object]:
-            received["session_id"] = session_id
+        @router_app.post("/api/v1/message")
+        async def router_message(payload: dict[str, object]) -> dict[str, object]:
             received["payload"] = payload
             return {
                 "ok": True,
@@ -97,7 +96,6 @@ def test_assistant_service_forwards_non_stream_request_to_router() -> None:
             },
         }
         assert received == {
-            "session_id": "session_assistant_001",
             "payload": {
                 "sessionId": "session_assistant_001",
                 "txt": "给小明转账 200",
@@ -106,6 +104,7 @@ def test_assistant_service_forwards_non_stream_request_to_router() -> None:
                     {"name": "sessionID", "value": "session_assistant_001"},
                 ],
                 "executionMode": "execute",
+                "stream": False,
             },
         }
 
@@ -123,9 +122,8 @@ def test_assistant_service_proxies_router_stream_without_rewriting_events() -> N
             b"data: [DONE]\n\n"
         )
 
-        @router_app.post("/api/router/v2/sessions/{session_id}/messages/stream")
-        async def router_message_stream(session_id: str, payload: dict[str, object]) -> StreamingResponse:
-            received["session_id"] = session_id
+        @router_app.post("/api/v1/message")
+        async def router_message_stream(payload: dict[str, object]) -> StreamingResponse:
             received["payload"] = payload
 
             async def event_generator():
@@ -182,7 +180,6 @@ def test_assistant_service_proxies_router_stream_without_rewriting_events() -> N
         assert headers["x-accel-buffering"] == "no"
         assert body == expected_stream
         assert received == {
-            "session_id": "session_assistant_002",
             "payload": {
                 "sessionId": "session_assistant_002",
                 "txt": "帮我查一下余额",
@@ -192,6 +189,7 @@ def test_assistant_service_proxies_router_stream_without_rewriting_events() -> N
                 ],
                 "executionMode": "router_only",
                 "custId": "C0002",
+                "stream": True,
             },
         }
         assert "cust_id" not in received["payload"]

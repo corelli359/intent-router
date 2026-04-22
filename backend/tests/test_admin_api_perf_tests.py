@@ -48,69 +48,27 @@ class _MockRouterTarget:
                     "cust_id": "perf_test_cust",
                 },
             )
-        if request.url.path.startswith("/api/router/v2/sessions/") and request.url.path.endswith("/messages"):
+        if request.url.path == "/api/v1/message":
             if self.delay_seconds > 0:
                 await asyncio.sleep(self.delay_seconds)
             return httpx.Response(
                 200,
                 json={
-                    "snapshot": {
-                        "session_id": "session-router-only",
-                        "cust_id": "perf_test_cust",
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": "给小明转500元",
-                                "created_at": "2026-04-17T00:00:00Z",
-                            },
-                            {
-                                "role": "assistant",
-                                "content": "路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
-                                "created_at": "2026-04-17T00:00:01Z",
-                            },
-                        ],
-                        "candidate_intents": [],
-                        "last_diagnostics": [],
-                        "shared_slot_memory": {},
-                        "current_graph": {
-                            "graph_id": "graph_transfer",
-                            "source_message": "给小明转500元",
-                            "summary": "router_only handover",
-                            "version": 1,
-                            "status": "ready_for_dispatch",
-                            "confirm_token": "confirm-transfer",
-                            "nodes": [
-                                {
-                                    "node_id": "node_transfer",
-                                    "intent_code": self.response_primary_intent_code,
-                                    "title": "立即发起一笔转账交易",
-                                    "confidence": 0.92,
-                                    "position": 0,
-                                    "status": "ready_for_dispatch",
-                                    "slot_memory": dict(self.response_slot_memory),
-                                    "slot_bindings": [],
-                                    "history_slot_keys": [],
-                                    "diagnostics": [],
-                                    "output_payload": {
-                                        "router_only": True,
-                                        "dispatch_ready": True,
-                                        "intent_code": self.response_primary_intent_code,
-                                        "slot_memory": dict(self.response_slot_memory),
-                                    },
-                                    "created_at": "2026-04-17T00:00:00Z",
-                                    "updated_at": "2026-04-17T00:00:00Z",
-                                }
-                            ],
-                            "edges": [],
-                            "actions": [],
-                            "diagnostics": [],
-                            "created_at": "2026-04-17T00:00:00Z",
-                            "updated_at": "2026-04-17T00:00:00Z",
-                        },
-                        "pending_graph": None,
-                        "active_node_id": None,
-                        "expires_at": "2026-04-17T01:00:00Z",
-                    }
+                    "ok": True,
+                    "output": {
+                        "current_task": "AG_TRANS#0",
+                        "task_list": [{"name": "AG_TRANS#0", "status": "waiting"}],
+                        "completion_state": 0,
+                        "completion_reason": "router_ready_for_dispatch",
+                        "node_id": "",
+                        "intent_code": self.response_primary_intent_code,
+                        "status": "ready_for_dispatch",
+                        "isHandOver": False,
+                        "handOverReason": "ready_for_dispatch",
+                        "message": "路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",
+                        "data": [],
+                        "slot_memory": dict(self.response_slot_memory),
+                    },
                 },
             )
         return httpx.Response(404, json={"detail": "unexpected path"})
@@ -128,12 +86,13 @@ def _perf_case(
         description="Router-only transfer perf case",
         category="router_only",
         tags=["transfer", "router_only"],
-        target_route="/api/router/v2/sessions/{session_id}/messages",
+        target_route="/api/v1/message",
         notes=["test fixture"],
         session_request={"cust_id": "perf_test_case"},
         message_request={
-            "content": "给小明转500元",
+            "txt": "给小明转500元",
             "executionMode": "router_only",
+            "stream": False,
         },
         default_steps=[PerfTestStepPlan(concurrency=2, duration_sec=0.05, warmup_sec=0.0, timeout_ms=1000)],
         expectations=PerfTestExpectation(
@@ -156,7 +115,7 @@ def _build_perf_service(
     settings = Settings(
         perf_test_target_base_url="http://router-api-test.intent.svc.cluster.local:8000",
         perf_test_session_create_path="/api/router/v2/sessions",
-        perf_test_message_path_template="/api/router/v2/sessions/{session_id}/messages",
+        perf_test_message_path_template="/api/v1/message",
         perf_test_request_timeout_seconds=2.0,
     )
 
@@ -197,7 +156,7 @@ def test_perf_case_catalog_loads_default_transfer_router_only_case() -> None:
 
     assert [case.case_id for case in cases] == ["transfer-intent-slot-router-only"]
     assert cases[0].message_request["executionMode"] == "router_only"
-    assert cases[0].message_request["content"] == "给小明转500元"
+    assert cases[0].message_request["txt"] == "给小明转500元"
     assert cases[0].expectations.required_primary_intent_code == "AG_TRANS"
     assert cases[0].expectations.required_graph_status == "ready_for_dispatch"
     assert cases[0].expectations.required_slot_values == {
@@ -233,7 +192,7 @@ def test_perf_service_executes_duration_ladder_and_uses_internal_target_url() ->
         assert completed.error_samples == []
 
         assert any(path == "/api/router/v2/sessions" for _, path in target.calls)
-        assert any(path.endswith("/messages") for _, path in target.calls)
+        assert any(path == "/api/v1/message" for _, path in target.calls)
         assert {host for host, _ in target.calls} == {"router-api-test.intent.svc.cluster.local"}
 
     asyncio.run(run())

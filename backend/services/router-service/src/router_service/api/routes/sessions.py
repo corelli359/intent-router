@@ -30,6 +30,7 @@ from router_service.core.support.json_codec import JSONDecodeError, json_dumps, 
 
 
 router = APIRouter(tags=["router"])
+public_router = APIRouter(tags=["router"])
 
 
 class MessageExecutionMode(StrEnum):
@@ -117,6 +118,27 @@ class MessageRequest(BaseModel):
         return self.txt is not None or bool(self.config_variables)
 
 
+class ProtocolMessageRequest(BaseModel):
+    """Production message contract exposed through the unified `/api/v1/message` entry."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    session_id: str = Field(alias="sessionId", min_length=1)
+    txt: str = ""
+    config_variables: list[ConfigVariableInput] = Field(default_factory=list)
+    execution_mode: MessageExecutionMode = Field(default=MessageExecutionMode.EXECUTE, alias="executionMode")
+    cust_id: str | None = Field(default=None, alias="custId")
+    stream: bool = True
+
+    @model_validator(mode="after")
+    def normalize(self) -> "ProtocolMessageRequest":
+        """Require the upstream protocol message text and normalize whitespace-only payloads."""
+        self.txt = self.txt or ""
+        if not self.txt.strip():
+            raise ValueError("txt is required")
+        return self
+
+
 class ActionRequest(BaseModel):
     """Action payload accepted from direct API callers or the graph UI layer."""
 
@@ -167,18 +189,36 @@ def _resolve_action_cust_id(
         return "cust_demo"
 
 
+def _resolve_session_cust_id(
+    orchestrator: GraphRouterOrchestrator,
+    session_id: str,
+    cust_id: str | None,
+) -> str:
+    """Resolve one customer id from payload first, then existing session state."""
+    if cust_id:
+        return cust_id
+    try:
+        return _session_or_snapshot(orchestrator, session_id).cust_id
+    except KeyError:
+        return "cust_demo"
+
+
+def _resolve_live_session(orchestrator: GraphRouterOrchestrator, session_id: str) -> object:
+    """Return the live in-memory session required by the production message contract."""
+    session_store = getattr(orchestrator, "session_store", None)
+    getter = getattr(session_store, "get", None)
+    if getter is None:
+        raise RuntimeError("router live session store is unavailable")
+    return getter(session_id)
+
+
 def _resolve_message_cust_id(
     orchestrator: GraphRouterOrchestrator,
     session_id: str,
     request: MessageRequest,
 ) -> str:
     """Resolve the customer id for a message request from payload or existing session."""
-    if request.cust_id:
-        return request.cust_id
-    try:
-        return _session_or_snapshot(orchestrator, session_id).cust_id
-    except KeyError:
-        return "cust_demo"
+    return _resolve_session_cust_id(orchestrator, session_id, request.cust_id)
 
 
 def _serialize_match(match: IntentMatch) -> dict[str, object]:
@@ -837,6 +877,157 @@ def _encode_done_sse() -> str:
     return "event: done\ndata: [DONE]\n\n"
 
 
+async def _assistant_message_json_response(
+    *,
+    session_id: str,
+    content: str,
+    execution_mode: MessageExecutionMode,
+    config_variables: list[ConfigVariableInput],
+    cust_id: str | None,
+    orchestrator: GraphRouterOrchestrator,
+) -> AssistantOutputResponse:
+    """Process one assistant-protocol turn and always return `ok + output` without snapshots."""
+    resolved_cust_id = _resolve_session_cust_id(orchestrator, session_id, cust_id)
+    upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(config_variables)
+    try:
+        serialized_handler = getattr(orchestrator, "handle_user_message_serialized", None)
+        if callable(serialized_handler):
+            serialized_response = await serialized_handler(
+                session_id=session_id,
+                cust_id=resolved_cust_id,
+                content=content,
+                serializer=_assistant_response_envelope,
+                assistant_protocol=True,
+                router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
+                upstream_config_variables=upstream_config_variables,
+                upstream_slots_data=upstream_slots_data,
+                emit_events=False,
+            )
+            return AssistantOutputResponse(**serialized_response)
+        await orchestrator.handle_user_message(
+            session_id=session_id,
+            cust_id=resolved_cust_id,
+            content=content,
+            assistant_protocol=True,
+            router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
+            upstream_config_variables=upstream_config_variables,
+            upstream_slots_data=upstream_slots_data,
+            return_snapshot=False,
+            emit_events=False,
+        )
+        session = _resolve_live_session(orchestrator, session_id)
+        return AssistantOutputResponse(**_assistant_response_envelope(session))
+    except LLMServiceUnavailableError as exc:
+        return AssistantOutputResponse(
+            ok=False,
+            output=_assistant_llm_unavailable_output(exc),
+        )
+    except ValueError as exc:
+        return AssistantOutputResponse(
+            ok=False,
+            output=_assistant_bad_request_output(str(exc)),
+        )
+    except Exception as exc:
+        return AssistantOutputResponse(
+            ok=False,
+            output=_assistant_output_template(
+                status="failed",
+                completion_state=2,
+                completion_reason="router_error",
+                node_id="end",
+                handover_reason="failed",
+                message=str(exc),
+                error_code=RouterErrorCode.ROUTER_INTERNAL_ERROR,
+            ),
+        )
+
+
+def _assistant_message_stream_response(
+    *,
+    session_id: str,
+    content: str,
+    execution_mode: MessageExecutionMode,
+    config_variables: list[ConfigVariableInput],
+    cust_id: str | None,
+    http_request: Request,
+    orchestrator: GraphRouterOrchestrator,
+    broker: EventBroker,
+) -> StreamingResponse:
+    """Process one assistant-protocol turn and always return the minimal SSE contract."""
+    resolved_cust_id = _resolve_session_cust_id(orchestrator, session_id, cust_id)
+    upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(config_variables)
+
+    async def event_generator():
+        queue = broker.register(session_id)
+        processing_task = asyncio.create_task(
+            orchestrator.handle_user_message(
+                session_id=session_id,
+                cust_id=resolved_cust_id,
+                content=content,
+                assistant_protocol=True,
+                router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
+                upstream_config_variables=upstream_config_variables,
+                upstream_slots_data=upstream_slots_data,
+                return_snapshot=False,
+                emit_events=True,
+            )
+        )
+        try:
+            while True:
+                if await http_request.is_disconnected():
+                    break
+                if processing_task.done() and queue.empty():
+                    try:
+                        await processing_task
+                    except LLMServiceUnavailableError as exc:
+                        yield _encode_sse("message", _assistant_llm_unavailable_output(exc))
+                        break
+                    except ValueError as exc:
+                        yield _encode_sse("message", _assistant_bad_request_output(str(exc)))
+                        break
+                    except Exception as exc:
+                        yield _encode_sse(
+                            "message",
+                            _assistant_output_template(
+                                status="failed",
+                                completion_state=2,
+                                completion_reason="router_error",
+                                node_id="end",
+                                handover_reason="failed",
+                                message=str(exc),
+                                error_code=RouterErrorCode.ROUTER_INTERNAL_ERROR,
+                            ),
+                        )
+                        break
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+                payload = _assistant_output_from_event(event)
+                if payload is None:
+                    continue
+                yield _encode_sse("message", payload)
+        finally:
+            broker.unregister(session_id, queue)
+            if not processing_task.done():
+                processing_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await processing_task
+            if not await http_request.is_disconnected():
+                yield _encode_done_sse()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: CreateSessionRequest | None = None,
@@ -878,22 +1069,26 @@ async def post_message(
     # Message APIs are the main entry for intent dialog. They can be called by a
     # frontend chat page, a test harness, or a backend integration that wants to
     # drive the router directly without rendering any UI.
+    if request.uses_assistant_protocol:
+        return await _assistant_message_json_response(
+            session_id=session_id,
+            content=request.content or "",
+            execution_mode=request.execution_mode,
+            config_variables=request.config_variables,
+            cust_id=request.cust_id,
+            orchestrator=orchestrator,
+        )
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(request.config_variables)
     try:
         serialized_handler = getattr(orchestrator, "handle_user_message_serialized", None)
         if callable(serialized_handler):
-            serializer = (
-                _assistant_response_envelope
-                if request.uses_assistant_protocol
-                else _serialize_session
-            )
             serialized_response = await serialized_handler(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
-                serializer=serializer,
-                assistant_protocol=request.uses_assistant_protocol,
+                serializer=_serialize_session,
+                assistant_protocol=False,
                 router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
@@ -902,15 +1097,13 @@ async def post_message(
                 upstream_slots_data=upstream_slots_data,
                 emit_events=False,
             )
-            if request.uses_assistant_protocol:
-                return AssistantOutputResponse(**serialized_response)
             snapshot = serialized_response
         else:
             response_state = await orchestrator.handle_user_message(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
-                assistant_protocol=request.uses_assistant_protocol,
+                assistant_protocol=False,
                 router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
@@ -919,15 +1112,8 @@ async def post_message(
                 upstream_slots_data=upstream_slots_data,
                 emit_events=False,
             )
-            if request.uses_assistant_protocol:
-                return AssistantOutputResponse(**_assistant_response_envelope(response_state))
             snapshot = _serialize_response_snapshot(response_state)
     except LLMServiceUnavailableError as exc:
-        if request.uses_assistant_protocol:
-            return AssistantOutputResponse(
-                ok=False,
-                output=_assistant_llm_unavailable_output(exc),
-            )
         raise RouterApiException(
             status_code=503,
             code=RouterErrorCode.ROUTER_LLM_UNAVAILABLE,
@@ -938,31 +1124,11 @@ async def post_message(
             },
         ) from exc
     except ValueError as exc:
-        if request.uses_assistant_protocol:
-            return AssistantOutputResponse(
-                ok=False,
-                output=_assistant_bad_request_output(str(exc)),
-            )
         raise RouterApiException(
             status_code=400,
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
-    except Exception as exc:
-        if request.uses_assistant_protocol:
-            return AssistantOutputResponse(
-                ok=False,
-                output=_assistant_output_template(
-                    status="failed",
-                    completion_state=2,
-                    completion_reason="router_error",
-                    node_id="end",
-                    handover_reason="failed",
-                    message=str(exc),
-                    error_code=RouterErrorCode.ROUTER_INTERNAL_ERROR,
-                ),
-            )
-        raise
     return SessionSnapshotResponse(snapshot=snapshot)
 
 
@@ -1078,6 +1244,17 @@ async def post_message_stream(
     broker: EventBroker = Depends(get_event_broker),
 ) -> StreamingResponse:
     """Execute one message turn while streaming router events over SSE."""
+    if request.uses_assistant_protocol:
+        return _assistant_message_stream_response(
+            session_id=session_id,
+            content=request.content or "",
+            execution_mode=request.execution_mode,
+            config_variables=request.config_variables,
+            cust_id=request.cust_id,
+            http_request=http_request,
+            orchestrator=orchestrator,
+            broker=broker,
+        )
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
     upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(request.config_variables)
 
@@ -1141,12 +1318,6 @@ async def post_message_stream(
                     event = await asyncio.wait_for(queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
                     continue
-                if request.uses_assistant_protocol:
-                    payload = _assistant_output_from_event(event)
-                    if payload is None:
-                        continue
-                    yield _encode_sse("message", payload)
-                    continue
                 yield _encode_sse(event.event, event.model_dump(mode="json"))
         finally:
             broker.unregister(session_id, queue)
@@ -1154,8 +1325,6 @@ async def post_message_stream(
                 processing_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await processing_task
-            if request.uses_assistant_protocol and not await http_request.is_disconnected():
-                yield _encode_done_sse()
 
     return StreamingResponse(
         event_generator(),
@@ -1165,6 +1334,35 @@ async def post_message_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@public_router.post("/v1/message", response_model=None)
+async def post_protocol_message(
+    request: ProtocolMessageRequest,
+    http_request: Request,
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
+    broker: EventBroker = Depends(get_event_broker),
+) -> StreamingResponse | AssistantOutputResponse:
+    """Unified production message entrypoint driven entirely by the request body contract."""
+    if request.stream:
+        return _assistant_message_stream_response(
+            session_id=request.session_id,
+            content=request.txt,
+            execution_mode=request.execution_mode,
+            config_variables=request.config_variables,
+            cust_id=request.cust_id,
+            http_request=http_request,
+            orchestrator=orchestrator,
+            broker=broker,
+        )
+    return await _assistant_message_json_response(
+        session_id=request.session_id,
+        content=request.txt,
+        execution_mode=request.execution_mode,
+        config_variables=request.config_variables,
+        cust_id=request.cust_id,
+        orchestrator=orchestrator,
     )
 
 

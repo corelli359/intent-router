@@ -325,9 +325,13 @@ class PerfTestService:
                     response_excerpt=self._response_excerpt(session_response),
                 )
 
+            message_payload = self._build_message_request_payload(
+                case=case,
+                session_id=session_id,
+            )
             message_response = await client.post(
                 self._settings.perf_test_message_path_template.format(session_id=session_id),
-                json=case.message_request,
+                json=message_payload,
                 timeout=request_timeout,
             )
             latency_ms = (perf_counter() - started) * 1000
@@ -658,22 +662,19 @@ class PerfTestService:
         if not isinstance(payload, dict):
             return "message response is not a JSON object"
 
-        snapshot = payload.get("snapshot")
+        output = payload.get("output")
         if case.expectations.required_graph_status:
-            if not isinstance(snapshot, dict):
-                return "message response does not include snapshot"
-            current_graph = snapshot.get("current_graph")
-            if not isinstance(current_graph, dict):
-                return "message response does not include snapshot.current_graph"
-            actual_status = current_graph.get("status")
+            if not isinstance(output, dict):
+                return "message response does not include output"
+            actual_status = output.get("status")
             if actual_status != case.expectations.required_graph_status:
                 return (
-                    f"expected graph status {case.expectations.required_graph_status}, "
+                    f"expected output status {case.expectations.required_graph_status}, "
                     f"got {actual_status!r}"
                 )
 
         if case.expectations.required_primary_intent_code:
-            primary_intent_code = self._extract_snapshot_primary_intent_code(snapshot)
+            primary_intent_code = self._extract_output_primary_intent_code(output)
             if primary_intent_code != case.expectations.required_primary_intent_code:
                 return (
                     f"expected primary intent {case.expectations.required_primary_intent_code}, "
@@ -681,12 +682,9 @@ class PerfTestService:
                 )
 
         if case.expectations.required_slot_keys or case.expectations.required_slot_values:
-            slot_memory = self._extract_snapshot_slot_memory(
-                snapshot=snapshot,
-                intent_code=case.expectations.required_primary_intent_code,
-            )
+            slot_memory = self._extract_output_slot_memory(output=output)
             if slot_memory is None:
-                return "message response does not include router slot_memory"
+                return "message response does not include output.slot_memory"
             missing_keys = [
                 slot_key
                 for slot_key in case.expectations.required_slot_keys
@@ -702,7 +700,7 @@ class PerfTestService:
         required_fragments = case.expectations.required_message_contains
         if required_fragments:
             candidate_text = (
-                self._extract_snapshot_message(snapshot)
+                self._extract_output_message(output)
                 or self._response_excerpt(response)
             )
             missing = [fragment for fragment in required_fragments if fragment not in candidate_text]
@@ -710,60 +708,37 @@ class PerfTestService:
                 return f"missing expected response fragments: {', '.join(missing)}"
         return None
 
-    def _extract_snapshot_message(self, snapshot: Any) -> str:
-        if not isinstance(snapshot, dict):
-            return ""
-        messages = snapshot.get("messages")
-        if not isinstance(messages, list) or not messages:
-            return ""
-        last_message = messages[-1]
-        if not isinstance(last_message, dict):
-            return ""
-        content = last_message.get("content")
-        return content if isinstance(content, str) else ""
-
-    def _extract_snapshot_primary_intent_code(self, snapshot: Any) -> str | None:
-        if not isinstance(snapshot, dict):
-            return None
-        current_graph = snapshot.get("current_graph")
-        if not isinstance(current_graph, dict):
-            return None
-        nodes = current_graph.get("nodes")
-        if not isinstance(nodes, list) or not nodes:
-            return None
-        first_node = nodes[0]
-        if not isinstance(first_node, dict):
-            return None
-        intent_code = first_node.get("intent_code")
-        return intent_code if isinstance(intent_code, str) else None
-
-    def _extract_snapshot_slot_memory(
+    def _build_message_request_payload(
         self,
         *,
-        snapshot: Any,
-        intent_code: str | None,
+        case: PerfTestCaseDefinition,
+        session_id: str,
+    ) -> dict[str, Any]:
+        payload = dict(case.message_request)
+        payload["sessionId"] = session_id
+        payload.setdefault("stream", False)
+        return payload
+
+    def _extract_output_message(self, output: Any) -> str:
+        if not isinstance(output, dict):
+            return ""
+        content = output.get("message")
+        return content if isinstance(content, str) else ""
+
+    def _extract_output_primary_intent_code(self, output: Any) -> str | None:
+        if not isinstance(output, dict):
+            return None
+        intent_code = output.get("intent_code")
+        return intent_code if isinstance(intent_code, str) else None
+
+    def _extract_output_slot_memory(
+        self,
+        *,
+        output: Any,
     ) -> dict[str, Any] | None:
-        if not isinstance(snapshot, dict):
+        if not isinstance(output, dict):
             return None
-        current_graph = snapshot.get("current_graph")
-        if not isinstance(current_graph, dict):
-            return None
-        nodes = current_graph.get("nodes")
-        if not isinstance(nodes, list):
-            return None
-        selected_node: dict[str, Any] | None = None
-        for node in nodes:
-            if not isinstance(node, dict):
-                continue
-            node_intent_code = node.get("intent_code")
-            if intent_code and node_intent_code == intent_code:
-                selected_node = node
-                break
-            if selected_node is None:
-                selected_node = node
-        if not isinstance(selected_node, dict):
-            return None
-        slot_memory = selected_node.get("slot_memory")
+        slot_memory = output.get("slot_memory")
         return slot_memory if isinstance(slot_memory, dict) else None
 
     def _response_excerpt(self, response: httpx.Response) -> str:

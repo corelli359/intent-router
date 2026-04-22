@@ -64,9 +64,11 @@ def _assistant_request_payload(
     execution_mode: str,
 ) -> dict[str, Any]:
     return {
+        "sessionId": session_id,
         "txt": txt,
-        "cust_id": cust_id,
+        "custId": cust_id,
         "executionMode": execution_mode,
+        "stream": False,
         "config_variables": [
             {"name": "custID", "value": cust_id},
             {"name": "sessionID", "value": session_id},
@@ -81,12 +83,11 @@ def _post_assistant_message(
     base_url: str,
     timeout_seconds: float,
     host_header: str | None,
-    session_id: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     return _request_json(
         method="POST",
-        url=f"{base_url}/api/router/v2/sessions/{session_id}/messages",
+        url=f"{base_url}/api/v1/message",
         payload=payload,
         timeout_seconds=timeout_seconds,
         host_header=host_header,
@@ -346,7 +347,6 @@ def main() -> int:
             base_url=base_url,
             timeout_seconds=args.timeout_seconds,
             host_header=args.host_header,
-            session_id=session_id,
             payload=request_payload,
         )
         inspected = _ensure_assistant_response_shape(response_payload)
