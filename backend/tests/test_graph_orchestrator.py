@@ -13,6 +13,7 @@ from router_service.core.shared.graph_domain import (
     GraphSessionState,
     GraphStatus,
 )
+from router_service.core.slots.understanding_validator import UnderstandingValidationResult
 
 
 class _SingleIntentCatalog:
@@ -21,6 +22,42 @@ class _SingleIntentCatalog:
 
     def active_intents_by_code(self) -> dict[str, IntentDefinition]:
         return {self._intent.intent_code: self._intent}
+
+
+class _SpyUnderstandingValidator:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def validate_node(
+        self,
+        *,
+        intent,
+        node,
+        graph_source_message,
+        current_message,
+        long_term_memory=None,
+    ) -> UnderstandingValidationResult:
+        self.calls.append(
+            {
+                "intent_code": intent.intent_code,
+                "node_id": node.node_id,
+                "graph_source_message": graph_source_message,
+                "current_message": current_message,
+                "long_term_memory": list(long_term_memory or []),
+            }
+        )
+        return UnderstandingValidationResult(
+            slot_memory=dict(node.slot_memory),
+            slot_bindings=[],
+            history_slot_keys=[],
+            missing_required_slots=[],
+            ambiguous_slot_keys=[],
+            invalid_slot_keys=[],
+            needs_confirmation=False,
+            can_dispatch=True,
+            prompt_message=None,
+            diagnostics=[],
+        )
 
 
 def test_graph_orchestrator_drain_guard_fails_non_converging_graph() -> None:
@@ -114,6 +151,7 @@ def test_graph_orchestrator_skips_full_refresh_for_non_terminal_agent_chunk() ->
             content="处理中",
             payload={},
             ishandover=False,
+            output={},
         )
 
         orchestrator.event_publisher.publish_node_runtime_event = AsyncMock()
@@ -154,6 +192,7 @@ def test_graph_orchestrator_refreshes_graph_for_terminal_agent_chunk() -> None:
             content="已完成",
             payload={},
             ishandover=True,
+            output={},
         )
 
         orchestrator.event_publisher.publish_node_runtime_event = AsyncMock()
@@ -195,6 +234,7 @@ def test_graph_orchestrator_serialized_message_response_preserves_handover_graph
             cust_id: str,
             content: str,
             *,
+            assistant_protocol: bool,
             router_only: bool,
             guided_selection=None,
             recommendation_context=None,
@@ -202,7 +242,7 @@ def test_graph_orchestrator_serialized_message_response_preserves_handover_graph
             return_snapshot: bool,
             emit_events: bool,
         ) -> None:
-            del content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
+            del assistant_protocol, content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
             assert emit_events is False
             session = orchestrator.session_store.get_or_create(session_id, cust_id)
             session.attach_business(graph, router_only_mode=router_only, pending=False)
@@ -255,6 +295,7 @@ def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default()
             cust_id: str,
             content: str,
             *,
+            assistant_protocol: bool,
             router_only: bool,
             guided_selection=None,
             recommendation_context=None,
@@ -262,7 +303,7 @@ def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default()
             return_snapshot: bool,
             emit_events: bool,
         ) -> None:
-            del content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
+            del assistant_protocol, content, guided_selection, recommendation_context, proactive_recommendation, return_snapshot
             captured["emit_events"] = emit_events
             session = orchestrator.session_store.get_or_create(session_id, cust_id)
             session.router_only_mode = router_only
@@ -279,6 +320,137 @@ def test_graph_orchestrator_stream_message_path_enables_emit_events_by_default()
 
         assert payload is not None
         assert captured["emit_events"] is True
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_validate_node_understanding_passes_history_memory_candidates() -> None:
+    async def run() -> None:
+        intent = IntentDefinition(
+            intent_code="AG_TRANS",
+            name="转账",
+            description="执行转账",
+            agent_url="http://agent.example.com/transfer",
+            slot_schema=[
+                {
+                    "slot_key": "payee_name",
+                    "label": "收款人",
+                    "description": "收款人姓名",
+                    "value_type": "string",
+                    "required": False,
+                    "allow_from_history": True,
+                }
+            ],
+        )
+        spy_validator = _SpyUnderstandingValidator()
+        orchestrator = GraphRouterOrchestrator(
+            publish_event=lambda event: None,
+            intent_catalog=_SingleIntentCatalog(intent),
+            understanding_validator=spy_validator,
+        )
+        orchestrator.session_store.long_term_memory.recall = lambda cust_id, limit: ["memory_fact"]  # type: ignore[method-assign]
+        session = GraphSessionState(
+            session_id="session_memory_slots",
+            cust_id="cust_memory_slots",
+            shared_slot_memory={"payee_name": "小明"},
+        )
+        graph = ExecutionGraphState(source_message="我要转账")
+        node = GraphNodeState(
+            intent_code="AG_TRANS",
+            title="转账",
+            confidence=0.97,
+            position=0,
+            source_fragment="我要转账",
+        )
+
+        await orchestrator._validate_node_understanding(
+            session,
+            graph,
+            node,
+            intent=intent,
+            current_message="200",
+        )
+
+        assert spy_validator.calls == [
+            {
+                "intent_code": "AG_TRANS",
+                "node_id": node.node_id,
+                "graph_source_message": "我要转账",
+                "current_message": "200",
+                "long_term_memory": [
+                    "memory_fact",
+                    "payee_name=小明",
+                ],
+            }
+        ]
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_task_completion_serialized_returns_task_scoped_payload_before_cleanup() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        graph = ExecutionGraphState(
+            source_message="给小明转200",
+            summary="transfer",
+            status=GraphStatus.RUNNING,
+        )
+        node = GraphNodeState(
+            intent_code="AG_TRANS",
+            title="转账",
+            confidence=0.96,
+            position=0,
+            status=GraphNodeStatus.WAITING_USER_INPUT,
+            slot_memory={"payee_name": "小明", "amount": "200"},
+        )
+        graph.nodes.append(node)
+        session = orchestrator.session_store.create(cust_id="cust_task_completion", session_id="session_task_completion")
+        session.attach_business(graph, router_only_mode=False, pending=False)
+        task = Task(
+            session_id=session.session_id,
+            intent_code="AG_TRANS",
+            agent_url="http://agent.example.com/transfer",
+            intent_name="转账",
+            intent_description="执行转账",
+            confidence=0.96,
+            status=TaskStatus.WAITING_USER_INPUT,
+            slot_memory={"payee_name": "小明", "amount": "200"},
+        )
+        task.touch(TaskStatus.WAITING_USER_INPUT)
+        session.tasks.append(task)
+        node.task_id = task.task_id
+
+        payload = await orchestrator.handle_task_completion_serialized(
+            session_id=session.session_id,
+            task_id=task.task_id,
+            completion_signal=2,
+            serializer=lambda current_session: {
+                "current_graph_status": current_session.current_graph.status.value if current_session.current_graph else None,
+                "node_status": current_session.current_graph.nodes[0].status.value if current_session.current_graph else None,
+                "shared_slot_memory": dict(current_session.shared_slot_memory),
+                "task_count": len(current_session.tasks),
+                "completion_override": current_session.current_graph.nodes[0].completion_override() if current_session.current_graph else None,
+            },
+            emit_events=False,
+        )
+
+        session_after = orchestrator.session_store.get(session.session_id)
+
+        assert payload == {
+            "current_graph_status": "completed",
+            "node_status": "completed",
+            "shared_slot_memory": {},
+            "task_count": 1,
+            "completion_override": (2, "assistant_final_done"),
+        }
+        assert session_after.current_graph is None
+        assert session_after.pending_graph is None
+        assert session_after.shared_slot_memory == {
+            "payee_name": "小明",
+            "amount": "200",
+        }
+        assert session_after.tasks == []
+        assert session_after.business_memory_digests[-1].status == "completed"
 
     asyncio.run(run())
 

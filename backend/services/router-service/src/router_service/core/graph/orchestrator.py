@@ -244,6 +244,84 @@ class GraphRouterOrchestrator:
         """Compact the current handover-ready business after preserving the response dump."""
         return self._finalize_handover_business_with(session, self._build_session_dump)
 
+    def _graph_and_node_for_task(
+        self,
+        session: GraphSessionState,
+        task_id: str,
+    ) -> tuple[ExecutionGraphState, GraphNodeState] | None:
+        """Resolve one live graph/node pair from a task id."""
+        seen_graph_ids: set[str] = set()
+        graph_candidates = [
+            session.current_graph,
+            session.pending_graph,
+            *[business.graph for business in session.business_objects],
+        ]
+        for graph in graph_candidates:
+            if graph is None or graph.graph_id in seen_graph_ids:
+                continue
+            seen_graph_ids.add(graph.graph_id)
+            for node in graph.nodes:
+                if node.task_id == task_id:
+                    return graph, node
+        return None
+
+    async def _apply_task_completion_signal(
+        self,
+        session: GraphSessionState,
+        *,
+        task_id: str,
+        completion_signal: int,
+        emit_events: bool,
+    ) -> None:
+        """Apply one assistant-originated completion signal to a live task/node."""
+        if completion_signal not in {1, 2}:
+            raise ValueError(f"Unsupported completionSignal: {completion_signal}")
+        resolved = self._graph_and_node_for_task(session, task_id)
+        if resolved is None:
+            raise KeyError(task_id)
+        graph, node = resolved
+        task = self._get_task(session, task_id)
+        override_getter = getattr(node, "apply_completion_signal", None)
+        if not callable(override_getter):
+            raise RuntimeError("graph node completion signal hook is unavailable")
+        completion_state, _completion_reason = override_getter(
+            source="assistant",
+            signal=completion_signal,
+        )
+        if completion_state < 2:
+            return
+
+        if task is not None and task.status in {
+            TaskStatus.DISPATCHING,
+            TaskStatus.RUNNING,
+            TaskStatus.WAITING_USER_INPUT,
+            TaskStatus.WAITING_CONFIRMATION,
+            TaskStatus.READY_FOR_DISPATCH,
+            TaskStatus.RESUMING,
+        }:
+            try:
+                await self.agent_client.cancel(session.session_id, task.task_id, task.agent_url)
+            except Exception as exc:
+                logger.warning("Failed to cancel task %s after assistant completion: %s", task.task_id, exc)
+            task.touch(TaskStatus.COMPLETED)
+        elif task is not None and task.status not in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}:
+            task.touch(TaskStatus.COMPLETED)
+
+        node.touch(GraphNodeStatus.COMPLETED)
+        if emit_events:
+            await self.event_publisher.publish_node_runtime_event(
+                session,
+                graph,
+                node,
+                task_status=TaskStatus.COMPLETED,
+                event="node.completed",
+                message="任务完成态已由助手确认",
+                ishandover=True,
+                source="assistant",
+            )
+        await self._refresh_graph_state(session, graph)
+        await self._emit_graph_progress(session)
+
     async def handle_user_message(
         self,
         session_id: str,
@@ -312,6 +390,53 @@ class GraphRouterOrchestrator:
                 len(snapshot.candidate_intents) if snapshot is not None else len(session.candidate_intents),
             )
             return snapshot if return_snapshot or snapshot is not None else None
+
+    async def handle_task_completion(
+        self,
+        *,
+        session_id: str,
+        task_id: str,
+        completion_signal: int,
+        emit_events: bool = False,
+    ) -> GraphRouterSnapshot | None:
+        """Apply one assistant completion callback and optionally return a session snapshot."""
+        with self.event_publisher.event_scope(emit_events):
+            async with self.session_store.session_lock(session_id):
+                session = self.session_store.get(session_id)
+                await self._apply_task_completion_signal(
+                    session,
+                    task_id=task_id,
+                    completion_signal=completion_signal,
+                    emit_events=emit_events,
+                )
+                snapshot = self._finalize_handover_business(session)
+                if snapshot is None:
+                    snapshot = self._build_session_dump(session)
+        return snapshot
+
+    async def handle_task_completion_serialized(
+        self,
+        *,
+        session_id: str,
+        task_id: str,
+        completion_signal: int,
+        serializer: Callable[[GraphSessionState], SerializedResponseT],
+        emit_events: bool = False,
+    ) -> SerializedResponseT:
+        """Apply one assistant completion callback and serialize the response while locked."""
+        with self.event_publisher.event_scope(emit_events):
+            async with self.session_store.session_lock(session_id):
+                session = self.session_store.get(session_id)
+                await self._apply_task_completion_signal(
+                    session,
+                    task_id=task_id,
+                    completion_signal=completion_signal,
+                    emit_events=emit_events,
+                )
+                serialized = self._finalize_handover_business_with(session, serializer)
+                if serialized is None:
+                    serialized = serializer(session)
+        return serialized
 
     async def handle_user_message_serialized(
         self,
@@ -917,6 +1042,13 @@ class GraphRouterOrchestrator:
         node.slot_memory = dict(task.slot_memory)
         node.output_payload = dict(chunk.payload)
         node._agent_output = dict(getattr(chunk, "output", {}) or {})
+        explicit_completion_state = node._agent_output.get("completion_state")
+        if isinstance(explicit_completion_state, bool):
+            explicit_completion_state = int(explicit_completion_state)
+        if isinstance(explicit_completion_state, int) and explicit_completion_state in {0, 1, 2}:
+            apply_completion_signal = getattr(node, "apply_completion_signal", None)
+            if callable(apply_completion_signal):
+                apply_completion_signal(source="agent", signal=explicit_completion_state)
         node_status = self._node_status_for_task_status(chunk.status)
         node.touch(node_status)
 

@@ -47,6 +47,30 @@ class _StubOrchestrator:
     async def handle_user_message(self, *args, **kwargs):
         return self.snapshot_payload
 
+    async def handle_task_completion_serialized(self, *, session_id, task_id, completion_signal, serializer, **kwargs):
+        del serializer, kwargs
+        if session_id == "missing-session":
+            raise KeyError(session_id)
+        if task_id == "missing-task":
+            raise KeyError(task_id)
+        return {
+            "ok": True,
+            "output": {
+                "current_task": task_id,
+                "task_list": [{"name": task_id, "status": "completed"}],
+                "completion_state": 2,
+                "completion_reason": "assistant_final_done",
+                "node_id": "end",
+                "intent_code": "AG_TRANS",
+                "status": "completed",
+                "isHandOver": True,
+                "handOverReason": "completed",
+                "message": "执行图已完成",
+                "data": [],
+                "slot_memory": {},
+            },
+        }
+
 
 def _app_with_stub_orchestrator() -> tuple[object, _StubOrchestrator]:
     orchestrator = _StubOrchestrator()
@@ -151,6 +175,56 @@ def test_router_v1_message_non_stream_returns_output_without_snapshot() -> None:
         assert payload["ok"] is True
         assert "snapshot" not in payload
         assert payload["output"]["status"] == "idle"
+
+    asyncio.run(run())
+
+
+def test_router_v1_task_completion_returns_output_without_snapshot() -> None:
+    async def run() -> None:
+        app, _ = _app_with_stub_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/task/completion",
+                json={
+                    "sessionId": "session_demo",
+                    "taskId": "task_demo",
+                    "completionSignal": 2,
+                },
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert "snapshot" not in payload
+        assert payload["output"]["current_task"] == "task_demo"
+        assert payload["output"]["completion_state"] == 2
+
+    asyncio.run(run())
+
+
+def test_router_v1_task_completion_returns_structured_session_not_found_error() -> None:
+    async def run() -> None:
+        app, _ = _app_with_stub_orchestrator()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/task/completion",
+                json={
+                    "sessionId": "missing-session",
+                    "taskId": "task_demo",
+                    "completionSignal": 2,
+                },
+            )
+
+        assert response.status_code == 404
+        payload = response.json()
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "ROUTER_SESSION_NOT_FOUND"
 
     asyncio.run(run())
 

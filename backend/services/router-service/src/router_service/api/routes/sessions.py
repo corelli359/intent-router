@@ -139,6 +139,16 @@ class ProtocolMessageRequest(BaseModel):
         return self
 
 
+class TaskCompletionRequest(BaseModel):
+    """Assistant-facing fixed-path task completion callback contract."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    session_id: str = Field(alias="sessionId", min_length=1)
+    task_id: str = Field(alias="taskId", min_length=1)
+    completion_signal: int = Field(alias="completionSignal", ge=1, le=2)
+
+
 class ActionRequest(BaseModel):
     """Action payload accepted from direct API callers or the graph UI layer."""
 
@@ -440,6 +450,36 @@ def _response_node(session: object) -> GraphNodeState | None:
     return max(graph.nodes, key=lambda item: item.updated_at)
 
 
+def _graphs_for_task_lookup(session: object) -> list[ExecutionGraphState]:
+    """Return distinct live graphs that may still own the requested task."""
+    graphs: list[ExecutionGraphState] = []
+    seen_graph_ids: set[str] = set()
+    for candidate in (
+        getattr(session, "current_graph", None),
+        getattr(session, "pending_graph", None),
+    ):
+        if candidate is None or candidate.graph_id in seen_graph_ids:
+            continue
+        graphs.append(candidate)
+        seen_graph_ids.add(candidate.graph_id)
+    for business in getattr(session, "business_objects", []) or []:
+        graph = getattr(business, "graph", None)
+        if graph is None or graph.graph_id in seen_graph_ids:
+            continue
+        graphs.append(graph)
+        seen_graph_ids.add(graph.graph_id)
+    return graphs
+
+
+def _graph_and_node_for_task(session: object, task_id: str) -> tuple[ExecutionGraphState, GraphNodeState] | None:
+    """Resolve one live graph/node pair by task id."""
+    for graph in _graphs_for_task_lookup(session):
+        for node in graph.nodes:
+            if node.task_id == task_id:
+                return graph, node
+    return None
+
+
 def _last_assistant_message(session: object) -> str:
     """Return the most recent assistant message content when present."""
     messages = getattr(session, "messages", []) or []
@@ -726,12 +766,19 @@ def _assistant_output_from_node(
             slot_memory=slot_memory,
             payload=output_payload,
         )
-    completion_state, completion_reason = _assistant_completion_fields(
-        status=status,
-        node_status=node.status,
-        is_handover=is_handover,
-        agent_output=agent_output,
-    )
+    completion_override = None
+    override_getter = getattr(node, "completion_override", None)
+    if callable(override_getter):
+        completion_override = override_getter()
+    if completion_override is None:
+        completion_state, completion_reason = _assistant_completion_fields(
+            status=status,
+            node_status=node.status,
+            is_handover=is_handover,
+            agent_output=agent_output,
+        )
+    else:
+        completion_state, completion_reason = completion_override
     return _assistant_output_template(
         current_task=_assistant_task_name(
             task_id=node.task_id,
@@ -882,6 +929,22 @@ def _assistant_response_envelope(session: object) -> dict[str, Any]:
     return {
         "ok": True,
         "output": _assistant_output_payload(session),
+    }
+
+
+def _assistant_response_envelope_for_task(session: object, task_id: str) -> dict[str, Any]:
+    """Build the assistant-facing envelope for one specific task id."""
+    resolved = _graph_and_node_for_task(session, task_id)
+    if resolved is None:
+        return _assistant_response_envelope(session)
+    graph, node = resolved
+    return {
+        "ok": True,
+        "output": _assistant_output_from_node(
+            node=node,
+            graph=graph,
+            message="",
+        ),
     }
 
 
@@ -1406,6 +1469,62 @@ async def post_protocol_message(
         cust_id=request.cust_id,
         orchestrator=orchestrator,
     )
+
+
+@public_router.post("/v1/task/completion", response_model=None)
+async def post_task_completion(
+    request: TaskCompletionRequest,
+    orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
+) -> AssistantOutputResponse:
+    """Advance one task's unified completion state through the fixed assistant callback API."""
+    try:
+        serialized_handler = getattr(orchestrator, "handle_task_completion_serialized", None)
+        if callable(serialized_handler):
+            serialized_response = await serialized_handler(
+                session_id=request.session_id,
+                task_id=request.task_id,
+                completion_signal=request.completion_signal,
+                serializer=lambda session: _assistant_response_envelope_for_task(session, request.task_id),
+                emit_events=False,
+            )
+            return AssistantOutputResponse(**serialized_response)
+        live_handler = getattr(orchestrator, "handle_task_completion", None)
+        if callable(live_handler):
+            await live_handler(
+                session_id=request.session_id,
+                task_id=request.task_id,
+                completion_signal=request.completion_signal,
+                emit_events=False,
+            )
+            session = _resolve_live_session(orchestrator, request.session_id)
+            return AssistantOutputResponse(**_assistant_response_envelope_for_task(session, request.task_id))
+        raise RuntimeError("router task completion handler is unavailable")
+    except KeyError as exc:
+        missing_key = str(exc.args[0]) if exc.args else ""
+        if missing_key == request.session_id:
+            raise RouterApiException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                code=RouterErrorCode.ROUTER_SESSION_NOT_FOUND,
+                message="Router session not found",
+                details={"session_id": request.session_id},
+            ) from exc
+        raise RouterApiException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            code=RouterErrorCode.ROUTER_TASK_NOT_FOUND,
+            message="Router task not found",
+            details={"session_id": request.session_id, "task_id": request.task_id},
+        ) from exc
+    except ValueError as exc:
+        raise RouterApiException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=RouterErrorCode.ROUTER_BAD_REQUEST,
+            message=str(exc),
+            details={
+                "session_id": request.session_id,
+                "task_id": request.task_id,
+                "completion_signal": request.completion_signal,
+            },
+        ) from exc
 
 
 @router.get("/sessions/{session_id}/events")

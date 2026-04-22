@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from router_service.core.shared.domain import IntentDefinition
 from router_service.core.slots.extractor import SlotExtractor
@@ -36,6 +37,19 @@ class _SuccessfulLLMClient:
                     "confidence": 0.94,
                 },
             ],
+            "ambiguousSlotKeys": [],
+        }
+
+
+class _CapturingLLMClient:
+    def __init__(self) -> None:
+        self.variables: dict[str, object] | None = None
+
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, model, on_delta
+        self.variables = dict(variables)
+        return {
+            "slots": [],
             "ambiguousSlotKeys": [],
         }
 
@@ -206,5 +220,29 @@ def test_slot_extractor_keeps_empty_result_when_llm_is_rate_limited() -> None:
         assert result.ambiguous_slot_keys == []
         assert result.diagnostics
         assert result.diagnostics[0].code == "SLOT_EXTRACTOR_LLM_RETRYABLE_UNAVAILABLE"
+
+    asyncio.run(run())
+
+
+def test_slot_extractor_passes_existing_slot_memory_into_llm_prompt() -> None:
+    async def run() -> None:
+        llm_client = _CapturingLLMClient()
+        extractor = SlotExtractor(llm_client=llm_client)
+        await extractor.extract(
+            intent=_transfer_intent(),
+            node=GraphNodeState(
+                intent_code="AG_TRANS",
+                title="转账",
+                confidence=0.97,
+                source_fragment="给小明转账",
+                slot_memory={"payee_name": "小明"},
+            ),
+            graph_source_message="给小明转账",
+            current_message="200",
+            long_term_memory=[],
+        )
+
+        assert llm_client.variables is not None
+        assert json.loads(str(llm_client.variables["existing_slot_memory_json"])) == {"payee_name": "小明"}
 
     asyncio.run(run())

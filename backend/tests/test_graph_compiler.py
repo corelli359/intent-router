@@ -4,6 +4,8 @@ import asyncio
 
 from router_service.core.graph.compiler import GraphCompiler
 from router_service.core.graph.planner import SequentialIntentGraphPlanner
+from router_service.core.support.context_builder import ContextBuilder
+from router_service.core.shared.domain import ChatMessage
 from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
 from router_service.core.shared.graph_domain import GraphSessionState, GraphStatus
@@ -27,6 +29,33 @@ class _StaticCatalog:
 
 class _PassiveUnderstandingService:
     has_graph_builder = False
+
+
+class _CapturingUnderstandingService:
+    has_graph_builder = False
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def recognize_message(
+        self,
+        session,
+        content,
+        *,
+        recent_messages,
+        long_term_memory,
+        emit_events,
+    ):
+        self.calls.append(
+            {
+                "session_id": session.session_id,
+                "content": content,
+                "recent_messages": list(recent_messages),
+                "long_term_memory": list(long_term_memory),
+                "emit_events": emit_events,
+            }
+        )
+        return RecognitionResult(primary=[], candidates=[])
 
 
 class _SpyPlanner:
@@ -269,3 +298,50 @@ def test_graph_compiler_direct_single_intent_honors_confirm_policy() -> None:
     assert len(fallback.calls) == 1
     assert result.graph.status == GraphStatus.WAITING_CONFIRMATION
     assert [action.code for action in result.graph.actions] == ["confirm_graph", "cancel_graph"]
+
+
+def test_graph_compiler_recognize_only_passes_recent_messages_and_memory_from_context() -> None:
+    understanding_service = _CapturingUnderstandingService()
+    compiler = GraphCompiler(
+        intent_catalog=_StaticCatalog([_transfer_intent()]),
+        planner=_SpyPlanner(),
+        understanding_service=understanding_service,
+        slot_resolution_service=SlotResolutionService(),
+        planning_policy="auto",
+    )
+    session = GraphSessionState(
+        session_id="session_memory",
+        cust_id="cust_memory",
+        messages=[
+            ChatMessage(role="user", content="我要转账"),
+            ChatMessage(role="assistant", content="请提供金额"),
+        ],
+    )
+    context_builder = ContextBuilder()
+
+    asyncio.run(
+        compiler.recognize_only(
+            session,
+            "200",
+            build_session_context=lambda current_session: context_builder.build_task_context(
+                current_session,
+                task=None,
+                long_term_memory=["payee_name=小明"],
+            ),
+            sanitize_recent_messages_for_planning=lambda entries: entries,
+            emit_events=False,
+        )
+    )
+
+    assert understanding_service.calls == [
+        {
+            "session_id": "session_memory",
+            "content": "200",
+            "recent_messages": [
+                "user: 我要转账",
+                "assistant: 请提供金额",
+            ],
+            "long_term_memory": ["payee_name=小明"],
+            "emit_events": False,
+        }
+    ]
