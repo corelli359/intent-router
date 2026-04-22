@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
+import json
 
 import httpx
 import pytest
@@ -62,6 +63,21 @@ class _StaticCatalog:
 
     def get_fallback_intent(self) -> IntentDefinition | None:
         return next((intent for intent in self._intents if intent.is_fallback), None)
+
+
+def _parse_sse_frames(raw_text: str) -> list[tuple[str, str]]:
+    frames: list[tuple[str, str]] = []
+    for chunk in raw_text.split("\n\n"):
+        event_name: str | None = None
+        data_value: str | None = None
+        for line in chunk.splitlines():
+            if line.startswith("event:"):
+                event_name = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                data_value = line.split(":", 1)[1].strip()
+        if event_name is not None and data_value is not None:
+            frames.append((event_name, data_value))
+    return frames
 
 
 def _ag_trans_intent() -> IntentDefinition:
@@ -2996,15 +3012,19 @@ def test_v2_router_message_assistant_protocol_waiting_response_for_missing_slots
         body = response.json()
         assert body["ok"] is True
         assert "snapshot" not in body
-        assert body["output"] == {
-            "intent_code": "AG_TRANS",
-            "status": "waiting_user_input",
-            "isHandOver": False,
-            "handOverReason": "waiting_user_input",
-            "message": "请提供金额",
-            "data": [],
-            "slot_memory": {"payee_name": "小明"},
-        }
+        output = body["output"]
+        assert output["intent_code"] == "AG_TRANS"
+        assert output["status"] == "waiting_user_input"
+        assert output["completion_state"] == 0
+        assert output["completion_reason"] == "router_waiting_user_input"
+        assert output["isHandOver"] is False
+        assert output["handOverReason"] == "waiting_user_input"
+        assert output["node_id"] == "end"
+        assert output["message"] == "请提供金额"
+        assert output["data"] == []
+        assert output["slot_memory"] == {"payee_name": "小明"}
+        assert output["current_task"] == "AG_TRANS#0"
+        assert output["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
         assert agent_client.tasks == []
 
     asyncio.run(run())
@@ -3054,24 +3074,28 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
         assert second_turn.status_code == 200
         body = second_turn.json()
         assert body["ok"] is True
-        assert body["output"] == {
-            "intent_code": "AG_TRANS",
-            "status": "completed",
-            "isHandOver": True,
-            "handOverReason": "已提供收款人和金额交易对象",
-            "message": "已向小明转账 200 CNY，转账成功",
-            "data": [
-                {
-                    "isSubAgent": "True",
-                    "typIntent": "mbpTransfer",
-                    "answer": "||200|小明|",
-                }
-            ],
-            "slot_memory": {
-                "amount": "200",
-                "payee_name": "小明",
-            },
+        output = body["output"]
+        assert output["intent_code"] == "AG_TRANS"
+        assert output["status"] == "completed"
+        assert output["completion_state"] == 2
+        assert output["completion_reason"] == "agent_final_done"
+        assert output["isHandOver"] is True
+        assert output["handOverReason"] == "已提供收款人和金额交易对象"
+        assert output["node_id"] == "end"
+        assert output["message"] == "已向小明转账 200 CNY，转账成功"
+        assert output["data"] == [
+            {
+                "isSubAgent": "True",
+                "typIntent": "mbpTransfer",
+                "answer": "||200|小明|",
+            }
+        ]
+        assert output["slot_memory"] == {
+            "amount": "200",
+            "payee_name": "小明",
         }
+        assert output["current_task"].startswith("task_")
+        assert output["task_list"] == [{"name": output["current_task"], "status": "completed"}]
         assert len(agent_client.tasks) == 1
         task = agent_client.tasks[0]
         assert task.input_context["config_variables"] == {
@@ -3110,8 +3134,11 @@ def test_v2_router_message_assistant_protocol_returns_ok_false_when_recognizer_i
         body = response.json()
         assert body["ok"] is False
         assert body["output"]["status"] == "failed"
+        assert body["output"]["completion_state"] == 2
+        assert body["output"]["completion_reason"] == "router_error"
         assert body["output"]["isHandOver"] is False
         assert body["output"]["handOverReason"] == "failed"
+        assert body["output"]["node_id"] == "end"
         assert body["output"]["errorCode"] == "ROUTER_LLM_UNAVAILABLE"
         assert body["output"]["message"] == "意图识别服务暂不可用，请稍后重试。"
         assert body["output"]["data"] == []
@@ -3147,7 +3174,7 @@ def test_v2_router_message_returns_503_when_recognizer_is_unavailable() -> None:
     asyncio.run(run())
 
 
-def test_v2_router_message_assistant_protocol_returns_ok_false_for_multi_intent_graph() -> None:
+def test_v2_router_message_assistant_protocol_supports_multi_intent_graph() -> None:
     async def run() -> None:
         app, _ = _test_v2_app()
         async with httpx.AsyncClient(
@@ -3168,20 +3195,113 @@ def test_v2_router_message_assistant_protocol_returns_ok_false_for_multi_intent_
 
         assert response.status_code == 200
         body = response.json()
-        assert body["ok"] is False
-        assert body["output"]["status"] == "failed"
-        assert body["output"]["isHandOver"] is False
-        assert body["output"]["handOverReason"] == "failed"
-        assert body["output"]["message"] == "当前生产协议暂仅支持单意图场景，多意图输出协议待定。"
-        assert body["output"]["errorCode"] == "ROUTER_MULTI_INTENT_UNSUPPORTED"
-        assert body["output"]["route_mode"] == "multi_intent"
-        assert body["output"]["data"] == []
-        assert body["output"]["slot_memory"] == {}
-        assert body["output"]["graph_status"] == "waiting_confirmation"
-        assert body["output"]["intent_codes"] == [
-            "query_account_balance",
-            "transfer_money",
-        ]
+        assert body["ok"] is True
+        output = body["output"]
+        assert output["current_task"] in {item["name"] for item in output["task_list"]}
+        assert len(output["task_list"]) == 2
+        assert output["intent_code"] in {"query_account_balance", "transfer_money"}
+        assert output["completion_state"] in {0, 2}
+        assert isinstance(output["message"], str)
+        assert "errorCode" not in output
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_stream_assistant_protocol_waiting_then_completed() -> None:
+    async def run() -> None:
+        agent_client = _AssistantProtocolTransferAgentClient()
+        app, _ = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+
+            async with client.stream(
+                "POST",
+                f"/api/router/v2/sessions/{session_id}/messages/stream",
+                json={
+                    "txt": "给小明转账",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            ) as response:
+                waiting_text = "".join([chunk async for chunk in response.aiter_text()])
+
+            async with client.stream(
+                "POST",
+                f"/api/router/v2/sessions/{session_id}/messages/stream",
+                json={
+                    "txt": "200",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            ) as response:
+                completed_text = "".join([chunk async for chunk in response.aiter_text()])
+
+        waiting_frames = _parse_sse_frames(waiting_text)
+        assert waiting_frames[-1] == ("done", "[DONE]")
+        waiting_payload = json.loads(waiting_frames[0][1])
+        assert waiting_frames[0][0] == "message"
+        assert waiting_payload["status"] == "waiting_user_input"
+        assert waiting_payload["completion_state"] == 0
+        assert waiting_payload["current_task"] == "AG_TRANS#0"
+        assert waiting_payload["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
+
+        completed_frames = _parse_sse_frames(completed_text)
+        assert completed_frames[-1] == ("done", "[DONE]")
+        completed_payload = json.loads(completed_frames[0][1])
+        assert completed_frames[0][0] == "message"
+        assert completed_payload["status"] == "completed"
+        assert completed_payload["completion_state"] == 2
+        assert completed_payload["completion_reason"] == "agent_final_done"
+        assert completed_payload["task_list"] == [{"name": completed_payload["current_task"], "status": "completed"}]
+        assert completed_payload["data"][0]["answer"] == "||200|小明|"
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_stream_assistant_protocol_surfaces_llm_unavailable() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            recognizer=_RecognizerFailureRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            async with client.stream(
+                "POST",
+                f"/api/router/v2/sessions/{session_id}/messages/stream",
+                json={
+                    "txt": "我要跟家里缴3000电费",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            ) as response:
+                raw_text = "".join([chunk async for chunk in response.aiter_text()])
+
+        frames = _parse_sse_frames(raw_text)
+        assert frames[-1] == ("done", "[DONE]")
+        payload = json.loads(frames[0][1])
+        assert frames[0][0] == "message"
+        assert payload["status"] == "failed"
+        assert payload["errorCode"] == "ROUTER_LLM_UNAVAILABLE"
+        assert payload["completion_state"] == 2
+        assert payload["message"] == "意图识别服务暂不可用，请稍后重试。"
 
     asyncio.run(run())
 

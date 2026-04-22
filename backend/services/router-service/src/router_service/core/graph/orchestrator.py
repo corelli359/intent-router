@@ -250,6 +250,7 @@ class GraphRouterOrchestrator:
         cust_id: str,
         content: str,
         *,
+        assistant_protocol: bool = False,
         router_only: bool = False,
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
@@ -279,6 +280,7 @@ class GraphRouterOrchestrator:
                 async with self.session_store.session_lock(session_id):
                     with router_stage(logger, "orchestrator.handle_user_message", **trace_details):
                         message_flow_kwargs: dict[str, Any] = {
+                            "assistant_protocol": assistant_protocol,
                             "router_only": router_only,
                             "guided_selection": guided_selection,
                             "recommendation_context": recommendation_context,
@@ -319,6 +321,7 @@ class GraphRouterOrchestrator:
         content: str,
         serializer: Callable[[GraphSessionState], SerializedResponseT],
         router_only: bool = False,
+        assistant_protocol: bool = False,
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
@@ -346,6 +349,7 @@ class GraphRouterOrchestrator:
                 async with self.session_store.session_lock(session_id):
                     with router_stage(logger, "orchestrator.handle_user_message_serialized", **trace_details):
                         message_flow_kwargs: dict[str, Any] = {
+                            "assistant_protocol": assistant_protocol,
                             "router_only": router_only,
                             "guided_selection": guided_selection,
                             "recommendation_context": recommendation_context,
@@ -940,7 +944,10 @@ class GraphRouterOrchestrator:
             event=event_name,
             message=chunk.content,
             ishandover=chunk.ishandover,
-            payload=dict(chunk.payload),
+            payload={
+                **dict(chunk.payload),
+                "agent_output": dict(chunk.output),
+            },
             source="agent",
         )
         if chunk.status in {

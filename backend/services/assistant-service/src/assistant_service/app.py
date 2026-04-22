@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.responses import StreamingResponse
 
 
 class ConfigVariable(BaseModel):
@@ -18,7 +20,7 @@ class ConfigVariable(BaseModel):
 
 
 class AssistantRunRequest(BaseModel):
-    """Minimal assistant-to-router non-stream forwarding contract."""
+    """Minimal assistant-to-router forwarding contract."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -42,19 +44,15 @@ class RouterForwardService:
         self._owns_http_client = http_client is None
         self.http_client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
 
+    def _router_payload(self, request: AssistantRunRequest) -> dict[str, Any]:
+        """Build the shared router payload without rewriting the upstream contract fields."""
+        return request.model_dump(mode="json", by_alias=True, exclude_none=True)
+
     async def run(self, request: AssistantRunRequest) -> dict[str, Any]:
         """Forward one assistant request into the router message endpoint."""
-        payload: dict[str, Any] = {
-            "txt": request.txt,
-            "config_variables": [item.model_dump(mode="json") for item in request.config_variables],
-            "executionMode": request.execution_mode,
-        }
-        if request.cust_id:
-            payload["cust_id"] = request.cust_id
-
         response = await self.http_client.post(
             f"{self.router_base_url}/api/router/v2/sessions/{request.session_id}/messages",
-            json=payload,
+            json=self._router_payload(request),
         )
         try:
             body = response.json()
@@ -68,6 +66,27 @@ class RouterForwardService:
         if not isinstance(body, dict):
             raise HTTPException(status_code=502, detail="router response must be a JSON object")
         return body
+
+    async def stream(self, request: AssistantRunRequest) -> httpx.Response:
+        """Open one streaming assistant request against the router SSE endpoint."""
+        response = await self.http_client.send(
+            self.http_client.build_request(
+                "POST",
+                f"{self.router_base_url}/api/router/v2/sessions/{request.session_id}/messages/stream",
+                json=self._router_payload(request),
+                headers={"Accept": "text/event-stream"},
+            ),
+            stream=True,
+        )
+        if response.status_code >= 400:
+            raw_body = await response.aread()
+            await response.aclose()
+            try:
+                body: Any = response.json()
+            except ValueError:
+                body = raw_body.decode("utf-8", errors="replace")
+            raise HTTPException(status_code=response.status_code, detail=body)
+        return response
 
     async def close(self) -> None:
         """Release the owned HTTP client when this service created it."""
@@ -93,6 +112,19 @@ async def _lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="Assistant Service", version="0.1.0", lifespan=_lifespan)
 
+    def _stream_response_headers(response: httpx.Response) -> dict[str, str]:
+        """Forward the router SSE headers needed by downstream clients."""
+        allowed = {"cache-control", "connection", "x-accel-buffering"}
+        return {name: value for name, value in response.headers.items() if name.lower() in allowed}
+
+    async def _proxy_stream(response: httpx.Response) -> AsyncIterator[bytes]:
+        try:
+            async for chunk in response.aiter_raw():
+                if chunk:
+                    yield chunk
+        finally:
+            await response.aclose()
+
     @app.get("/health")
     async def health() -> dict[str, object]:
         return {"status": "ok", "service": "assistant-service"}
@@ -103,6 +135,20 @@ def create_app() -> FastAPI:
         service: RouterForwardService = Depends(get_router_forward_service),
     ) -> dict[str, Any]:
         return await service.run(request)
+
+    @app.post("/api/assistant/run/stream")
+    async def run_assistant_stream(
+        request: AssistantRunRequest,
+        service: RouterForwardService = Depends(get_router_forward_service),
+    ) -> StreamingResponse:
+        response = await service.stream(request)
+        media_type = response.headers.get("content-type", "text/event-stream").split(";", maxsplit=1)[0]
+        return StreamingResponse(
+            _proxy_stream(response),
+            status_code=response.status_code,
+            media_type=media_type,
+            headers=_stream_response_headers(response),
+        )
 
     return app
 

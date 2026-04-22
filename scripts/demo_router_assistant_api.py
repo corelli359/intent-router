@@ -79,6 +79,11 @@ def assert_assistant_response_shape(response: dict[str, Any]) -> None:
     if not isinstance(output, dict):
         raise AssertionError(f"assistant protocol requires top-level object output: {response}")
     required_fields = [
+        "current_task",
+        "task_list",
+        "completion_state",
+        "completion_reason",
+        "node_id",
         "intent_code",
         "status",
         "isHandOver",
@@ -90,6 +95,10 @@ def assert_assistant_response_shape(response: dict[str, Any]) -> None:
     missing = [field for field in required_fields if field not in output]
     if missing:
         raise AssertionError(f"assistant output missing fields {missing}: {response}")
+    if not isinstance(output["task_list"], list):
+        raise AssertionError(f"assistant output task_list must be a list: {response}")
+    if not isinstance(output["completion_state"], int):
+        raise AssertionError(f"assistant output completion_state must be an int: {response}")
 
 
 def main() -> int:

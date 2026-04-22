@@ -9,6 +9,14 @@
 > 4. 实现顺序先打通**非流 execute**，再补 SSE 主链路；
 > 5. 当前生产协议先只开放**单意图**链路，多意图输出协议待后续对齐后再开放。
 
+> [!IMPORTANT]
+> 实现现状更新（2026-04-22）：
+> 1. Router 当前已按统一输出模板同时支持**非流**与 **SSE**；
+> 2. 非流返回体仍为 `ok + output`，SSE 每个 `event: message` 的 `data` 与 `output` 保持同构；
+> 3. 当前统一输出最小字段集合为：`current_task`、`task_list`、`completion_state`、`completion_reason`、`node_id`、`intent_code`、`status`、`isHandOver`、`handOverReason`、`message`、`data`、`slot_memory`；
+> 4. 助手侧多意图路径当前已按任务态输出统一收口，不再返回 `ROUTER_MULTI_INTENT_UNSUPPORTED`；
+> 5. 下文中关于“仅开放单意图”“SSE 尚未对齐”的部分，属于 v0.3 早期讨论痕迹，实际联调以本更新说明和 `docs/v3/router-service-流式协议补充草案.md` 为准。
+
 ---
 
 ## 1. 请求 Router 的报文格式

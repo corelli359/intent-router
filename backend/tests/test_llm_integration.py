@@ -878,7 +878,7 @@ def test_streaming_agent_client_supports_sse_json_payloads() -> None:
                 headers={"content-type": "text/event-stream"},
                 stream=_AsyncByteStream(
                     [
-                        b'event: message\ndata: {"event":"final","content":"\xe5\xb7\xb2\xe5\xae\x8c\xe6\x88\x90","ishandover":true,"status":"completed","payload":{"receipt_id":"txn_001"}}\n\n',
+                        b'event: message\ndata: {"event":"final","content":"\xe5\xb7\xb2\xe5\xae\x8c\xe6\x88\x90","ishandover":true,"status":"completed","node_id":"end","completion_state":2,"completion_reason":"agent_final_done","payload":{"receipt_id":"txn_001"}}\n\n',
                         b"event: done\ndata: [DONE]\n\n",
                     ]
                 ),
@@ -893,6 +893,10 @@ def test_streaming_agent_client_supports_sse_json_payloads() -> None:
         assert chunks[0].status == TaskStatus.COMPLETED
         assert chunks[0].ishandover is True
         assert chunks[0].payload == {"receipt_id": "txn_001"}
+        assert chunks[0].output["intent_code"] == "transfer_money"
+        assert chunks[0].output["node_id"] == "end"
+        assert chunks[0].output["completion_state"] == 2
+        assert chunks[0].output["completion_reason"] == "agent_final_done"
 
     asyncio.run(run())
 
@@ -913,6 +917,7 @@ def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> Non
                 200,
                 json={
                     "additional_kwargs": {
+                        "node_id": "end",
                         "node_output": {
                             "output": json.dumps(
                                 {
@@ -920,6 +925,8 @@ def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> Non
                                 "data": [{"answer": "已向小明转账 200 CNY，转账成功"}],
                                 "isHandOver": True,
                                 "status": "completed",
+                                "completion_state": 2,
+                                "completion_reason": "agent_final_done",
                                 "slot_memory": {"payee_name": "小明", "amount": "200"},
                                 "payload": {"receipt_id": "txn_123"},
                                 },
@@ -943,6 +950,10 @@ def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> Non
             "slot_memory": {"payee_name": "小明", "amount": "200"},
         }
         assert task.slot_memory == {"payee_name": "小明", "amount": "200"}
+        assert chunks[0].output["intent_code"] == "transfer_money"
+        assert chunks[0].output["node_id"] == "end"
+        assert chunks[0].output["completion_state"] == 2
+        assert chunks[0].output["completion_reason"] == "agent_final_done"
 
     asyncio.run(run())
 

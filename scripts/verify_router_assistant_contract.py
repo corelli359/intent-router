@@ -114,6 +114,31 @@ def _ensure_assistant_response_shape(response: dict[str, Any]) -> dict[str, Any]
         raise AssertionError(f"assistant contract requires top-level boolean ok, got: {response}")
     if not isinstance(output, dict):
         raise AssertionError(f"assistant contract requires top-level object output, got: {response}")
+    required_fields = [
+        "current_task",
+        "task_list",
+        "completion_state",
+        "completion_reason",
+        "node_id",
+        "intent_code",
+        "status",
+        "isHandOver",
+        "handOverReason",
+        "message",
+        "data",
+        "slot_memory",
+    ]
+    missing = [field for field in required_fields if field not in output]
+    if missing:
+        raise AssertionError(f"assistant contract output missing fields {missing}: {response}")
+    if not isinstance(output.get("task_list"), list):
+        raise AssertionError(f"assistant contract task_list must be a list, got: {response}")
+    if not isinstance(output.get("completion_state"), int):
+        raise AssertionError(f"assistant contract completion_state must be an int, got: {response}")
+    if not isinstance(output.get("completion_reason"), str):
+        raise AssertionError(f"assistant contract completion_reason must be a string, got: {response}")
+    if not isinstance(output.get("node_id"), str):
+        raise AssertionError(f"assistant contract node_id must be a string, got: {response}")
 
     kind = _output_kind(output)
     if kind == "unknown":
@@ -186,6 +211,8 @@ def _strict_demo_check(
             raise AssertionError(f"turn 1 expected router_state for transfer demo, got: {response}")
         if output.get("status") != "waiting_user_input":
             raise AssertionError(f"turn 1 expected waiting_user_input, got: {response}")
+        if output.get("completion_state") != 0:
+            raise AssertionError(f"turn 1 expected completion_state=0, got: {response}")
     elif turn_index == 2 and execution_mode == "router_only":
         if response["ok"] is not True:
             raise AssertionError(f"turn 2 expected ok=true in router_only mode, got: {response}")
@@ -193,11 +220,15 @@ def _strict_demo_check(
             raise AssertionError(f"turn 2 expected router_state in router_only mode, got: {response}")
         if output.get("status") != "ready_for_dispatch":
             raise AssertionError(f"turn 2 expected ready_for_dispatch in router_only mode, got: {response}")
+        if output.get("completion_state") != 0:
+            raise AssertionError(f"turn 2 expected completion_state=0 in router_only mode, got: {response}")
     elif turn_index == 2 and execution_mode == "execute":
         if response["ok"] is not True:
             raise AssertionError(f"turn 2 expected ok=true in execute mode, got: {response}")
         if kind != "handover":
             raise AssertionError(f"turn 2 expected handover in execute mode, got: {response}")
+        if output.get("completion_state") != 2:
+            raise AssertionError(f"turn 2 expected completion_state=2 in execute mode, got: {response}")
 
 
 def _print_json_block(title: str, payload: dict[str, Any]) -> None:

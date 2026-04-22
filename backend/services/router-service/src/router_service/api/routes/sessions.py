@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.responses import StreamingResponse
 
 from router_service.api.errors import RouterApiException, RouterErrorCode
@@ -49,8 +49,10 @@ class CreateSessionResponse(BaseModel):
 class CreateSessionRequest(BaseModel):
     """Optional payload used when callers want to control session creation."""
 
-    cust_id: str | None = None
-    session_id: str | None = None
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    cust_id: str | None = Field(default=None, alias="custId")
+    session_id: str | None = Field(default=None, alias="sessionId")
 
 
 class SessionSnapshotResponse(BaseModel):
@@ -89,6 +91,8 @@ class ConfigVariableInput(BaseModel):
 class MessageRequest(BaseModel):
     """Unified message payload for both plain dialog and structured router inputs."""
 
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     content: str | None = None
     message: str | None = None
     txt: str | None = None
@@ -97,7 +101,7 @@ class MessageRequest(BaseModel):
     recommendation_context: RecommendationContextPayload | None = Field(default=None, alias="recommendationContext")
     proactive_recommendation: ProactiveRecommendationPayload | None = Field(default=None, alias="proactiveRecommendation")
     config_variables: list[ConfigVariableInput] = Field(default_factory=list)
-    cust_id: str | None = None
+    cust_id: str | None = Field(default=None, alias="custId")
 
     @model_validator(mode="after")
     def normalize(self) -> "MessageRequest":
@@ -373,23 +377,27 @@ def _response_node(session: object) -> GraphNodeState | None:
         with suppress(KeyError):
             return graph.node_by_id(active_node_id)
 
-    preferred_statuses = {
-        GraphNodeStatus.WAITING_USER_INPUT,
-        GraphNodeStatus.WAITING_CONFIRMATION,
-        GraphNodeStatus.READY_FOR_DISPATCH,
-        GraphNodeStatus.COMPLETED,
-        GraphNodeStatus.FAILED,
+    status_priority = {
+        GraphNodeStatus.WAITING_USER_INPUT: 0,
+        GraphNodeStatus.WAITING_CONFIRMATION: 1,
+        GraphNodeStatus.RUNNING: 2,
+        GraphNodeStatus.READY_FOR_DISPATCH: 3,
+        GraphNodeStatus.COMPLETED: 4,
+        GraphNodeStatus.FAILED: 5,
+        GraphNodeStatus.CANCELLED: 6,
+        GraphNodeStatus.SKIPPED: 7,
     }
-    candidates = [node for node in graph.nodes if node.status in preferred_statuses]
+    candidates = [node for node in graph.nodes if node.status in status_priority]
     if candidates:
-        return max(candidates, key=lambda item: item.updated_at)
+        return min(
+            candidates,
+            key=lambda item: (
+                status_priority.get(item.status, 99),
+                -item.updated_at.timestamp(),
+                item.position,
+            ),
+        )
     return max(graph.nodes, key=lambda item: item.updated_at)
-
-
-def _assistant_uses_multi_intent_graph(session: object) -> bool:
-    """Return whether the current assistant-facing response has entered multi-intent graph mode."""
-    graph = _response_graph(session)
-    return graph is not None and len(graph.nodes) > 1
 
 
 def _last_assistant_message(session: object) -> str:
@@ -401,16 +409,124 @@ def _last_assistant_message(session: object) -> str:
     return ""
 
 
-def _synthesized_transfer_data(node: GraphNodeState) -> list[dict[str, str]]:
-    """Build the transfer-agent `data[].answer` fallback from router-visible slots."""
-    slot_memory = dict(node.slot_memory)
+def _assistant_task_status(node_status: str | GraphNodeStatus | None) -> str:
+    """Map router node status into the assistant-facing task-list status."""
+    if isinstance(node_status, GraphNodeStatus):
+        value = node_status.value
+    elif node_status is None:
+        value = ""
+    else:
+        value = str(node_status)
+
+    if value in {
+        GraphNodeStatus.COMPLETED.value,
+    }:
+        return "completed"
+    if value in {
+        GraphNodeStatus.FAILED.value,
+    }:
+        return "failed"
+    if value in {
+        GraphNodeStatus.CANCELLED.value,
+        GraphNodeStatus.SKIPPED.value,
+    }:
+        return "cancelled"
+    if value in {
+        GraphNodeStatus.RUNNING.value,
+    }:
+        return "running"
+    return "waiting"
+
+
+def _assistant_task_name(
+    *,
+    task_id: str | None,
+    node_id: str | None,
+    intent_code: str | None,
+    position: int | None = None,
+) -> str:
+    """Return the stable task identifier exposed to the assistant-facing protocol."""
+    if task_id not in (None, ""):
+        return str(task_id)
+    if intent_code not in (None, ""):
+        if position is not None:
+            return f"{intent_code}#{position}"
+        return str(intent_code)
+    if node_id not in (None, ""):
+        return str(node_id)
+    return "task"
+
+
+def _assistant_task_list_from_graph(graph: ExecutionGraphState | None) -> list[dict[str, str]]:
+    """Build the assistant-facing task list from one live graph object."""
+    if graph is None:
+        return []
+    return [
+        {
+            "name": _assistant_task_name(
+                task_id=node.task_id,
+                node_id=node.node_id,
+                intent_code=node.intent_code,
+                position=node.position,
+            ),
+            "status": _assistant_task_status(node.status),
+        }
+        for node in sorted(graph.nodes, key=lambda item: (item.position, item.created_at))
+    ]
+
+
+def _assistant_task_list_from_graph_payload(graph_payload: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Build the assistant-facing task list from a serialized graph payload."""
+    if not isinstance(graph_payload, dict):
+        return []
+    nodes = graph_payload.get("nodes")
+    if not isinstance(nodes, list):
+        return []
+    return [
+        {
+            "name": _assistant_task_name(
+                task_id=str(item.get("task_id")) if item.get("task_id") not in (None, "") else None,
+                node_id=str(item.get("node_id")) if item.get("node_id") not in (None, "") else None,
+                intent_code=str(item.get("intent_code")) if item.get("intent_code") not in (None, "") else None,
+                position=item.get("position") if isinstance(item.get("position"), int) else None,
+            ),
+            "status": _assistant_task_status(str(item.get("status") or "")),
+        }
+        for item in nodes
+        if isinstance(item, dict)
+    ]
+
+
+def _assistant_default_node_id(
+    *,
+    status: str,
+    explicit_node_id: str | None = None,
+) -> str:
+    """Resolve the assistant-facing node id while preserving agent-provided values when present."""
+    if explicit_node_id not in (None, ""):
+        return str(explicit_node_id)
+    if status in {"waiting_user_input", "waiting_confirmation", "completed", "failed"}:
+        return "end"
+    return ""
+
+
+def _assistant_synthesized_transfer_data(
+    *,
+    intent_code: str,
+    slot_memory: dict[str, Any],
+    payload: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    """Build the transfer `data[].answer` fallback from router-visible slots."""
+    if intent_code != "AG_TRANS":
+        return []
+    normalized_payload = dict(payload or {})
     amount = slot_memory.get("amount")
     payee_name = slot_memory.get("payee_name")
-    if amount in (None, "") and node.output_payload.get("amount") not in (None, ""):
-        amount = node.output_payload.get("amount")
-    if payee_name in (None, "") and node.output_payload.get("payee_name") not in (None, ""):
-        payee_name = node.output_payload.get("payee_name")
-    if amount in (None, "") and payee_name in (None, ""):
+    if amount in (None, "") and normalized_payload.get("amount") not in (None, ""):
+        amount = normalized_payload.get("amount")
+    if payee_name in (None, "") and normalized_payload.get("payee_name") not in (None, ""):
+        payee_name = normalized_payload.get("payee_name")
+    if amount in (None, "") or payee_name in (None, ""):
         return []
     return [
         {
@@ -421,24 +537,73 @@ def _synthesized_transfer_data(node: GraphNodeState) -> list[dict[str, str]]:
     ]
 
 
+def _assistant_completion_fields(
+    *,
+    status: str,
+    node_status: str | GraphNodeStatus | None,
+    is_handover: bool,
+    agent_output: dict[str, Any] | None = None,
+) -> tuple[int, str]:
+    """Resolve the unified completion state/reason for one assistant-facing payload."""
+    normalized_output = dict(agent_output or {})
+    explicit_state = normalized_output.get("completion_state")
+    if isinstance(explicit_state, bool):
+        explicit_state = int(explicit_state)
+    if isinstance(explicit_state, int) and explicit_state in {0, 1, 2}:
+        explicit_reason = normalized_output.get("completion_reason")
+        if explicit_reason not in (None, ""):
+            return explicit_state, str(explicit_reason)
+        return explicit_state, "agent_final_done" if explicit_state == 2 else "running"
+
+    if isinstance(node_status, GraphNodeStatus):
+        node_status_value = node_status.value
+    elif node_status is None:
+        node_status_value = status
+    else:
+        node_status_value = str(node_status)
+
+    if status in {"waiting_user_input"} or node_status_value == GraphNodeStatus.WAITING_USER_INPUT.value:
+        return 0, "router_waiting_user_input"
+    if status in {"waiting_confirmation"} or node_status_value == GraphNodeStatus.WAITING_CONFIRMATION.value:
+        return 0, "router_waiting_confirmation"
+    if status in {"ready_for_dispatch"} or node_status_value == GraphNodeStatus.READY_FOR_DISPATCH.value:
+        return 0, "router_ready_for_dispatch"
+    if status in {"running", "dispatching"} or node_status_value == GraphNodeStatus.RUNNING.value:
+        return 0, "running"
+    if status == "failed" or node_status_value == GraphNodeStatus.FAILED.value:
+        return 2, "router_error"
+    if status == "cancelled" or node_status_value == GraphNodeStatus.CANCELLED.value:
+        return 2, "assistant_cancel"
+    if is_handover or status == "completed" or node_status_value == GraphNodeStatus.COMPLETED.value:
+        return 2, "agent_final_done"
+    return 0, "running"
+
+
 def _assistant_output_template(
     *,
     status: str,
+    current_task: str = "",
+    completion_state: int = 0,
+    completion_reason: str = "",
+    node_id: str = "",
     intent_code: str = "",
     is_handover: bool = False,
     handover_reason: str = "",
     message: str = "",
     data: list[Any] | None = None,
     slot_memory: dict[str, Any] | None = None,
+    task_list: list[dict[str, str]] | None = None,
     error_code: str | RouterErrorCode | None = None,
     stage: str | None = None,
     details: dict[str, Any] | None = None,
-    route_mode: str | None = None,
-    graph_status: str | None = None,
-    intent_codes: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Build a stable assistant-facing output shape across waiting/completed/failed states."""
+    """Build the stable assistant-facing payload shared by non-stream and SSE responses."""
     output: dict[str, Any] = {
+        "current_task": current_task,
+        "task_list": list(task_list or []),
+        "completion_state": completion_state,
+        "completion_reason": completion_reason,
+        "node_id": node_id,
         "intent_code": intent_code,
         "status": status,
         "isHandOver": is_handover,
@@ -453,98 +618,185 @@ def _assistant_output_template(
         output["stage"] = stage
     if details:
         output["details"] = dict(details)
-    if route_mode is not None:
-        output["route_mode"] = route_mode
-    if graph_status is not None:
-        output["graph_status"] = graph_status
-    if intent_codes:
-        output["intent_codes"] = list(intent_codes)
     return output
+
+
+def _assistant_output_from_node(
+    *,
+    node: GraphNodeState,
+    graph: ExecutionGraphState | None,
+    message: str,
+) -> dict[str, Any]:
+    """Build the assistant-facing payload from live graph/node runtime objects."""
+    agent_output = dict(getattr(node, "_agent_output", {}) or {})
+    slot_memory = dict(node.slot_memory)
+    output_payload = dict(node.output_payload)
+    status = str(agent_output.get("status") or node.status.value)
+    is_handover = bool(
+        agent_output["isHandOver"]
+        if "isHandOver" in agent_output
+        else node.status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.FAILED}
+    )
+    if "handOverReason" in agent_output and agent_output["handOverReason"] not in (None, ""):
+        handover_reason = str(agent_output["handOverReason"])
+    elif node.status == GraphNodeStatus.WAITING_USER_INPUT:
+        handover_reason = "waiting_user_input"
+    elif node.status == GraphNodeStatus.WAITING_CONFIRMATION:
+        handover_reason = "waiting_confirmation"
+    elif node.status == GraphNodeStatus.COMPLETED:
+        handover_reason = "completed"
+    else:
+        handover_reason = node.status.value
+    data = agent_output.get("data")
+    if not isinstance(data, list):
+        data = _assistant_synthesized_transfer_data(
+            intent_code=node.intent_code,
+            slot_memory=slot_memory,
+            payload=output_payload,
+        )
+    completion_state, completion_reason = _assistant_completion_fields(
+        status=status,
+        node_status=node.status,
+        is_handover=is_handover,
+        agent_output=agent_output,
+    )
+    return _assistant_output_template(
+        current_task=_assistant_task_name(
+            task_id=node.task_id,
+            node_id=node.node_id,
+            intent_code=node.intent_code,
+            position=node.position,
+        ),
+        task_list=_assistant_task_list_from_graph(graph),
+        completion_state=completion_state,
+        completion_reason=completion_reason,
+        node_id=_assistant_default_node_id(
+            status=status,
+            explicit_node_id=str(agent_output.get("node_id")) if agent_output.get("node_id") not in (None, "") else None,
+        ),
+        intent_code=str(agent_output.get("intent_code") or node.intent_code),
+        status=status,
+        is_handover=is_handover,
+        handover_reason=handover_reason,
+        message=message,
+        data=data,
+        slot_memory=slot_memory,
+    )
+
+
+def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
+    """Translate one internal router task event into the assistant-facing SSE payload."""
+    allowed_events = {
+        "graph.unrecognized",
+        "node.waiting_user_input",
+        "node.waiting_confirmation",
+        "node.ready_for_dispatch",
+        "node.completed",
+        "node.failed",
+        "node.cancelled",
+    }
+    if event.event not in allowed_events:
+        return None
+
+    payload = dict(event.payload or {})
+    agent_output = payload.get("agent_output")
+    if not isinstance(agent_output, dict):
+        agent_output = {}
+    graph_payload = payload.get("graph")
+    graph_payload = graph_payload if isinstance(graph_payload, dict) else None
+    node_payload = payload.get("node")
+    node_payload = node_payload if isinstance(node_payload, dict) else None
+
+    if event.event == "graph.unrecognized":
+        return _assistant_output_template(
+            status="unrecognized",
+            completion_state=2,
+            completion_reason="router_no_match",
+            node_id="end",
+            handover_reason="unrecognized",
+            message=event.message or "",
+        )
+
+    if node_payload is None:
+        return None
+
+    slot_memory = dict(node_payload.get("slot_memory") or {})
+    output_payload = dict(node_payload.get("output_payload") or {})
+    status = str(agent_output.get("status") or node_payload.get("status") or event.status.value)
+    is_handover = bool(
+        agent_output["isHandOver"]
+        if "isHandOver" in agent_output
+        else (event.ishandover if isinstance(event.ishandover, bool) else status in {"completed", "failed"})
+    )
+    if "handOverReason" in agent_output and agent_output["handOverReason"] not in (None, ""):
+        handover_reason = str(agent_output["handOverReason"])
+    elif status in {"waiting_user_input", "waiting_confirmation"}:
+        handover_reason = status
+    elif status == "completed":
+        handover_reason = "completed"
+    else:
+        handover_reason = status
+    data = agent_output.get("data")
+    intent_code = str(agent_output.get("intent_code") or node_payload.get("intent_code") or event.intent_code)
+    if not isinstance(data, list):
+        data = _assistant_synthesized_transfer_data(
+            intent_code=intent_code,
+            slot_memory=slot_memory,
+            payload=output_payload,
+        )
+    completion_state, completion_reason = _assistant_completion_fields(
+        status=status,
+        node_status=str(node_payload.get("status") or ""),
+        is_handover=is_handover,
+        agent_output=agent_output,
+    )
+    return _assistant_output_template(
+        current_task=_assistant_task_name(
+            task_id=str(node_payload.get("task_id")) if node_payload.get("task_id") not in (None, "") else None,
+            node_id=str(node_payload.get("node_id")) if node_payload.get("node_id") not in (None, "") else None,
+            intent_code=intent_code,
+            position=node_payload.get("position") if isinstance(node_payload.get("position"), int) else None,
+        ),
+        task_list=_assistant_task_list_from_graph_payload(graph_payload),
+        completion_state=completion_state,
+        completion_reason=completion_reason,
+        node_id=_assistant_default_node_id(
+            status=status,
+            explicit_node_id=str(agent_output.get("node_id")) if agent_output.get("node_id") not in (None, "") else None,
+        ),
+        intent_code=intent_code,
+        status=status,
+        is_handover=is_handover,
+        handover_reason=handover_reason,
+        message=event.message or "",
+        data=data,
+        slot_memory=slot_memory,
+    )
 
 
 def _assistant_output_payload(session: object) -> dict[str, Any]:
     """Build the assistant-facing response payload from live router/session state."""
+    graph = _response_graph(session)
     node = _response_node(session)
     if node is None:
         message = _last_assistant_message(session)
-        status = "completed" if message else "idle"
-        return _assistant_output_template(
-            status=status,
-            handover_reason=status,
-            message=message,
-        )
-
-    agent_output = dict(getattr(node, "_agent_output", {}) or {})
-    if agent_output:
-        is_handover = bool(
-            agent_output["isHandOver"]
-            if "isHandOver" in agent_output
-            else node.status in {GraphNodeStatus.COMPLETED, GraphNodeStatus.FAILED}
-        )
-        if "handOverReason" in agent_output and agent_output["handOverReason"] not in (None, ""):
-            handover_reason = str(agent_output["handOverReason"])
-        elif node.status == GraphNodeStatus.WAITING_USER_INPUT:
-            handover_reason = "waiting_user_input"
-        elif node.status == GraphNodeStatus.COMPLETED:
-            handover_reason = "completed"
-        else:
-            handover_reason = node.status.value
-        status = str(agent_output.get("status") or node.status.value)
-        data = agent_output.get("data")
-        if isinstance(data, list):
-            resolved_data = data
-        elif node.intent_code == "AG_TRANS":
-            resolved_data = _synthesized_transfer_data(node)
-        else:
-            resolved_data = []
-        return _assistant_output_template(
-            intent_code=node.intent_code,
-            status=status,
-            is_handover=is_handover,
-            handover_reason=handover_reason,
-            message=_last_assistant_message(session),
-            data=resolved_data,
-            slot_memory=dict(node.slot_memory),
-        )
+        if message:
+            return _assistant_output_template(
+                status="unrecognized",
+                completion_state=2,
+                completion_reason="router_no_match",
+                node_id="end",
+                handover_reason="unrecognized",
+                message=message,
+            )
+        return _assistant_output_template(status="idle")
 
     message = node.blocking_reason or _last_assistant_message(session)
-    return _assistant_output_template(
-        intent_code=node.intent_code,
-        status=node.status.value,
-        is_handover=False,
-        handover_reason=node.status.value,
-        message=message,
-        slot_memory=dict(node.slot_memory),
-    )
-
-
-def _assistant_multi_intent_unsupported_output(session: object) -> dict[str, Any]:
-    """Build the assistant-facing failure payload for multi-intent graphs not yet exposed in production."""
-    graph = _response_graph(session)
-    intent_codes = [node.intent_code for node in graph.nodes] if graph is not None else []
-    if graph is not None:
-        graph_status = graph.status.value
-    else:
-        graph_status = None
-    return _assistant_output_template(
-        status="failed",
-        is_handover=False,
-        handover_reason="failed",
-        message="当前生产协议暂仅支持单意图场景，多意图输出协议待定。",
-        error_code=RouterErrorCode.ROUTER_MULTI_INTENT_UNSUPPORTED,
-        route_mode="multi_intent",
-        graph_status=graph_status,
-        intent_codes=intent_codes,
-    )
+    return _assistant_output_from_node(node=node, graph=graph, message=message)
 
 
 def _assistant_response_envelope(session: object) -> dict[str, Any]:
     """Build the assistant-facing `ok + output` envelope from live router/session state."""
-    if _assistant_uses_multi_intent_graph(session):
-        return {
-            "ok": False,
-            "output": _assistant_multi_intent_unsupported_output(session),
-        }
     return {
         "ok": True,
         "output": _assistant_output_payload(session),
@@ -555,6 +807,9 @@ def _assistant_llm_unavailable_output(exc: LLMServiceUnavailableError) -> dict[s
     """Build the assistant-facing failure payload for semantic-model outages."""
     return _assistant_output_template(
         status="failed",
+        completion_state=2,
+        completion_reason="router_error",
+        node_id="end",
         is_handover=False,
         handover_reason="failed",
         message=str(exc),
@@ -562,6 +817,24 @@ def _assistant_llm_unavailable_output(exc: LLMServiceUnavailableError) -> dict[s
         stage=exc.stage,
         details=dict(exc.details),
     )
+
+
+def _assistant_bad_request_output(message: str) -> dict[str, Any]:
+    """Build the assistant-facing failure payload for request validation errors."""
+    return _assistant_output_template(
+        status="failed",
+        completion_state=2,
+        completion_reason="router_error",
+        node_id="end",
+        handover_reason="failed",
+        message=message,
+        error_code=RouterErrorCode.ROUTER_BAD_REQUEST,
+    )
+
+
+def _encode_done_sse() -> str:
+    """Encode the assistant-facing terminal SSE frame."""
+    return "event: done\ndata: [DONE]\n\n"
 
 
 @router.post("/sessions", response_model=CreateSessionResponse, status_code=status.HTTP_201_CREATED)
@@ -620,6 +893,7 @@ async def post_message(
                 cust_id=resolved_cust_id,
                 content=request.content or "",
                 serializer=serializer,
+                assistant_protocol=request.uses_assistant_protocol,
                 router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
@@ -636,6 +910,7 @@ async def post_message(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
+                assistant_protocol=request.uses_assistant_protocol,
                 router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
@@ -663,11 +938,31 @@ async def post_message(
             },
         ) from exc
     except ValueError as exc:
+        if request.uses_assistant_protocol:
+            return AssistantOutputResponse(
+                ok=False,
+                output=_assistant_bad_request_output(str(exc)),
+            )
         raise RouterApiException(
             status_code=400,
             code=RouterErrorCode.ROUTER_BAD_REQUEST,
             message=str(exc),
         ) from exc
+    except Exception as exc:
+        if request.uses_assistant_protocol:
+            return AssistantOutputResponse(
+                ok=False,
+                output=_assistant_output_template(
+                    status="failed",
+                    completion_state=2,
+                    completion_reason="router_error",
+                    node_id="end",
+                    handover_reason="failed",
+                    message=str(exc),
+                    error_code=RouterErrorCode.ROUTER_INTERNAL_ERROR,
+                ),
+            )
+        raise
     return SessionSnapshotResponse(snapshot=snapshot)
 
 
@@ -784,6 +1079,7 @@ async def post_message_stream(
 ) -> StreamingResponse:
     """Execute one message turn while streaming router events over SSE."""
     resolved_cust_id = _resolve_message_cust_id(orchestrator, session_id, request)
+    upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(request.config_variables)
 
     async def event_generator():
         """Yield SSE frames for the message processing lifecycle."""
@@ -796,12 +1092,13 @@ async def post_message_stream(
                 session_id=session_id,
                 cust_id=resolved_cust_id,
                 content=request.content or "",
+                assistant_protocol=request.uses_assistant_protocol,
                 router_only=request.execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 guided_selection=request.guided_selection,
                 recommendation_context=request.recommendation_context,
                 proactive_recommendation=request.proactive_recommendation,
-                upstream_config_variables=_split_upstream_config_variables(request.config_variables)[0],
-                upstream_slots_data=_split_upstream_config_variables(request.config_variables)[1],
+                upstream_config_variables=upstream_config_variables,
+                upstream_slots_data=upstream_slots_data,
                 return_snapshot=False,
                 emit_events=True,
             )
@@ -811,11 +1108,44 @@ async def post_message_stream(
                 if await http_request.is_disconnected():
                     break
                 if processing_task.done() and queue.empty():
-                    await processing_task
+                    try:
+                        await processing_task
+                    except LLMServiceUnavailableError as exc:
+                        if request.uses_assistant_protocol:
+                            yield _encode_sse("message", _assistant_llm_unavailable_output(exc))
+                            break
+                        raise
+                    except ValueError as exc:
+                        if request.uses_assistant_protocol:
+                            yield _encode_sse("message", _assistant_bad_request_output(str(exc)))
+                            break
+                        raise
+                    except Exception as exc:
+                        if request.uses_assistant_protocol:
+                            yield _encode_sse(
+                                "message",
+                                _assistant_output_template(
+                                    status="failed",
+                                    completion_state=2,
+                                    completion_reason="router_error",
+                                    node_id="end",
+                                    handover_reason="failed",
+                                    message=str(exc),
+                                    error_code=RouterErrorCode.ROUTER_INTERNAL_ERROR,
+                                ),
+                            )
+                            break
+                        raise
                     break
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
+                    continue
+                if request.uses_assistant_protocol:
+                    payload = _assistant_output_from_event(event)
+                    if payload is None:
+                        continue
+                    yield _encode_sse("message", payload)
                     continue
                 yield _encode_sse(event.event, event.model_dump(mode="json"))
         finally:
@@ -824,6 +1154,8 @@ async def post_message_stream(
                 processing_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await processing_task
+            if request.uses_assistant_protocol and not await http_request.is_disconnected():
+                yield _encode_done_sse()
 
     return StreamingResponse(
         event_generator(),

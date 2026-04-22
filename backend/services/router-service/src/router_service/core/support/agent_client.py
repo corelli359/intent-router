@@ -397,10 +397,23 @@ class StreamingAgentClient:
             normalized_output.update(chunk_payload)
         if isinstance(slot_memory, dict):
             normalized_output["slot_memory"] = dict(task.slot_memory)
-        for key in ("isHandOver", "handOverReason", "data", "status", "event"):
+        for key in (
+            "node_id",
+            "isHandOver",
+            "handOverReason",
+            "data",
+            "status",
+            "event",
+            "completion_state",
+            "completion_reason",
+        ):
             value = payload.get(key)
             if value is not None:
                 normalized_output[key] = value
+        resolved_node_id = self._resolved_node_id(payload)
+        if resolved_node_id is not None:
+            normalized_output.setdefault("node_id", resolved_node_id)
+        normalized_output.setdefault("intent_code", task.intent_code)
 
         ishandover = payload.get("ishandover")
         if not isinstance(ishandover, bool):
@@ -434,6 +447,16 @@ class StreamingAgentClient:
         normalized = dict(payload)
         normalized.update(nested_output)
         return normalized
+
+    def _resolved_node_id(self, payload: dict[str, Any]) -> str | None:
+        """Resolve the agent node id from either flat or legacy nested payloads."""
+        direct_value = payload.get("node_id")
+        if direct_value not in (None, ""):
+            return str(direct_value)
+        nested_value = self._get_nested_payload_value(payload, "additional_kwargs.node_id")
+        if nested_value not in (None, ""):
+            return str(nested_value)
+        return None
 
     def _payload_content(self, payload: dict[str, Any]) -> str:
         """Resolve the human-facing content field across old and new agent payloads."""

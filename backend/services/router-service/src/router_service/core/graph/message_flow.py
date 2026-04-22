@@ -138,6 +138,7 @@ class GraphMessageFlow:
         cust_id: str,
         content: str,
         *,
+        assistant_protocol: bool = False,
         router_only: bool = False,
         guided_selection: GuidedSelectionPayload | None = None,
         recommendation_context: RecommendationContextPayload | None = None,
@@ -192,7 +193,12 @@ class GraphMessageFlow:
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 if session.pending_graph is not None and session.pending_graph.status == GraphStatus.WAITING_CONFIRMATION:
-                    await self.handle_pending_graph_turn(session, message_content, emit_events=emit_events)
+                    await self.handle_pending_graph_turn(
+                        session,
+                        message_content,
+                        assistant_protocol=assistant_protocol,
+                        emit_events=emit_events,
+                    )
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 waiting_node = self.get_waiting_node(session)
@@ -201,6 +207,7 @@ class GraphMessageFlow:
                         session,
                         waiting_node,
                         message_content,
+                        assistant_protocol=assistant_protocol,
                         emit_events=emit_events,
                     )
                     return self.snapshot_session(session.session_id) if return_snapshot else None
@@ -208,6 +215,7 @@ class GraphMessageFlow:
                 await self.route_new_message(
                     session,
                     message_content,
+                    assistant_protocol=assistant_protocol,
                     recommendation_context=recommendation_context,
                     emit_events=emit_events,
                 )
@@ -325,6 +333,7 @@ class GraphMessageFlow:
         session: GraphSessionState,
         content: str,
         *,
+        assistant_protocol: bool = False,
         recognition: Any | None = None,
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
@@ -364,6 +373,12 @@ class GraphMessageFlow:
             graph = compile_result.graph
             if compile_result.no_match or graph is None:
                 await self.state_sync.publish_no_match_hint(session)
+                return
+            if graph.status == GraphStatus.WAITING_CONFIRMATION and assistant_protocol and len(graph.nodes) > 1:
+                self._attach_business(session, graph, pending=False)
+                self.activate_graph(graph)
+                await self.state_sync.publish_graph_state(session, "graph.created", "已创建执行图")
+                await self.drain_graph(session, graph.source_message)
                 return
             if graph.status == GraphStatus.WAITING_CONFIRMATION:
                 graph.touch(GraphStatus.WAITING_CONFIRMATION)
@@ -447,6 +462,7 @@ class GraphMessageFlow:
         session: GraphSessionState,
         content: str,
         *,
+        assistant_protocol: bool = False,
         emit_events: bool = False,
     ) -> None:
         """Interpret a turn while a proposed graph is waiting for confirmation."""
@@ -479,6 +495,7 @@ class GraphMessageFlow:
                 await self.route_new_message(
                     session,
                     content,
+                    assistant_protocol=assistant_protocol,
                     recognition=turn_result.recognition,
                     recent_messages=[],
                     long_term_memory=[],
@@ -493,6 +510,7 @@ class GraphMessageFlow:
         waiting_node: GraphNodeState,
         content: str,
         *,
+        assistant_protocol: bool = False,
         emit_events: bool = False,
     ) -> None:
         """Interpret a turn while the current node is blocked on user input."""
@@ -533,6 +551,7 @@ class GraphMessageFlow:
                 await self.route_new_message(
                     session,
                     content,
+                    assistant_protocol=assistant_protocol,
                     recognition=turn_result.recognition,
                     recent_messages=[],
                     long_term_memory=[],
