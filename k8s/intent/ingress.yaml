@@ -31,6 +31,13 @@ spec:
                 name: intent-admin-api
                 port:
                   number: 8000
+          - path: /api/assistant
+            pathType: Prefix
+            backend:
+              service:
+                name: intent-assistant-service
+                port:
+                  number: 8000
           - path: /admin
             pathType: Prefix
             backend:
