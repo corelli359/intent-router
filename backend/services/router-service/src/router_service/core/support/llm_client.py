@@ -91,26 +91,13 @@ class IntentRecognitionPayload(BaseModel):
         """Normalize alternate top-level list keys returned by different prompts/models."""
         if isinstance(value, list):
             return {"matches": value}
-        if isinstance(value, dict):
-            if "matches" in value:
-                candidate = value.get("matches")
-                if isinstance(candidate, dict):
-                    normalized = dict(value)
-                    normalized["matches"] = [candidate]
-                    return normalized
-                return value
-            for key in ("intents", "results", "items", "intent", "match"):
+        if isinstance(value, dict) and "matches" not in value:
+            for key in ("intents", "results", "items"):
                 candidate = value.get(key)
                 if isinstance(candidate, list):
                     normalized = dict(value)
                     normalized["matches"] = candidate
                     return normalized
-                if isinstance(candidate, dict):
-                    normalized = dict(value)
-                    normalized["matches"] = [candidate]
-                    return normalized
-            if "intent_code" in value:
-                return {"matches": [value]}
         return value
 
 
