@@ -5,6 +5,8 @@
 - `v3/router-service-需求说明文档.md`
 - `v3/router-service-功能说明文档.md`
 - `v3/router-service-架构设计文档.md`
+- `v3/router-service-通信协议规范.md`
+- `v3/router-service-流式协议补充草案.md`
 - `v3/router-service-LLM架构定位说明.md`
 - `v3/router-service-用户故事文档.md`
 - `v3/router-service-用户旅程文档.md`
@@ -24,10 +26,13 @@
 目录说明：
 
 - `v3/`
-  本轮对齐产出的需求、功能、架构、用户故事、用户旅程文档。
+  当前生效的主文档目录，只保留最新版本。
 
 - `v2/`
   既有方案、评审、调研、回归和历史设计文档。
+
+- `archive/v3-history/`
+  从 `v3/` 归档出的历史版本、阶段性方案和被后续版本替代的协议稿。
 
 - `archive/legacy-notes/`
   历史执行记录、评审和阶段性修复计划。
