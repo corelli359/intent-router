@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections.abc import AsyncIterator
+import logging
 from typing import Any, Protocol
 
 import httpx
@@ -8,6 +9,7 @@ from router_service.core.shared.domain import AgentStreamChunk, Task, TaskStatus
 from router_service.core.support.json_codec import JSONDecodeError, json_dumps, json_loads
 
 MISSING = object()
+logger = logging.getLogger(__name__)
 
 
 class AgentPayloadParseError(ValueError):
@@ -262,10 +264,27 @@ class StreamingAgentClient:
         try:
             payload = self.payload_builder.build(task, user_input)
         except ValueError as exc:
+            logger.error(
+                "Agent request payload build failed (session_id=%s, task_id=%s, intent_code=%s, agent_url=%s): %s",
+                task.session_id,
+                task.task_id,
+                task.intent_code,
+                task.agent_url,
+                exc,
+            )
             yield self._failure_chunk(task, str(exc))
             return
 
         emitted_chunk = False
+        logger.debug(
+            "Agent request started (session_id=%s, task_id=%s, intent_code=%s, agent_url=%s, payload_keys=%s, user_input_chars=%s)",
+            task.session_id,
+            task.task_id,
+            task.intent_code,
+            task.agent_url,
+            ",".join(sorted(payload.keys())),
+            len(user_input),
+        )
         try:
             async with self.http_client.stream(
                 "POST",
@@ -274,9 +293,22 @@ class StreamingAgentClient:
                 headers={"Accept": "text/event-stream, application/x-ndjson, application/json"},
             ) as response:
                 if response.status_code >= 400:
+                    response_body = await response.aread()
+                    response_preview = response_body.decode("utf-8", errors="replace").strip()
+                    if len(response_preview) > 500:
+                        response_preview = response_preview[:500] + "..."
+                    logger.error(
+                        "Agent HTTP request failed (session_id=%s, task_id=%s, intent_code=%s, agent_url=%s, status_code=%s, body=%s)",
+                        task.session_id,
+                        task.task_id,
+                        task.intent_code,
+                        task.agent_url,
+                        response.status_code,
+                        response_preview,
+                    )
                     yield self._failure_chunk(
                         task,
-                        f"Agent HTTP request failed with status {response.status_code}: {await response.aread()}",
+                        f"Agent HTTP request failed with status {response.status_code}: {response_body}",
                     )
                     return
 
@@ -315,13 +347,35 @@ class StreamingAgentClient:
                         emitted_chunk = True
                         yield chunk
         except AgentPayloadParseError as exc:
+            logger.error(
+                "Agent response parse failed (session_id=%s, task_id=%s, intent_code=%s, agent_url=%s): %s",
+                task.session_id,
+                task.task_id,
+                task.intent_code,
+                task.agent_url,
+                exc,
+            )
             yield self._failure_chunk(task, str(exc))
             return
         except Exception as exc:
+            logger.exception(
+                "Agent HTTP request raised exception (session_id=%s, task_id=%s, intent_code=%s, agent_url=%s)",
+                task.session_id,
+                task.task_id,
+                task.intent_code,
+                task.agent_url,
+            )
             yield self._failure_chunk(task, f"Agent HTTP request failed: {exc}")
             return
 
         if not emitted_chunk:
+            logger.error(
+                "Agent returned no stream events (session_id=%s, task_id=%s, intent_code=%s, agent_url=%s)",
+                task.session_id,
+                task.task_id,
+                task.intent_code,
+                task.agent_url,
+            )
             yield self._failure_chunk(task, "Agent returned no stream events")
 
     async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
@@ -392,32 +446,13 @@ class StreamingAgentClient:
         if isinstance(slot_memory, dict):
             normalized_payload.setdefault("slot_memory", dict(task.slot_memory))
 
-        normalized_output: dict[str, Any] = {}
-        if isinstance(chunk_payload, dict):
-            normalized_output.update(chunk_payload)
-        if isinstance(slot_memory, dict):
-            normalized_output["slot_memory"] = dict(task.slot_memory)
-        for key in (
-            "node_id",
-            "message",
-            "content",
-            "isHandOver",
-            "handOverReason",
-            "data",
-            "event",
-            "completion_state",
-            "completion_reason",
-        ):
-            value = payload.get(key)
-            if value is not None:
-                normalized_output[key] = value
-        resolved_node_id = self._resolved_node_id(payload)
-        if resolved_node_id is not None:
-            normalized_output.setdefault("node_id", resolved_node_id)
-        normalized_output.setdefault("intent_code", task.intent_code)
-
-        explicit_completion_state = self._completion_state(payload.get("completion_state"))
-        ishandover = payload.get("ishandover")
+        normalized_output = self._normalized_agent_output(payload)
+        explicit_completion_state = self._completion_state(normalized_output.get("completion_state"))
+        ishandover = normalized_output.get("ishandover")
+        if not isinstance(ishandover, bool):
+            ishandover = normalized_output.get("isHandOver")
+        if not isinstance(ishandover, bool):
+            ishandover = payload.get("ishandover")
         if not isinstance(ishandover, bool):
             ishandover = payload.get("isHandOver")
         status = self._resolve_status(explicit_completion_state)
@@ -426,8 +461,8 @@ class StreamingAgentClient:
 
         return AgentStreamChunk(
             task_id=task.task_id,
-            event=str(payload.get("event") or ("final" if ishandover else "message")),
-            content=self._payload_content(payload),
+            event=str(payload.get("event") or normalized_output.get("event") or ("final" if ishandover else "message")),
+            content=self._payload_content(normalized_output if normalized_output else payload),
             ishandover=ishandover,
             status=status,
             payload=normalized_payload,
@@ -435,18 +470,44 @@ class StreamingAgentClient:
         )
 
     def _normalized_agent_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Flatten legacy nested output wrappers into the primary payload dict."""
-        nested_output = self._get_nested_payload_value(payload, "additional_kwargs.node_output.output")
-        if isinstance(nested_output, str):
+        """Flatten supported agent output wrappers into the primary payload dict."""
+        normalized = self._merge_output_wrapper(payload, payload.get("output"))
+        nested_output = self._get_nested_payload_value(normalized, "additional_kwargs.node_output.output")
+        return self._merge_output_wrapper(normalized, nested_output)
+
+    def _merge_output_wrapper(self, payload: dict[str, Any], raw_output: Any) -> dict[str, Any]:
+        """Promote one nested output wrapper while keeping explicit outer transport fields."""
+        decoded_output = self._decoded_output_wrapper(raw_output)
+        if decoded_output is None:
+            return dict(payload)
+
+        merged = dict(decoded_output)
+        for key, value in payload.items():
+            if key == "output":
+                continue
+            merged[key] = value
+        return merged
+
+    def _decoded_output_wrapper(self, raw_output: Any) -> dict[str, Any] | None:
+        """Decode a wrapped output object when the downstream agent nests its business fields."""
+        if isinstance(raw_output, str):
             try:
-                nested_output = json_loads(nested_output)
+                raw_output = json_loads(raw_output)
             except JSONDecodeError:
-                return payload
-        if not isinstance(nested_output, dict):
-            return payload
-        normalized = dict(payload)
-        normalized.update(nested_output)
-        return normalized
+                return None
+        if not isinstance(raw_output, dict):
+            return None
+        return dict(raw_output)
+
+    def _normalized_agent_output(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Build the nested agent output block while stripping router-owned fields."""
+        normalized_output = dict(payload)
+        normalized_output.pop("additional_kwargs", None)
+        normalized_output.pop("slot_memory", None)
+        resolved_node_id = self._resolved_node_id(payload)
+        if resolved_node_id is not None:
+            normalized_output.setdefault("node_id", resolved_node_id)
+        return normalized_output
 
     def _resolved_node_id(self, payload: dict[str, Any]) -> str | None:
         """Resolve the agent node id from either flat or legacy nested payloads."""

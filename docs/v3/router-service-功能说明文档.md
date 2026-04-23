@@ -61,8 +61,7 @@ Router 当前可归纳为 9 组功能：
 
 1. `POST /api/router/sessions/{session_id}/messages`
 2. `POST /api/router/v2/sessions/{session_id}/messages`
-3. `POST /api/router/sessions/{session_id}/messages/stream`
-4. `POST /api/router/v2/sessions/{session_id}/messages/stream`
+3. `POST /api/v1/message`
 
 能力：
 
@@ -71,7 +70,7 @@ Router 当前可归纳为 9 组功能：
 3. 提交 `recommendationContext`
 4. 提交 `proactiveRecommendation`
 5. 选择 `executionMode=execute|router_only`
-6. 选择同步返回快照或流式返回 SSE 事件
+6. 生产 SSE 主链路统一走 `/api/v1/message` + `stream=true`
 
 ### 3.4 动作接口
 
@@ -104,7 +103,7 @@ flowchart LR
     create["POST /sessions"]
     snapshot["GET /sessions/{id}"]
     message["POST /sessions/{id}/messages"]
-    stream["POST /sessions/{id}/messages/stream"]
+    stream["POST /api/v1/message"]
     action["POST /sessions/{id}/actions"]
     events["GET /sessions/{id}/events"]
     router["router-service runtime"]
@@ -194,18 +193,19 @@ POST /sessions/{id}/messages
 ### 6.2 流式消息主链
 
 ```text
-POST /sessions/{id}/messages/stream
-  -> sessions.py::post_message_stream
+POST /api/v1/message (stream=true)
+  -> sessions.py::post_protocol_message
+  -> _assistant_message_stream_response(...)
   -> EventBroker.register(session_id)
   -> asyncio.create_task(orchestrator.handle_user_message(..., emit_events=True))
   -> broker queue 持续消费事件
-  -> SSE 输出
+  -> SSE 输出 assistant-facing message 帧
 ```
 
 两者核心区别：
 
 1. 非流式：`emit_events=False`，直接返回最终快照。
-2. 流式：`emit_events=True`，中间 recognition / graph builder / graph / node 事件都会进入 broker。
+2. 流式：`emit_events=True`，由 `/api/v1/message` 统一对外输出上游协议。
 
 ### 6.3 串行保护与入口预处理
 

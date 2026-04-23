@@ -130,33 +130,30 @@ def assert_assistant_response_shape(response: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(response.get("ok"), bool):
         raise AssertionError(f"assistant protocol requires top-level boolean ok: {response}")
 
-    output = response.get("output")
-    if not isinstance(output, dict):
-        raise AssertionError(f"assistant protocol requires top-level object output: {response}")
-
     required_fields = [
         "current_task",
         "task_list",
         "completion_state",
         "completion_reason",
-        "node_id",
         "intent_code",
         "status",
-        "isHandOver",
-        "handOverReason",
         "message",
-        "data",
         "slot_memory",
+        "output",
     ]
-    missing = [field for field in required_fields if field not in output]
+    missing = [field for field in required_fields if field not in response]
     if missing:
-        raise AssertionError(f"assistant output missing fields {missing}: {response}")
-    if not isinstance(output["task_list"], list):
-        raise AssertionError(f"assistant output task_list must be a list: {response}")
-    if not isinstance(output["completion_state"], int):
-        raise AssertionError(f"assistant output completion_state must be an int: {response}")
+        raise AssertionError(f"assistant response missing fields {missing}: {response}")
+    if not isinstance(response["task_list"], list):
+        raise AssertionError(f"assistant response task_list must be a list: {response}")
+    if not isinstance(response["completion_state"], int):
+        raise AssertionError(f"assistant response completion_state must be an int: {response}")
+    if not isinstance(response["slot_memory"], dict):
+        raise AssertionError(f"assistant response slot_memory must be an object: {response}")
+    if not isinstance(response["output"], dict):
+        raise AssertionError(f"assistant response output must be an object: {response}")
 
-    return output
+    return response
 
 
 def print_turn_summary(turn_name: str, output: dict[str, Any]) -> None:
@@ -169,6 +166,7 @@ def print_turn_summary(turn_name: str, output: dict[str, Any]) -> None:
         "message": output.get("message"),
         "slot_memory": output.get("slot_memory"),
         "task_list": output.get("task_list"),
+        "agent_output": output.get("output"),
     }
     print_block(f"{turn_name}.summary", summary)
 

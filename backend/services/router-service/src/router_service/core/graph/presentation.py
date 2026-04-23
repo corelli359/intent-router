@@ -118,7 +118,7 @@ class GraphSnapshotPresenter:
 
     def node_payload(self, node: GraphNodeState) -> dict[str, Any]:
         """Serialize one node into the API/SSE payload shape."""
-        return {
+        payload = {
             "node_id": node.node_id,
             "intent_code": node.intent_code,
             "title": node.title,
@@ -137,6 +137,11 @@ class GraphSnapshotPresenter:
             "output_payload": dict(node.output_payload),
             "updated_at": node.updated_at.isoformat(),
         }
+        completion_override = node.completion_override()
+        if completion_override is not None:
+            payload["completion_state"] = completion_override[0]
+            payload["completion_reason"] = completion_override[1]
+        return payload
 
     def graph_interaction(self, graph: ExecutionGraphState, *, pending: bool) -> dict[str, Any]:
         """Build the frontend-oriented interaction payload for one graph card."""

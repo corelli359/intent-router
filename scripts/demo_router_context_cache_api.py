@@ -92,13 +92,13 @@ def _completion_payload(*, task_id: str, completion_signal: int) -> dict[str, An
 def _output(response: dict[str, Any]) -> dict[str, Any]:
     if response.get("ok") is not True:
         raise AssertionError(f"expected ok=true, got: {response}")
-    output = response.get("output")
-    if not isinstance(output, dict):
-        raise AssertionError(f"expected output object, got: {response}")
-    slot_memory = output.get("slot_memory")
+    slot_memory = response.get("slot_memory")
     if not isinstance(slot_memory, dict):
-        raise AssertionError(f"expected output.slot_memory object, got: {response}")
-    return output
+        raise AssertionError(f"expected slot_memory object, got: {response}")
+    nested_output = response.get("output")
+    if not isinstance(nested_output, dict):
+        raise AssertionError(f"expected output object, got: {response}")
+    return response
 
 
 def _print_block(title: str, payload: dict[str, Any]) -> None:

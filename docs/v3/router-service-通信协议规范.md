@@ -719,7 +719,7 @@ sequenceDiagram
 以下能力当前仍未达到 v0.3 “完整协议支持”：
 
 1. `assistant-service` 尚无面向上游的 SSE 入口；
-2. Router `/messages/stream` 当前输出的是 **Router TaskEvent 事件流**，不是 v0.3 面向上游约定的业务 `ok + output` SSE 回传协议；
+2. 旧的 session 级 `/messages/stream` 调试入口已移除；生产 SSE 统一走 `POST /api/v1/message` + `stream=true`；
 3. 文档中“子智能体 SSE -> Router -> 上游 SSE 回传”的完整闭环，目前还未在生产协议层打通；
 4. 多意图的生产输出协议仍待后续讨论，不属于当前开放范围。
 

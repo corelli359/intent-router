@@ -50,8 +50,15 @@ def test_assistant_service_forwards_non_stream_request_to_router() -> None:
             received["payload"] = payload
             return {
                 "ok": True,
+                "current_task": "task_001",
+                "task_list": [{"name": "task_001", "status": "completed"}],
+                "status": "completed",
+                "intent_code": "AG_TRANS",
+                "completion_state": 2,
+                "completion_reason": "agent_final_done",
+                "slot_memory": {"payee_name": "小明", "amount": "200"},
+                "message": "执行图已完成",
                 "output": {
-                    "intent_code": "AG_TRANS",
                     "isHandOver": True,
                     "data": [{"answer": "||200|小明|"}],
                 },
@@ -89,8 +96,15 @@ def test_assistant_service_forwards_non_stream_request_to_router() -> None:
         assert response.status_code == 200
         assert response.json() == {
             "ok": True,
+            "current_task": "task_001",
+            "task_list": [{"name": "task_001", "status": "completed"}],
+            "status": "completed",
+            "intent_code": "AG_TRANS",
+            "completion_state": 2,
+            "completion_reason": "agent_final_done",
+            "slot_memory": {"payee_name": "小明", "amount": "200"},
+            "message": "执行图已完成",
             "output": {
-                "intent_code": "AG_TRANS",
                 "isHandOver": True,
                 "data": [{"answer": "||200|小明|"}],
             },
@@ -261,20 +275,21 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
         assert waiting.status_code == 200
         waiting_body = waiting.json()
         assert waiting_body["ok"] is True
-        assert waiting_body["output"]["status"] == "waiting_user_input"
-        assert waiting_body["output"]["completion_state"] == 0
-        assert waiting_body["output"]["current_task"] == "AG_TRANS#0"
-        assert waiting_body["output"]["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
-        assert waiting_body["output"]["slot_memory"] == {"payee_name": "小明"}
+        assert waiting_body["status"] == "waiting_user_input"
+        assert waiting_body["completion_state"] == 0
+        assert waiting_body["current_task"] == "AG_TRANS#0"
+        assert waiting_body["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
+        assert waiting_body["slot_memory"] == {"payee_name": "小明"}
+        assert waiting_body["output"] == {}
 
         assert completed.status_code == 200
         completed_body = completed.json()
         assert completed_body["ok"] is True
-        assert completed_body["output"]["status"] == "completed"
-        assert completed_body["output"]["completion_state"] == 2
-        assert completed_body["output"]["completion_reason"] == "agent_final_done"
-        assert completed_body["output"]["intent_code"] == "AG_TRANS"
-        assert completed_body["output"]["message"] == "执行图已完成"
+        assert completed_body["status"] == "completed"
+        assert completed_body["completion_state"] == 2
+        assert completed_body["completion_reason"] == "agent_final_done"
+        assert completed_body["intent_code"] == "AG_TRANS"
+        assert completed_body["message"] == "执行图已完成"
         assert completed_body["output"]["data"] == [
             {
                 "isSubAgent": "True",
@@ -282,8 +297,8 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
                 "answer": "||200|小明|",
             }
         ]
-        assert completed_body["output"]["task_list"] == [
-            {"name": completed_body["output"]["current_task"], "status": "completed"}
+        assert completed_body["task_list"] == [
+            {"name": completed_body["current_task"], "status": "completed"}
         ]
         assert len(agent_client.tasks) == 1
         assert agent_client.tasks[0].input_context["config_variables"] == {
@@ -366,6 +381,7 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
         assert waiting_payload["completion_state"] == 0
         assert waiting_payload["current_task"] == "AG_TRANS#0"
         assert waiting_payload["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
+        assert waiting_payload["output"] == {}
 
         completed_frames = _parse_sse_frames(completed_text)
         assert completed_frames[-1] == ("done", "[DONE]")
@@ -374,8 +390,9 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
         assert completed_payload["status"] == "completed"
         assert completed_payload["completion_state"] == 2
         assert completed_payload["completion_reason"] == "agent_final_done"
-        assert completed_payload["message"] == "已向小明转账 200 CNY，转账成功"
-        assert completed_payload["data"][0]["answer"] == "||200|小明|"
+        assert completed_payload["message"] == "执行图已完成"
+        assert completed_payload["output"]["message"] == "已向小明转账 200 CNY，转账成功"
+        assert completed_payload["output"]["data"][0]["answer"] == "||200|小明|"
         assert completed_payload["task_list"] == [
             {"name": completed_payload["current_task"], "status": "completed"}
         ]

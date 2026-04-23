@@ -17,14 +17,14 @@ Use cases:
 
 This script talks to router-service directly and does not call assistant-service.
 
-By default it sends the assistant-facing request envelope directly to router, so
-the returned SSE frames follow the minimal draft contract:
+This script only uses the production router SSE entry:
+
+    POST /api/v1/message
+
+The returned SSE frames follow the assistant-facing contract:
 
     event: message
-    data: {...minimal output...}
-
-If you really need the router internal event stream for debugging, set
-`protocol="raw"` when calling `run_one_turn(...)` or `run_one_turn_live(...)`.
+    data: {...assistant output...}
 """
 
 from __future__ import annotations
@@ -34,10 +34,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Iterator, Literal
-
-
-ProtocolMode = Literal["assistant", "raw"]
+from typing import Any, Iterator
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +46,6 @@ CUST_ID = "C0001"
 SESSION_ID = f"router_stream_{int(time.time())}"
 EXECUTION_MODE = "execute"  # "execute" or "router_only"
 TIMEOUT_SECONDS = 300
-DEFAULT_PROTOCOL: ProtocolMode = "assistant"
-
 # Turn 1 / Turn 2 demo for "single intent + slot fill + agent"
 TURN_1_TEXT = "给小明转账"
 TURN_1_CURRENT_DISPLAY = "transfer_page"
@@ -77,11 +72,9 @@ def create_session_url(base_url: str = ROUTER_BASE_URL) -> str:
 def router_stream_url(
     session_id: str,
     base_url: str = ROUTER_BASE_URL,
-    protocol: ProtocolMode = DEFAULT_PROTOCOL,
 ) -> str:
-    if protocol == "assistant":
-        return f"{base_url.rstrip('/')}/api/v1/message"
-    return f"{base_url.rstrip('/')}/api/router/v2/sessions/{session_id}/messages/stream"
+    del session_id
+    return f"{base_url.rstrip('/')}/api/v1/message"
 
 
 def router_snapshot_url(session_id: str, base_url: str = ROUTER_BASE_URL) -> str:
@@ -165,19 +158,6 @@ def build_assistant_payload(
     }
 
 
-def build_raw_payload(
-    *,
-    txt: str,
-    cust_id: str = CUST_ID,
-    execution_mode: str = EXECUTION_MODE,
-) -> dict[str, Any]:
-    return {
-        "content": txt,
-        "cust_id": cust_id,
-        "execution_mode": execution_mode,
-    }
-
-
 def build_payload(
     *,
     session_id: str,
@@ -187,25 +167,16 @@ def build_payload(
     execution_mode: str = EXECUTION_MODE,
     agent_session_id: str | None = None,
     slots_data: dict[str, Any] | None = None,
-    protocol: ProtocolMode = DEFAULT_PROTOCOL,
 ) -> dict[str, Any]:
-    if protocol == "assistant":
-        return build_assistant_payload(
-            session_id=session_id,
-            txt=txt,
-            current_display=current_display,
-            cust_id=cust_id,
-            execution_mode=execution_mode,
-            agent_session_id=agent_session_id,
-            slots_data=slots_data,
-        )
-    if protocol == "raw":
-        return build_raw_payload(
-            txt=txt,
-            cust_id=cust_id,
-            execution_mode=execution_mode,
-        )
-    raise ValueError(f"unsupported protocol: {protocol}")
+    return build_assistant_payload(
+        session_id=session_id,
+        txt=txt,
+        current_display=current_display,
+        cust_id=cust_id,
+        execution_mode=execution_mode,
+        agent_session_id=agent_session_id,
+        slots_data=slots_data,
+    )
 
 
 def _post_stream(
@@ -313,7 +284,6 @@ def run_one_turn(
     execution_mode: str = EXECUTION_MODE,
     agent_session_id: str | None = None,
     slots_data: dict[str, Any] | None = None,
-    protocol: ProtocolMode = DEFAULT_PROTOCOL,
 ) -> list[SSEFrame]:
     payload = build_payload(
         session_id=session_id,
@@ -323,13 +293,12 @@ def run_one_turn(
         execution_mode=execution_mode,
         agent_session_id=agent_session_id,
         slots_data=slots_data,
-        protocol=protocol,
     )
     print("=== request ===")
-    print(f"POST {router_stream_url(session_id, base_url, protocol)}")
+    print(f"POST {router_stream_url(session_id, base_url)}")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     print()
-    frames = _post_stream(url=router_stream_url(session_id, base_url, protocol), payload=payload)
+    frames = _post_stream(url=router_stream_url(session_id, base_url), payload=payload)
     print("=== response frames ===")
     print_frames(frames)
     print()
@@ -346,7 +315,6 @@ def run_one_turn_live(
     execution_mode: str = EXECUTION_MODE,
     agent_session_id: str | None = None,
     slots_data: dict[str, Any] | None = None,
-    protocol: ProtocolMode = DEFAULT_PROTOCOL,
 ) -> list[SSEFrame]:
     payload = build_payload(
         session_id=session_id,
@@ -356,14 +324,13 @@ def run_one_turn_live(
         execution_mode=execution_mode,
         agent_session_id=agent_session_id,
         slots_data=slots_data,
-        protocol=protocol,
     )
     print("=== request ===")
-    print(f"POST {router_stream_url(session_id, base_url, protocol)}")
+    print(f"POST {router_stream_url(session_id, base_url)}")
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     print()
     print("=== live response frames ===", flush=True)
-    return print_live_frames(url=router_stream_url(session_id, base_url, protocol), payload=payload)
+    return print_live_frames(url=router_stream_url(session_id, base_url), payload=payload)
 
 
 def run_transfer_two_turn_demo(
@@ -373,7 +340,6 @@ def run_transfer_two_turn_demo(
     cust_id: str = CUST_ID,
     execution_mode: str = EXECUTION_MODE,
     create_new_session: bool = True,
-    protocol: ProtocolMode = DEFAULT_PROTOCOL,
 ) -> dict[str, Any]:
     """Run the standard two-turn transfer scenario directly against router SSE."""
     if create_new_session:
@@ -398,7 +364,6 @@ def run_transfer_two_turn_demo(
         cust_id=cust_id,
         execution_mode=execution_mode,
         agent_session_id=session_id,
-        protocol=protocol,
     )
     turn_2_frames = run_one_turn(
         session_id=session_id,
@@ -408,7 +373,6 @@ def run_transfer_two_turn_demo(
         cust_id=cust_id,
         execution_mode=execution_mode,
         agent_session_id=session_id,
-        protocol=protocol,
     )
     return {
         "session_id": session_id,

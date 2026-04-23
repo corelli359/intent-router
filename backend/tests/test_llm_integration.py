@@ -931,10 +931,10 @@ def test_streaming_agent_client_supports_sse_json_payloads() -> None:
         assert chunks[0].status == TaskStatus.COMPLETED
         assert chunks[0].ishandover is True
         assert chunks[0].payload == {"receipt_id": "txn_001"}
-        assert chunks[0].output["intent_code"] == "transfer_money"
         assert chunks[0].output["node_id"] == "end"
         assert chunks[0].output["completion_state"] == 2
         assert chunks[0].output["completion_reason"] == "agent_final_done"
+        assert chunks[0].output["payload"] == {"receipt_id": "txn_001"}
 
     asyncio.run(run())
 
@@ -1027,10 +1027,58 @@ def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> Non
             "slot_memory": {"payee_name": "小明", "amount": "200"},
         }
         assert task.slot_memory == {"payee_name": "小明", "amount": "200"}
-        assert chunks[0].output["intent_code"] == "transfer_money"
         assert chunks[0].output["node_id"] == "end"
         assert chunks[0].output["completion_state"] == 2
         assert chunks[0].output["completion_reason"] == "agent_final_done"
+        assert chunks[0].output["payload"] == {"receipt_id": "txn_123"}
+        assert "slot_memory" not in chunks[0].output
+
+    asyncio.run(run())
+
+
+def test_streaming_agent_client_normalizes_top_level_output_wrapper() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_output_wrapper",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream(
+                    [
+                        (
+                            'event: message\ndata: {"event":"message","output":{"node_id":"validate_payee",'
+                            '"message":"收款人校验通过","completion_state":0,"isHandOver":false,'
+                            '"data":[{"answer":"收款人校验通过"}],'
+                            '"slot_memory":{"payee_name":"小明","amount":"200"}}}\n\n'
+                        ).encode("utf-8"),
+                        b"event: done\ndata: [DONE]\n\n",
+                    ]
+                ),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "收款人校验通过"
+        assert chunks[0].status == TaskStatus.RUNNING
+        assert chunks[0].ishandover is False
+        assert chunks[0].payload == {"slot_memory": {"payee_name": "小明", "amount": "200"}}
+        assert task.slot_memory == {"payee_name": "小明", "amount": "200"}
+        assert chunks[0].output["node_id"] == "validate_payee"
+        assert chunks[0].output["message"] == "收款人校验通过"
+        assert chunks[0].output["completion_state"] == 0
+        assert chunks[0].output["data"] == [{"answer": "收款人校验通过"}]
+        assert "slot_memory" not in chunks[0].output
 
     asyncio.run(run())
 
@@ -1062,6 +1110,110 @@ def test_streaming_agent_client_reports_invalid_json_stream_payloads() -> None:
         assert "invalid JSON stream payload" in chunks[0].content
 
     asyncio.run(run())
+
+
+def test_streaming_agent_client_logs_http_error_details(caplog) -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_http_error",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(502, text='{"error":"bad gateway"}')
+
+        client_logger = logging.getLogger("router_service.core.support.agent_client")
+        original_handlers = list(client_logger.handlers)
+        original_level = client_logger.level
+        original_propagate = client_logger.propagate
+        client_logger.handlers = [caplog.handler]
+        client_logger.setLevel(logging.DEBUG)
+        client_logger.propagate = False
+        try:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+                client = StreamingAgentClient(http_client=http_client)
+                chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+        finally:
+            client_logger.handlers = original_handlers
+            client_logger.setLevel(original_level)
+            client_logger.propagate = original_propagate
+
+        assert len(chunks) == 1
+        assert chunks[0].status == TaskStatus.FAILED
+
+    asyncio.run(run())
+
+    assert "Agent request started" in caplog.text
+    assert "Agent HTTP request failed" in caplog.text
+    assert "status_code=502" in caplog.text
+    assert 'body={"error":"bad gateway"}' in caplog.text
+
+
+def test_streaming_agent_client_logs_parse_failures_and_empty_streams(caplog) -> None:
+    async def run() -> None:
+        invalid_task = Task(
+            session_id="session_invalid_stream_log",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+        empty_task = Task(
+            session_id="session_empty_stream_log",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        responses = iter(
+            [
+                httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    stream=_AsyncByteStream([b"data: not-json\n\n"]),
+                ),
+                httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    stream=_AsyncByteStream([b"data: [DONE]\n\n"]),
+                ),
+            ]
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return next(responses)
+
+        client_logger = logging.getLogger("router_service.core.support.agent_client")
+        original_handlers = list(client_logger.handlers)
+        original_level = client_logger.level
+        original_propagate = client_logger.propagate
+        client_logger.handlers = [caplog.handler]
+        client_logger.setLevel(logging.DEBUG)
+        client_logger.propagate = False
+        try:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+                client = StreamingAgentClient(http_client=http_client)
+                invalid_chunks = [chunk async for chunk in client.stream(invalid_task, "给小明转账 200 元")]
+                empty_chunks = [chunk async for chunk in client.stream(empty_task, "给小明转账 200 元")]
+        finally:
+            client_logger.handlers = original_handlers
+            client_logger.setLevel(original_level)
+            client_logger.propagate = original_propagate
+
+        assert invalid_chunks[0].status == TaskStatus.FAILED
+        assert empty_chunks[0].status == TaskStatus.FAILED
+
+    asyncio.run(run())
+
+    assert "Agent response parse failed" in caplog.text
+    assert "invalid JSON stream payload" in caplog.text
+    assert "Agent returned no stream events" in caplog.text
 
 
 def test_streaming_agent_client_reports_empty_streams() -> None:

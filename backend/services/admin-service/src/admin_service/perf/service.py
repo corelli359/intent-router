@@ -662,19 +662,16 @@ class PerfTestService:
         if not isinstance(payload, dict):
             return "message response is not a JSON object"
 
-        output = payload.get("output")
         if case.expectations.required_graph_status:
-            if not isinstance(output, dict):
-                return "message response does not include output"
-            actual_status = output.get("status")
+            actual_status = payload.get("status")
             if actual_status != case.expectations.required_graph_status:
                 return (
-                    f"expected output status {case.expectations.required_graph_status}, "
+                    f"expected status {case.expectations.required_graph_status}, "
                     f"got {actual_status!r}"
                 )
 
         if case.expectations.required_primary_intent_code:
-            primary_intent_code = self._extract_output_primary_intent_code(output)
+            primary_intent_code = self._extract_output_primary_intent_code(payload)
             if primary_intent_code != case.expectations.required_primary_intent_code:
                 return (
                     f"expected primary intent {case.expectations.required_primary_intent_code}, "
@@ -682,9 +679,9 @@ class PerfTestService:
                 )
 
         if case.expectations.required_slot_keys or case.expectations.required_slot_values:
-            slot_memory = self._extract_output_slot_memory(output=output)
+            slot_memory = self._extract_output_slot_memory(output=payload)
             if slot_memory is None:
-                return "message response does not include output.slot_memory"
+                return "message response does not include slot_memory"
             missing_keys = [
                 slot_key
                 for slot_key in case.expectations.required_slot_keys
@@ -700,7 +697,7 @@ class PerfTestService:
         required_fragments = case.expectations.required_message_contains
         if required_fragments:
             candidate_text = (
-                self._extract_output_message(output)
+                self._extract_output_message(payload)
                 or self._response_excerpt(response)
             )
             missing = [fragment for fragment in required_fragments if fragment not in candidate_text]
@@ -723,7 +720,16 @@ class PerfTestService:
         if not isinstance(output, dict):
             return ""
         content = output.get("message")
-        return content if isinstance(content, str) else ""
+        if isinstance(content, str):
+            return content
+        nested_output = output.get("output")
+        if not isinstance(nested_output, dict):
+            return ""
+        for key in ("message", "content"):
+            nested_value = nested_output.get(key)
+            if isinstance(nested_value, str):
+                return nested_value
+        return ""
 
     def _extract_output_primary_intent_code(self, output: Any) -> str | None:
         if not isinstance(output, dict):

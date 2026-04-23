@@ -55,20 +55,15 @@ class _StubOrchestrator:
             raise KeyError(task_id)
         return {
             "ok": True,
-            "output": {
-                "current_task": task_id,
-                "task_list": [{"name": task_id, "status": "completed"}],
-                "completion_state": 2,
-                "completion_reason": "assistant_final_done",
-                "node_id": "end",
-                "intent_code": "AG_TRANS",
-                "status": "completed",
-                "isHandOver": True,
-                "handOverReason": "completed",
-                "message": "执行图已完成",
-                "data": [],
-                "slot_memory": {},
-            },
+            "current_task": task_id,
+            "task_list": [{"name": task_id, "status": "completed"}],
+            "completion_state": 2,
+            "completion_reason": "assistant_final_done",
+            "intent_code": "AG_TRANS",
+            "status": "completed",
+            "message": "执行图已完成",
+            "slot_memory": {},
+            "output": {},
         }
 
 
@@ -80,32 +75,34 @@ def _app_with_stub_orchestrator() -> tuple[object, _StubOrchestrator]:
     return app, orchestrator
 
 
-def test_router_api_returns_structured_session_not_found_error() -> None:
+def test_legacy_router_session_endpoints_are_removed() -> None:
     async def run() -> None:
         app, _ = _app_with_stub_orchestrator()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",
         ) as client:
-            response = await client.get("/api/router/sessions/missing-session")
+            responses = [
+                await client.get("/api/router/sessions/missing-session"),
+                await client.post("/api/router/sessions", json={}),
+                await client.post("/api/router/sessions/session_demo/messages", json={"content": "帮我转账"}),
+                await client.post("/api/router/v2/sessions/session_demo/messages", json={"content": "帮我转账"}),
+                await client.post("/api/router/v2/sessions/session_demo/messages/stream", json={"txt": "帮我转账"}),
+            ]
 
-        assert response.status_code == 404
-        payload = response.json()
-        assert payload["ok"] is False
-        assert payload["error"]["code"] == "ROUTER_SESSION_NOT_FOUND"
-        assert payload["error"]["details"]["session_id"] == "missing-session"
+        assert all(response.status_code == 404 for response in responses)
 
     asyncio.run(run())
 
 
-def test_router_api_returns_structured_validation_error() -> None:
+def test_router_v1_message_returns_structured_validation_error() -> None:
     async def run() -> None:
         app, _ = _app_with_stub_orchestrator()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",
         ) as client:
-            response = await client.post("/api/router/sessions/session_demo/messages", json={})
+            response = await client.post("/api/v1/message", json={})
 
         assert response.status_code == 422
         payload = response.json()
@@ -114,7 +111,7 @@ def test_router_api_returns_structured_validation_error() -> None:
 
     asyncio.run(run())
 
-def test_router_execute_snapshot_includes_last_diagnostics() -> None:
+def test_router_v1_message_returns_output_envelope_without_snapshot() -> None:
     async def run() -> None:
         app, _ = _app_with_stub_orchestrator()
         async with httpx.AsyncClient(
@@ -122,34 +119,20 @@ def test_router_execute_snapshot_includes_last_diagnostics() -> None:
             base_url="http://testserver",
         ) as client:
             response = await client.post(
-                "/api/router/sessions/session_demo/messages",
-                json={"content": "帮我转账"},
-            )
-
-        assert response.status_code == 200
-        payload = response.json()["snapshot"]
-        assert payload["last_diagnostics"][0]["code"] == "SLOT_REQUIRED_MISSING"
-
-    asyncio.run(run())
-
-
-def test_router_execute_assistant_protocol_without_serialized_handler_returns_output_envelope() -> None:
-    async def run() -> None:
-        app, _ = _app_with_stub_orchestrator()
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
-        ) as client:
-            response = await client.post(
-                "/api/router/v2/sessions/session_demo/messages",
-                json={"txt": "帮我转账"},
+                "/api/v1/message",
+                json={
+                    "sessionId": "session_demo",
+                    "txt": "帮我转账",
+                    "stream": False,
+                },
             )
 
         assert response.status_code == 200
         payload = response.json()
         assert payload["ok"] is True
         assert "snapshot" not in payload
-        assert payload["output"]["status"] == "idle"
+        assert payload["status"] == "idle"
+        assert payload["output"] == {}
 
     asyncio.run(run())
 
@@ -174,7 +157,8 @@ def test_router_v1_message_non_stream_returns_output_without_snapshot() -> None:
         payload = response.json()
         assert payload["ok"] is True
         assert "snapshot" not in payload
-        assert payload["output"]["status"] == "idle"
+        assert payload["status"] == "idle"
+        assert payload["output"] == {}
 
     asyncio.run(run())
 
@@ -199,8 +183,9 @@ def test_router_v1_task_completion_returns_output_without_snapshot() -> None:
         payload = response.json()
         assert payload["ok"] is True
         assert "snapshot" not in payload
-        assert payload["output"]["current_task"] == "task_demo"
-        assert payload["output"]["completion_state"] == 2
+        assert payload["current_task"] == "task_demo"
+        assert payload["completion_state"] == 2
+        assert payload["output"] == {}
 
     asyncio.run(run())
 
@@ -247,13 +232,19 @@ def test_router_api_returns_structured_agent_barrier_error() -> None:
             base_url="http://testserver",
         ) as client:
             response = await client.post(
-                "/api/router/sessions/session_demo/messages",
-                json={"content": "帮我转账"},
+                "/api/v1/message",
+                json={
+                    "sessionId": "session_demo",
+                    "txt": "帮我转账",
+                    "stream": False,
+                },
             )
 
-        assert response.status_code == 503
+        assert response.status_code == 200
         payload = response.json()
         assert payload["ok"] is False
-        assert payload["error"]["code"] == "ROUTER_AGENT_BARRIER_TRIGGERED"
+        assert payload["status"] == "failed"
+        assert payload["errorCode"] == "ROUTER_AGENT_BARRIER_TRIGGERED"
+        assert payload["message"] == "ROUTER_AGENT_BARRIER_ENABLED=true blocked a real agent call"
 
     asyncio.run(run())

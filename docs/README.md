@@ -6,7 +6,7 @@
 - `v3/router-service-功能说明文档.md`
 - `v3/router-service-架构设计文档.md`
 - `v3/router-service-通信协议规范.md`
-- `v3/router-service-助手对接接口文档-v0.3.md`
+- `v3/router-service-助手对接接口文档-v0.4.md`
 - `v3/router-service-流式协议补充草案.md`
 - `v3/router-service-助手完成态回调接口设计-v0.3.md`
 - `v3/router-service-短期记忆现状与传递证明-v0.3.md`

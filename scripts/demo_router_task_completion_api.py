@@ -104,27 +104,25 @@ def assert_output_shape(response: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError(f"response must be a JSON object: {response!r}")
     if not isinstance(response.get("ok"), bool):
         raise AssertionError(f"response requires top-level boolean ok: {response}")
-    output = response.get("output")
-    if not isinstance(output, dict):
-        raise AssertionError(f"response requires top-level object output: {response}")
     required_fields = [
         "current_task",
         "task_list",
         "completion_state",
         "completion_reason",
-        "node_id",
         "intent_code",
         "status",
-        "isHandOver",
-        "handOverReason",
         "message",
-        "data",
         "slot_memory",
+        "output",
     ]
-    missing = [field for field in required_fields if field not in output]
+    missing = [field for field in required_fields if field not in response]
     if missing:
-        raise AssertionError(f"response output missing fields {missing}: {response}")
-    return output
+        raise AssertionError(f"response missing fields {missing}: {response}")
+    if not isinstance(response["slot_memory"], dict):
+        raise AssertionError(f"response slot_memory must be an object: {response}")
+    if not isinstance(response["output"], dict):
+        raise AssertionError(f"response output must be an object: {response}")
+    return response
 
 
 def _assert_turn_1(output: dict[str, Any], response: dict[str, Any]) -> None:

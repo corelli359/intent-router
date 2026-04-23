@@ -94,12 +94,13 @@ def _post_assistant_message(
     )
 
 
-def _output_kind(output: dict[str, Any]) -> str:
-    if isinstance(output.get("status"), str) and output.get("status") == "failed" and isinstance(output.get("errorCode"), str):
+def _output_kind(response: dict[str, Any]) -> str:
+    nested_output = response.get("output")
+    if isinstance(response.get("status"), str) and response.get("status") == "failed" and isinstance(response.get("errorCode"), str):
         return "failed"
-    if output.get("isHandOver") is True:
+    if isinstance(nested_output, dict) and nested_output.get("isHandOver") is True:
         return "handover"
-    if isinstance(output.get("status"), str) and isinstance(output.get("intent_code"), str):
+    if isinstance(response.get("status"), str) and isinstance(response.get("intent_code"), str):
         return "router_state"
     return "unknown"
 
@@ -110,9 +111,9 @@ def _ensure_assistant_response_shape(response: dict[str, Any]) -> dict[str, Any]
     if "snapshot" in response:
         raise AssertionError(f"assistant contract must not return snapshot: {response}")
     ok = response.get("ok")
-    output = response.get("output")
     if not isinstance(ok, bool):
         raise AssertionError(f"assistant contract requires top-level boolean ok, got: {response}")
+    output = response.get("output")
     if not isinstance(output, dict):
         raise AssertionError(f"assistant contract requires top-level object output, got: {response}")
     required_fields = [
@@ -120,78 +121,54 @@ def _ensure_assistant_response_shape(response: dict[str, Any]) -> dict[str, Any]
         "task_list",
         "completion_state",
         "completion_reason",
-        "node_id",
         "intent_code",
         "status",
-        "isHandOver",
-        "handOverReason",
         "message",
-        "data",
         "slot_memory",
+        "output",
     ]
-    missing = [field for field in required_fields if field not in output]
+    missing = [field for field in required_fields if field not in response]
     if missing:
-        raise AssertionError(f"assistant contract output missing fields {missing}: {response}")
-    if not isinstance(output.get("task_list"), list):
+        raise AssertionError(f"assistant contract response missing fields {missing}: {response}")
+    if not isinstance(response.get("task_list"), list):
         raise AssertionError(f"assistant contract task_list must be a list, got: {response}")
-    if not isinstance(output.get("completion_state"), int):
+    if not isinstance(response.get("completion_state"), int):
         raise AssertionError(f"assistant contract completion_state must be an int, got: {response}")
-    if not isinstance(output.get("completion_reason"), str):
+    if not isinstance(response.get("completion_reason"), str):
         raise AssertionError(f"assistant contract completion_reason must be a string, got: {response}")
-    if not isinstance(output.get("node_id"), str):
-        raise AssertionError(f"assistant contract node_id must be a string, got: {response}")
+    if not isinstance(response.get("slot_memory"), dict):
+        raise AssertionError(f"assistant contract slot_memory must be an object, got: {response}")
 
-    kind = _output_kind(output)
+    kind = _output_kind(response)
     if kind == "unknown":
         raise AssertionError(f"assistant output shape is not recognized: {response}")
 
     if kind == "router_state":
-        if not isinstance(output.get("message"), str):
+        if not isinstance(response.get("message"), str):
             raise AssertionError(f"router_state output requires string message, got: {response}")
-        if not isinstance(output.get("isHandOver"), bool):
-            raise AssertionError(f"router_state output requires boolean isHandOver, got: {response}")
-        if not isinstance(output.get("handOverReason"), str):
-            raise AssertionError(f"router_state output requires string handOverReason, got: {response}")
-        data = output.get("data")
-        if data is not None and not isinstance(data, list):
-            raise AssertionError(f"router_state output data must be a list when present, got: {response}")
-        slot_memory = output.get("slot_memory")
-        if slot_memory is not None and not isinstance(slot_memory, dict):
-            raise AssertionError(f"router_state slot_memory must be a dict when present, got: {response}")
     elif kind == "handover":
-        if not isinstance(output.get("intent_code"), str):
+        if not isinstance(response.get("intent_code"), str):
             raise AssertionError(f"handover output requires intent_code, got: {response}")
         if output.get("isHandOver") is not True:
             raise AssertionError(f"handover output requires isHandOver=true, got: {response}")
         if not isinstance(output.get("handOverReason"), str):
             raise AssertionError(f"handover output requires string handOverReason, got: {response}")
-        if not isinstance(output.get("message"), str):
-            raise AssertionError(f"handover output requires string message, got: {response}")
+        if not isinstance(response.get("message"), str):
+            raise AssertionError(f"handover output requires top-level string message, got: {response}")
         data = output.get("data")
         if data is not None and not isinstance(data, list):
             raise AssertionError(f"handover output data must be a list when present, got: {response}")
-        slot_memory = output.get("slot_memory")
-        if slot_memory is not None and not isinstance(slot_memory, dict):
-            raise AssertionError(f"handover output slot_memory must be a dict when present, got: {response}")
     elif kind == "failed":
-        if not isinstance(output.get("message"), str):
+        if not isinstance(response.get("message"), str):
             raise AssertionError(f"failed output requires string message, got: {response}")
-        if output.get("isHandOver") is not False:
-            raise AssertionError(f"failed output requires isHandOver=false, got: {response}")
-        if not isinstance(output.get("handOverReason"), str):
-            raise AssertionError(f"failed output requires string handOverReason, got: {response}")
-        data = output.get("data")
-        if data is not None and not isinstance(data, list):
-            raise AssertionError(f"failed output data must be a list when present, got: {response}")
-        slot_memory = output.get("slot_memory")
-        if slot_memory is not None and not isinstance(slot_memory, dict):
-            raise AssertionError(f"failed output slot_memory must be a dict when present, got: {response}")
+        if output:
+            raise AssertionError(f"failed output expects empty nested output, got: {response}")
 
     return {
         "ok": ok,
         "kind": kind,
-        "status": output.get("status"),
-        "intent_code": output.get("intent_code"),
+        "status": response.get("status"),
+        "intent_code": response.get("intent_code"),
         "response": response,
     }
 
@@ -203,32 +180,31 @@ def _strict_demo_check(
     inspected: dict[str, Any],
 ) -> None:
     response = inspected["response"]
-    output = response["output"]
     kind = inspected["kind"]
     if turn_index == 1:
         if response["ok"] is not True:
             raise AssertionError(f"turn 1 expected ok=true for transfer demo, got: {response}")
         if kind != "router_state":
             raise AssertionError(f"turn 1 expected router_state for transfer demo, got: {response}")
-        if output.get("status") != "waiting_user_input":
+        if response.get("status") != "waiting_user_input":
             raise AssertionError(f"turn 1 expected waiting_user_input, got: {response}")
-        if output.get("completion_state") != 0:
+        if response.get("completion_state") != 0:
             raise AssertionError(f"turn 1 expected completion_state=0, got: {response}")
     elif turn_index == 2 and execution_mode == "router_only":
         if response["ok"] is not True:
             raise AssertionError(f"turn 2 expected ok=true in router_only mode, got: {response}")
         if kind != "router_state":
             raise AssertionError(f"turn 2 expected router_state in router_only mode, got: {response}")
-        if output.get("status") != "ready_for_dispatch":
+        if response.get("status") != "ready_for_dispatch":
             raise AssertionError(f"turn 2 expected ready_for_dispatch in router_only mode, got: {response}")
-        if output.get("completion_state") != 0:
+        if response.get("completion_state") != 0:
             raise AssertionError(f"turn 2 expected completion_state=0 in router_only mode, got: {response}")
     elif turn_index == 2 and execution_mode == "execute":
         if response["ok"] is not True:
             raise AssertionError(f"turn 2 expected ok=true in execute mode, got: {response}")
         if kind != "handover":
             raise AssertionError(f"turn 2 expected handover in execute mode, got: {response}")
-        if output.get("completion_state") != 2:
+        if response.get("completion_state") != 2:
             raise AssertionError(f"turn 2 expected completion_state=2 in execute mode, got: {response}")
 
 
