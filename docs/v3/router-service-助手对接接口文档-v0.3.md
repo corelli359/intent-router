@@ -521,7 +521,43 @@ Content-Type: application/json
 
 ---
 
-## 5.4 响应体
+## 5.4 完成态收敛规则
+
+Router 内部按“双侧完成信号”收敛当前任务状态：
+
+| Agent 信号 | 助手信号 | Router 输出 | 说明 |
+|---|---:|---:|---|
+| `0` | `0` | `completion_state=0` | 都未结束 |
+| `1` | `0` | `completion_state=1` | Agent 单侧完成，等待助手 |
+| `0` | `1` | `completion_state=1` | 助手单侧完成，等待 Agent |
+| `1` | `1` | `completion_state=2` | 双侧都完成 |
+| `2` | `0/1/2` | `completion_state=2` | Agent 单侧即可最终完成 |
+| `0/1` | `2` | `completion_state=2` | 助手单侧即可最终完成 |
+
+关键约束：
+
+1. `completion_state=2` 是不可回退终态；
+2. 重复调用 `/api/v1/task/completion` 不应把任务重复推进；
+3. `node_id=end` 不等于任务完成；
+4. `isHandOver=true` 不等于任务完成；
+5. 是否需要助手补完成态，只看 `completion_state=1` 以及 `current_task` 是否有效。
+
+推荐助手侧伪代码：
+
+```python
+output = call_router_message(...)
+
+if output["completion_state"] == 1:
+    call_router_task_completion(
+        sessionId=session_id,
+        taskId=output["current_task"],
+        completionSignal=1,
+    )
+```
+
+---
+
+## 5.5 响应体
 
 响应仍然是统一结构：
 
@@ -565,7 +601,7 @@ Content-Type: application/json
 
 ---
 
-## 5.5 常见错误
+## 5.6 常见错误
 
 | HTTP | 含义 |
 |---|---|
