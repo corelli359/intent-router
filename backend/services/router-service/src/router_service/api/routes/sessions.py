@@ -640,6 +640,27 @@ def _assistant_router_placeholder_message(
     return fallback
 
 
+def _assistant_event_message(
+    *,
+    event_message: str | None,
+    agent_output: dict[str, Any],
+    status: str,
+    blocking_reason: str | None = None,
+    graph_status: str | None = None,
+) -> str:
+    """Preserve agent-originated stream text while keeping router placeholders for router events."""
+    if agent_output:
+        for value in (agent_output.get("message"), agent_output.get("content"), event_message):
+            if value not in (None, ""):
+                return str(value)
+    return _assistant_router_placeholder_message(
+        status=status,
+        blocking_reason=blocking_reason,
+        graph_status=graph_status,
+        fallback=event_message or "",
+    )
+
+
 def _assistant_synthesized_transfer_data(
     *,
     intent_code: str,
@@ -837,8 +858,14 @@ def _assistant_output_from_node(
 
 def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     """Translate one internal router task event into the assistant-facing SSE payload."""
+    payload = dict(event.payload or {})
+    agent_output = payload.get("agent_output")
+    if not isinstance(agent_output, dict):
+        agent_output = {}
+
     allowed_events = {
         "graph.unrecognized",
+        "node.message",
         "node.waiting_user_input",
         "node.waiting_confirmation",
         "node.waiting_assistant_completion",
@@ -850,10 +877,6 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     if event.event not in allowed_events:
         return None
 
-    payload = dict(event.payload or {})
-    agent_output = payload.get("agent_output")
-    if not isinstance(agent_output, dict):
-        agent_output = {}
     graph_payload = payload.get("graph")
     graph_payload = graph_payload if isinstance(graph_payload, dict) else None
     node_payload = payload.get("node")
@@ -921,11 +944,12 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
         status=status,
         is_handover=is_handover,
         handover_reason=handover_reason,
-        message=_assistant_router_placeholder_message(
+        message=_assistant_event_message(
+            event_message=event.message,
+            agent_output=agent_output,
             status=status,
             blocking_reason=str(node_payload.get("blocking_reason")) if node_payload.get("blocking_reason") not in (None, "") else None,
             graph_status=str(graph_payload.get("status") or "") if graph_payload is not None else None,
-            fallback=event.message or "",
         ),
         data=data,
         slot_memory=slot_memory,

@@ -939,6 +939,46 @@ def test_streaming_agent_client_supports_sse_json_payloads() -> None:
     asyncio.run(run())
 
 
+def test_streaming_agent_client_keeps_agent_message_fields_in_output() -> None:
+    async def run() -> None:
+        task = Task(
+            session_id="session_sse_message",
+            intent_code="transfer_money",
+            agent_url="https://agent.example.com/transfer",
+            intent_name="转账",
+            confidence=0.93,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_AsyncByteStream(
+                    [
+                        (
+                            b'event: message\ndata: {"event":"message","message":"'
+                            b'\xe6\x94\xb6\xe6\xac\xbe\xe4\xba\xba\xe6\xa0\xa1\xe9\xaa\x8c\xe9\x80\x9a\xe8\xbf\x87'
+                            b'","node_id":"validate_payee","completion_state":0}\n\n'
+                        ),
+                        b"event: done\ndata: [DONE]\n\n",
+                    ]
+                ),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "给小明转账 200 元")]
+
+        assert len(chunks) == 1
+        assert chunks[0].content == "收款人校验通过"
+        assert chunks[0].output["message"] == "收款人校验通过"
+        assert chunks[0].output["node_id"] == "validate_payee"
+        assert chunks[0].output["completion_state"] == 0
+
+    asyncio.run(run())
+
+
 def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> None:
     async def run() -> None:
         task = Task(

@@ -399,6 +399,8 @@ class StreamingAgentClient:
             normalized_output["slot_memory"] = dict(task.slot_memory)
         for key in (
             "node_id",
+            "message",
+            "content",
             "isHandOver",
             "handOverReason",
             "data",

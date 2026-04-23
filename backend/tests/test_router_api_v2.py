@@ -318,6 +318,65 @@ class _AssistantProtocolTransferAgentClient:
         return None
 
 
+class _AssistantProtocolWorkflowAgentClient:
+    def __init__(self) -> None:
+        self.tasks: list[Task] = []
+
+    async def stream(self, task: Task, user_input: str):
+        del user_input
+        self.tasks.append(task)
+        amount = str(task.slot_memory.get("amount") or "")
+        payee_name = str(task.slot_memory.get("payee_name") or "")
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="message",
+            content="收款人校验通过",
+            ishandover=False,
+            status=TaskStatus.RUNNING,
+            payload={"workflow_node": "validate_payee"},
+            output={
+                "node_id": "validate_payee",
+                "event": "message",
+                "message": "收款人校验通过",
+                "isHandOver": False,
+                "data": [{"answer": "收款人校验通过"}],
+                "slot_memory": {"amount": amount, "payee_name": payee_name},
+            },
+        )
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content=f"已向{payee_name}转账 {amount} CNY，转账成功",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            payload={"workflow_node": "execute_transfer"},
+            output={
+                "node_id": "execute_transfer",
+                "event": "final",
+                "message": f"已向{payee_name}转账 {amount} CNY，转账成功",
+                "completion_state": 2,
+                "completion_reason": "agent_final_done",
+                "isHandOver": True,
+                "handOverReason": "已提供收款人和金额交易对象",
+                "data": [
+                    {
+                        "isSubAgent": "True",
+                        "typIntent": "mbpTransfer",
+                        "answer": f"||{amount}|{payee_name}|",
+                    }
+                ],
+                "slot_memory": {"amount": amount, "payee_name": payee_name},
+            },
+        )
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        del session_id, task_id, agent_url
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 class _AssistantProtocolPartialCompletionAgentClient:
     def __init__(self) -> None:
         self.tasks: list[Task] = []
@@ -3483,9 +3542,60 @@ def test_v2_router_message_stream_assistant_protocol_waiting_then_completed() ->
         assert completed_payload["status"] == "completed"
         assert completed_payload["completion_state"] == 2
         assert completed_payload["completion_reason"] == "agent_final_done"
-        assert completed_payload["message"] == "执行图已完成"
+        assert completed_payload["message"] == "已向小明转账 200 CNY，转账成功"
         assert completed_payload["task_list"] == [{"name": completed_payload["current_task"], "status": "completed"}]
         assert completed_payload["data"][0]["answer"] == "||200|小明|"
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_stream_assistant_protocol_preserves_agent_workflow_frames() -> None:
+    async def run() -> None:
+        agent_client = _AssistantProtocolWorkflowAgentClient()
+        app, _ = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = (await client.post("/api/router/v2/sessions")).json()["session_id"]
+            async with client.stream(
+                "POST",
+                f"/api/router/v2/sessions/{session_id}/messages/stream",
+                json={
+                    "txt": "给小明转账200",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            ) as response:
+                stream_text = "".join([chunk async for chunk in response.aiter_text()])
+
+        frames = _parse_sse_frames(stream_text)
+        assert frames[-1] == ("done", "[DONE]")
+        message_payloads = [
+            json.loads(data)
+            for event, data in frames
+            if event == "message"
+        ]
+        assert [payload["node_id"] for payload in message_payloads] == [
+            "validate_payee",
+            "execute_transfer",
+        ]
+        assert [payload["message"] for payload in message_payloads] == [
+            "收款人校验通过",
+            "已向小明转账 200 CNY，转账成功",
+        ]
+        assert message_payloads[0]["status"] == "running"
+        assert message_payloads[0]["completion_state"] == 0
+        assert message_payloads[1]["status"] == "completed"
+        assert message_payloads[1]["completion_state"] == 2
+        assert message_payloads[1]["data"][0]["answer"] == "||200|小明|"
 
     asyncio.run(run())
 

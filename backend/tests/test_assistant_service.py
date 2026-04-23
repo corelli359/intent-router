@@ -374,7 +374,7 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
         assert completed_payload["status"] == "completed"
         assert completed_payload["completion_state"] == 2
         assert completed_payload["completion_reason"] == "agent_final_done"
-        assert completed_payload["message"] == "执行图已完成"
+        assert completed_payload["message"] == "已向小明转账 200 CNY，转账成功"
         assert completed_payload["data"][0]["answer"] == "||200|小明|"
         assert completed_payload["task_list"] == [
             {"name": completed_payload["current_task"], "status": "completed"}
