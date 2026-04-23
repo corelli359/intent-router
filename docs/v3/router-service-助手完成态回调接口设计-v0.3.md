@@ -1,7 +1,7 @@
 # Router-Service 助手完成态回调接口设计 v0.3
 
-> 状态：待评审
-> 日期：2026-04-22
+> 状态：已实现对接版本
+> 日期：2026-04-23
 > 适用范围：助手服务 -> Router 的任务完成态回调
 > 关联文档：
 > - `docs/v3/router-service-通信协议规范.md`
@@ -27,9 +27,9 @@
    - `data`
    - `slot_memory`
 
-但是现在有一个明确缺口：
+此前有一个明确缺口：
 
-**Router 目前还没有一条正式的“助手补完成信号”接口。**
+**Router 需要一条正式的“助手补完成信号”接口。**
 
 现状里，`completion_state` 主要还是基于：
 
@@ -43,7 +43,7 @@
 2. Assistant 单侧即可拍板完成；
 3. Agent 先给半完成，Assistant 再补半完成，Router 合并后认定真完成。
 
-因此，需要在现有 v0.3 协议上，补一条**任务级完成态回调接口**。
+因此，现有 v0.3 协议已补充一条**任务级完成态回调接口**：`POST /api/v1/task/completion`。
 
 ## 2. 设计目标
 
@@ -142,7 +142,7 @@ Router 内部不直接做“算术累加”，而是维护**双侧状态**：
 
 ## 5.1 结论
 
-建议新增一条独立接口，而不是复用 `/api/v1/message`：
+当前采用一条独立接口，而不是复用 `/api/v1/message`：
 
 ```text
 POST /api/v1/task/completion
@@ -252,7 +252,7 @@ Content-Type: application/json
 
 ## 6.1 运行时最小状态
 
-建议给 `GraphNodeState` 关联一组完成态元数据，作为 Router 运行期对象的一部分：
+当前 Router 运行期已按“双侧完成信号 -> 统一完成态”的方向收敛。概念上，`GraphNodeState` 关联一组完成态元数据：
 
 ```text
 completion_meta
@@ -281,7 +281,7 @@ completion_meta
 - `completion_state`
 - `completion_reason`
 
-建议收敛方式：
+当前收敛方式：
 
 1. Agent 若显式给出 `completion_state=1/2`，Router 将其解释为 `agent_signal`；
 2. Assistant 回调只更新 `assistant_signal`；
@@ -401,18 +401,22 @@ sequenceDiagram
 2. 若后续业务需要“助手显式取消任务”的独立语义，建议单独设计固定取消接口；
 3. 不建议再把取消语义塞回这个完成态接口的自由字段里。
 
-## 9. 推荐落地顺序
+## 9. 当前落地状态
 
-1. 先新增回调接口和请求模型；
-2. 给运行期 node/task 增加 completion meta；
-3. 统一 Agent 侧和 Assistant 侧的 signal 写入入口；
-4. 改造 `_assistant_completion_fields(...)`，从“纯推导”切到“优先读 completion meta”；
-5. 补单元测试和端到端用例：
-   - agent=2
-   - assistant=2
-   - agent=1 + assistant=1
-   - 重复 assistant 回调
-   - finalized 后 late agent output
+已落地内容：
+
+1. 已新增 `/api/v1/task/completion`；
+2. 已支持 Assistant 通过请求体传 `sessionId`、`taskId`、`completionSignal`；
+3. 已支持 Agent 显式输出 `completion_state=1` 时，Router 对外返回 `waiting_assistant_completion`；
+4. 已支持 `agent 1 + assistant 1 => completion_state=2`；
+5. 已支持 `assistant 2 => completion_state=2`；
+6. 已补端到端回归用例和真实联调脚本。
+
+后续仍可增强：
+
+1. 对 finalized 后 late agent output 做更细粒度审计；
+2. 对重复回调补更明确的幂等回归；
+3. 对 Assistant 单侧 `2` 时的下游 cancel 效果补更多真实 agent 场景。
 
 ## 10. 本文档结论
 

@@ -186,6 +186,8 @@ class AgentExecutionResponse(BaseModel):
     isHandOver: bool | None = None
     handOverReason: str | None = None
     status: Literal["waiting_user_input", "completed", "failed"]
+    completion_state: int | None = None
+    completion_reason: str | None = None
     data: list[dict[str, Any]] = Field(default_factory=list)
     slot_memory: dict[str, Any] = Field(default_factory=dict)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -221,6 +223,8 @@ class AgentExecutionResponse(BaseModel):
         data: list[dict[str, Any]] | None = None,
         slot_memory: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
+        completion_state: int | None = None,
+        completion_reason: str | None = None,
     ) -> "AgentExecutionResponse":
         return cls(
             event="final",
@@ -229,6 +233,8 @@ class AgentExecutionResponse(BaseModel):
             isHandOver=True,
             handOverReason=hand_over_reason,
             status="completed",
+            completion_state=completion_state,
+            completion_reason=completion_reason,
             data=data or [],
             slot_memory=slot_memory or {},
             payload=payload or {},

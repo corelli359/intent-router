@@ -109,7 +109,10 @@ def test_transfer_money_service_prefers_config_variables_context_and_slots() -> 
             "payee_name": "李四",
             "payee_card_no": "8899",
         }
-        assert response.content == "已向李四转账 5000 CNY，转账成功"
+        assert response.content == "已受理向李四转账 5000 CNY，等待助手确认完成态"
+        assert response.handOverReason == "等待助手确认完成态"
+        assert response.completion_state == 1
+        assert response.completion_reason == "agent_partial_done"
 
         assert len(runner.calls) == 1
         variables = runner.calls[0]["variables"]
@@ -159,7 +162,9 @@ def test_transfer_money_service_accepts_legacy_nested_request_shape() -> None:
             "amount": "500",
             "payee_name": "李四",
         }
-        assert response.content == "已向李四转账 500 CNY，转账成功"
+        assert response.content == "已受理向李四转账 500 CNY，等待助手确认完成态"
+        assert response.completion_state == 1
+        assert response.completion_reason == "agent_partial_done"
 
     asyncio.run(run())
 
@@ -197,7 +202,10 @@ def test_transfer_money_service_prioritizes_new_slots_over_legacy_nested_slots()
 
         assert runner.calls == []
         assert response.status == "completed"
-        assert response.content == "已向新收款人转账 3000 USD，转账成功"
+        assert response.content == "已受理向新收款人转账 3000 USD，等待助手确认完成态"
+        assert response.handOverReason == "等待助手确认完成态"
+        assert response.completion_state == 1
+        assert response.completion_reason == "agent_partial_done"
         assert response.payload["amount"] == "3000"
         assert response.payload["ccy"] == "USD"
         assert response.payload["payee_name"] == "新收款人"
@@ -302,6 +310,9 @@ def test_transfer_money_http_app_streams_sse_contract() -> None:
             "payee_name": "李四",
             "payee_card_no": "8899",
         }
-        assert payload["content"] == "已向李四转账 3000 CNY，转账成功"
+        assert payload["content"] == "已受理向李四转账 3000 CNY，等待助手确认完成态"
+        assert payload["handOverReason"] == "等待助手确认完成态"
+        assert payload["completion_state"] == 1
+        assert payload["completion_reason"] == "agent_partial_done"
 
     asyncio.run(run())

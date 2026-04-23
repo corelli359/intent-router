@@ -393,7 +393,7 @@ data: [DONE]
 3. 当前轮只补 `amount=200`
 4. 槽位齐全后继续调用下游 Agent
 
-典型返回会进入执行后状态，例如：
+当前转账 Agent 的联调约定是：槽位齐全后先给出 Agent 单侧完成信号，等待助手补完成态。典型返回如下：
 
 ```json
 {
@@ -401,16 +401,16 @@ data: [DONE]
   "output": {
     "current_task": "task_123",
     "task_list": [
-      { "name": "task_123", "status": "completed" }
+      { "name": "task_123", "status": "waiting" }
     ],
-    "completion_state": 2,
-    "completion_reason": "agent_final_done",
+    "completion_state": 1,
+    "completion_reason": "agent_partial_done",
     "node_id": "end",
     "intent_code": "AG_TRANS",
-    "status": "completed",
+    "status": "waiting_assistant_completion",
     "isHandOver": true,
-    "handOverReason": "completed",
-    "message": "",
+    "handOverReason": "等待助手确认完成态",
+    "message": "已受理向小明转账 200 CNY，等待助手确认完成态",
     "data": [
       {
         "isSubAgent": "True",
@@ -425,6 +425,8 @@ data: [DONE]
   }
 }
 ```
+
+此时助手侧应立刻使用同一个 `sessionId` 和当前返回的 `current_task` 调用 `/api/v1/task/completion`。
 
 ### 示例三：Agent 单侧完成，等待助手补完成态
 
@@ -537,9 +539,15 @@ Content-Type: application/json
     "intent_code": "AG_TRANS",
     "status": "completed",
     "isHandOver": true,
-    "handOverReason": "completed",
-    "message": "",
-    "data": [],
+    "handOverReason": "等待助手确认完成态",
+    "message": "执行图已完成",
+    "data": [
+      {
+        "isSubAgent": "True",
+        "typIntent": "mbpTransfer",
+        "answer": "||200|小明|"
+      }
+    ],
     "slot_memory": {
       "payee_name": "小明",
       "amount": "200"
@@ -553,6 +561,7 @@ Content-Type: application/json
 1. 返回的不是简单回显请求体
 2. 返回的是 Router 当前统一收敛后的任务态结果
 3. 助手收到后可以继续按和 `/api/v1/message` 相同的 `output` 字段结构处理
+4. `handOverReason`、`data`、`slot_memory` 会尽量保留任务收口前的业务上下文，助手侧不应假设这些字段会被清空
 
 ---
 
@@ -632,6 +641,19 @@ Content-Type: application/json
 
 1. `agent 1 + assistant 1 => 2`
 2. `agent 1 + assistant 2 => 2`
+
+如果要证明上下文缓存和 session 级短期记忆，再使用：
+
+`scripts/demo_router_context_cache_api.py`
+
+该脚本会直连真实 Router，串联：
+
+1. 第一轮 `给小明转账`，证明 Router 在当前任务中记住 `payee_name=小明`
+2. 第二轮只输入 `200`，证明 Router 不依赖上游 `slots_data` 也能复用上一轮槽位
+3. 必要时调用 `/api/v1/task/completion` 收口任务
+4. 读取开发调试快照 `GET /api/router/v2/sessions/{sessionId}`，证明 `current_graph/pending_graph` 已释放，`shared_slot_memory` 仍保留 `payee_name` 和 `amount`
+
+注意：第 4 步只是开发侧证明短期记忆，不是助手生产对接必须调用的接口。
 
 ---
 

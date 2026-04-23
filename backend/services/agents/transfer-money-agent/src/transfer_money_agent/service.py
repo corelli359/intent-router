@@ -282,11 +282,13 @@ class TransferMoneyAgentService:
         ccy_text = resolution.ccy or "CNY"
         payee_text = resolution.payee_name or resolution.payee_card_no or "收款人"
         return AgentExecutionResponse.completed(
-            f"已向{payee_text}转账 {amount_text} {ccy_text}，转账成功",
-            hand_over_reason="已提供收款人和金额交易对象",
+            f"已受理向{payee_text}转账 {amount_text} {ccy_text}，等待助手确认完成态",
+            hand_over_reason="等待助手确认完成态",
             data=self._response_data(resolution),
             slot_memory=slot_memory,
             payload={**payload, "business_status": "success"},
+            completion_state=1,
+            completion_reason="agent_partial_done",
         )
 
     def _response_data(self, resolution: TransferMoneyResolution) -> list[dict[str, str]]:
