@@ -402,7 +402,6 @@ class StreamingAgentClient:
             "isHandOver",
             "handOverReason",
             "data",
-            "status",
             "event",
             "completion_state",
             "completion_reason",
@@ -415,14 +414,13 @@ class StreamingAgentClient:
             normalized_output.setdefault("node_id", resolved_node_id)
         normalized_output.setdefault("intent_code", task.intent_code)
 
+        explicit_completion_state = self._completion_state(payload.get("completion_state"))
         ishandover = payload.get("ishandover")
         if not isinstance(ishandover, bool):
             ishandover = payload.get("isHandOver")
-        status = self._resolve_status(payload.get("status"), ishandover)
+        status = self._resolve_status(explicit_completion_state)
         if not isinstance(ishandover, bool):
             ishandover = status in {TaskStatus.COMPLETED, TaskStatus.FAILED}
-        if status == TaskStatus.WAITING_USER_INPUT:
-            ishandover = False
 
         return AgentStreamChunk(
             task_id=task.task_id,
@@ -485,17 +483,21 @@ class StreamingAgentClient:
             current = current[part]
         return current
 
-    def _resolve_status(self, raw_status: Any, ishandover: Any) -> TaskStatus:
-        """Resolve agent-provided status fields into the canonical task status enum."""
-        if isinstance(raw_status, TaskStatus):
-            return raw_status
-        if isinstance(raw_status, str):
-            normalized = raw_status.strip().lower()
-            if normalized in TaskStatus._value2member_map_:
-                return TaskStatus(normalized)
-        if ishandover is False:
-            return TaskStatus.WAITING_USER_INPUT
-        return TaskStatus.COMPLETED
+    def _completion_state(self, raw_value: Any) -> int | None:
+        """Return the explicit agent completion signal when the standard field is present."""
+        if isinstance(raw_value, bool):
+            raw_value = int(raw_value)
+        if isinstance(raw_value, int) and raw_value in {0, 1, 2}:
+            return raw_value
+        return None
+
+    def _resolve_status(self, completion_state: int | None) -> TaskStatus:
+        """Resolve the agent chunk lifecycle from the standard completion signal only."""
+        if completion_state == 2:
+            return TaskStatus.COMPLETED
+        if completion_state == 1:
+            return TaskStatus.COMPLETED
+        return TaskStatus.RUNNING
 
     def _failure_chunk(self, task: Task, message: str) -> AgentStreamChunk:
         """Build a terminal failure chunk for transport or parsing errors."""

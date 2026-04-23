@@ -304,7 +304,7 @@ def test_transfer_money_http_app_streams_sse_contract() -> None:
 
         payload = json.loads(message_line.removeprefix("data:"))
         assert payload["event"] == "final"
-        assert payload["status"] == "completed"
+        assert "status" not in payload
         assert payload["slot_memory"] == {
             "amount": "3000",
             "payee_name": "李四",

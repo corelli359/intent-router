@@ -276,6 +276,24 @@ Accept: text/event-stream
 
 **Agent 完成不等于任务最终完成。**
 
+#### 6. Agent 不提供 `status`
+
+`output.status` 是 Router 对助手输出的归一状态，不是下游 Agent 的标准字段。
+
+下游 Agent 标准返回里，和完成态有关的字段只有：
+
+1. `isHandOver`
+2. `handOverReason`
+3. `completion_state`
+4. `completion_reason`
+
+其中：
+
+1. `completion_state=1` 表示 Agent 单侧完成，等待助手补完成态；
+2. `completion_state=2` 表示 Agent 单侧即可最终完成；
+3. 如果 Agent 没有返回 `completion_state`，Router 按 `0` 处理；
+4. Router 不再根据 Agent 的 `isHandOver=true` 或非标准 `status=completed` 推导任务完成。
+
 ---
 
 ## 4.5 SSE 响应

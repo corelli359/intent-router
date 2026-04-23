@@ -37,7 +37,10 @@ async def _run_agent_stream(
     service: TransferMoneyAgentService,
 ) -> AsyncIterator[bytes]:
     result = await service.handle(request)
-    yield _sse_frame(event="message", data=json.dumps(result.model_dump(exclude_none=True), ensure_ascii=False))
+    yield _sse_frame(
+        event="message",
+        data=json.dumps(result.model_dump(exclude_none=True, exclude={"status"}), ensure_ascii=False),
+    )
     yield _sse_frame(event="done", data="[DONE]")
 
 

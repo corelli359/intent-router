@@ -825,7 +825,7 @@ def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
                     "event": "final",
                     "content": "订单 123 当前状态为已发货",
                     "ishandover": True,
-                    "status": "completed",
+                    "completion_state": 2,
                     "payload": {"order_id": "123"},
                 },
             )
@@ -861,6 +861,44 @@ def test_streaming_agent_client_supports_http_agent_payload_mapping() -> None:
     asyncio.run(run())
 
 
+def test_streaming_agent_client_treats_missing_completion_state_as_running() -> None:
+    import httpx
+
+    async def run() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            del request
+            return httpx.Response(
+                200,
+                json={
+                    "event": "final",
+                    "content": "Agent 已交接，但没有给完成信号",
+                    "isHandOver": True,
+                    "payload": {"trace": "missing_completion_state"},
+                },
+            )
+
+        task = Task(
+            session_id="session_missing_completion",
+            intent_code="query_order_status",
+            agent_url="https://agent.example.com/order/stream",
+            intent_name="查询订单状态",
+            intent_description="查询订单和物流状态",
+            confidence=0.88,
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StreamingAgentClient(http_client=http_client)
+            chunks = [chunk async for chunk in client.stream(task, "查订单")]
+
+        assert len(chunks) == 1
+        assert chunks[0].status == TaskStatus.RUNNING
+        assert chunks[0].ishandover is True
+        assert "completion_state" not in chunks[0].output
+        assert "status" not in chunks[0].output
+
+    asyncio.run(run())
+
+
 def test_streaming_agent_client_supports_sse_json_payloads() -> None:
     async def run() -> None:
         task = Task(
@@ -878,7 +916,7 @@ def test_streaming_agent_client_supports_sse_json_payloads() -> None:
                 headers={"content-type": "text/event-stream"},
                 stream=_AsyncByteStream(
                     [
-                        b'event: message\ndata: {"event":"final","content":"\xe5\xb7\xb2\xe5\xae\x8c\xe6\x88\x90","ishandover":true,"status":"completed","node_id":"end","completion_state":2,"completion_reason":"agent_final_done","payload":{"receipt_id":"txn_001"}}\n\n',
+                        b'event: message\ndata: {"event":"final","content":"\xe5\xb7\xb2\xe5\xae\x8c\xe6\x88\x90","ishandover":true,"node_id":"end","completion_state":2,"completion_reason":"agent_final_done","payload":{"receipt_id":"txn_001"}}\n\n',
                         b"event: done\ndata: [DONE]\n\n",
                     ]
                 ),
@@ -924,7 +962,6 @@ def test_streaming_agent_client_normalizes_legacy_nested_agent_payloads() -> Non
                                 "event": "final",
                                 "data": [{"answer": "已向小明转账 200 CNY，转账成功"}],
                                 "isHandOver": True,
-                                "status": "completed",
                                 "completion_state": 2,
                                 "completion_reason": "agent_final_done",
                                 "slot_memory": {"payee_name": "小明", "amount": "200"},

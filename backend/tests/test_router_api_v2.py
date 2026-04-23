@@ -293,6 +293,8 @@ class _AssistantProtocolTransferAgentClient:
             status=TaskStatus.COMPLETED,
             payload=payload,
             output={
+                "completion_state": 2,
+                "completion_reason": "agent_final_done",
                 "isHandOver": True,
                 "handOverReason": "已提供收款人和金额交易对象",
                 "data": [
@@ -302,7 +304,6 @@ class _AssistantProtocolTransferAgentClient:
                         "answer": f"||{amount}|{payee_name}|",
                     }
                 ],
-                "status": "completed",
                 "event": "final",
                 **payload,
                 "slot_memory": {"amount": amount, "payee_name": payee_name},
@@ -350,7 +351,6 @@ class _AssistantProtocolPartialCompletionAgentClient:
                         "answer": f"||{amount}|{payee_name}|",
                     }
                 ],
-                "status": "completed",
                 "event": "final",
                 **payload,
                 "slot_memory": {"amount": amount, "payee_name": payee_name},

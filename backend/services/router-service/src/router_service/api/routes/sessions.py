@@ -522,9 +522,8 @@ def _assistant_task_status(node_status: str | GraphNodeStatus | None) -> str:
 def _assistant_effective_status(
     *,
     node_status: str | GraphNodeStatus | None,
-    agent_output_status: object | None,
 ) -> str:
-    """Resolve the assistant-facing status, preferring router-owned transitional states."""
+    """Resolve the assistant-facing status from Router-owned node state."""
     if isinstance(node_status, GraphNodeStatus):
         node_status_value = node_status.value
     elif node_status is None:
@@ -532,10 +531,6 @@ def _assistant_effective_status(
     else:
         node_status_value = str(node_status)
 
-    if node_status_value == GraphNodeStatus.WAITING_ASSISTANT_COMPLETION.value:
-        return node_status_value
-    if agent_output_status not in (None, ""):
-        return str(agent_output_status)
     return node_status_value
 
 
@@ -676,7 +671,6 @@ def _assistant_completion_fields(
     *,
     status: str,
     node_status: str | GraphNodeStatus | None,
-    is_handover: bool,
     agent_output: dict[str, Any] | None = None,
 ) -> tuple[int, str]:
     """Resolve the unified completion state/reason for one assistant-facing payload."""
@@ -718,8 +712,6 @@ def _assistant_completion_fields(
         return 2, "router_error"
     if status == "cancelled" or node_status_value == GraphNodeStatus.CANCELLED.value:
         return 2, "assistant_cancel"
-    if is_handover or status == "completed" or node_status_value == GraphNodeStatus.COMPLETED.value:
-        return 2, "agent_final_done"
     return 0, "running"
 
 
@@ -777,7 +769,6 @@ def _assistant_output_from_node(
     output_payload = dict(node.output_payload)
     status = _assistant_effective_status(
         node_status=node.status,
-        agent_output_status=agent_output.get("status"),
     )
     is_handover = bool(
         agent_output["isHandOver"]
@@ -811,7 +802,6 @@ def _assistant_output_from_node(
         completion_state, completion_reason = _assistant_completion_fields(
             status=status,
             node_status=node.status,
-            is_handover=is_handover,
             agent_output=agent_output,
         )
     else:
@@ -886,7 +876,6 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     output_payload = dict(node_payload.get("output_payload") or {})
     status = _assistant_effective_status(
         node_status=str(node_payload.get("status") or ""),
-        agent_output_status=agent_output.get("status"),
     )
     is_handover = bool(
         agent_output["isHandOver"]
@@ -912,7 +901,6 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     completion_state, completion_reason = _assistant_completion_fields(
         status=status,
         node_status=str(node_payload.get("status") or ""),
-        is_handover=is_handover,
         agent_output=agent_output,
     )
     return _assistant_output_template(
