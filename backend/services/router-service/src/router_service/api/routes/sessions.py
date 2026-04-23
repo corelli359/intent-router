@@ -523,6 +523,112 @@ def _assistant_output_from_node(
     )
 
 
+def _assistant_node_payload_priority(node_payload: dict[str, Any]) -> tuple[int, int]:
+    """Rank one serialized node payload by user-relevant state, then by graph order."""
+    status_priority = {
+        GraphNodeStatus.WAITING_USER_INPUT.value: 0,
+        GraphNodeStatus.WAITING_CONFIRMATION.value: 1,
+        GraphNodeStatus.WAITING_ASSISTANT_COMPLETION.value: 2,
+        GraphNodeStatus.RUNNING.value: 3,
+        GraphNodeStatus.READY_FOR_DISPATCH.value: 4,
+        GraphNodeStatus.DRAFT.value: 5,
+        GraphNodeStatus.READY.value: 6,
+        GraphNodeStatus.BLOCKED.value: 7,
+        GraphNodeStatus.COMPLETED.value: 8,
+        GraphNodeStatus.FAILED.value: 9,
+        GraphNodeStatus.CANCELLED.value: 10,
+        GraphNodeStatus.SKIPPED.value: 11,
+    }
+    return (
+        status_priority.get(str(node_payload.get("status") or ""), 99),
+        node_payload.get("position") if isinstance(node_payload.get("position"), int) else 9999,
+    )
+
+
+def _assistant_response_node_payload(graph_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Resolve the most relevant serialized node from one graph payload."""
+    if not isinstance(graph_payload, dict):
+        return None
+    nodes = graph_payload.get("nodes")
+    if not isinstance(nodes, list):
+        return None
+    node_payloads = [item for item in nodes if isinstance(item, dict)]
+    if not node_payloads:
+        return None
+    return min(node_payloads, key=_assistant_node_payload_priority)
+
+
+def _assistant_output_from_graph_payload(
+    *,
+    graph_payload: dict[str, Any] | None,
+    message: str,
+    fallback_status: str = "",
+    fallback_task_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the assistant-facing payload from one serialized graph event payload."""
+    node_payload = _assistant_response_node_payload(graph_payload)
+    graph_status = str(graph_payload.get("status") or "") if isinstance(graph_payload, dict) else ""
+    node_status = (
+        str(node_payload.get("status") or "")
+        if isinstance(node_payload, dict)
+        else fallback_status or graph_status
+    )
+    status = _assistant_effective_status(node_status=node_status)
+    completion_state, completion_reason = _assistant_completion_fields(
+        status=status,
+        node_status=node_status,
+    )
+    blocking_reason = (
+        str(node_payload.get("blocking_reason"))
+        if isinstance(node_payload, dict) and node_payload.get("blocking_reason") not in (None, "")
+        else None
+    )
+    intent_code = (
+        str(node_payload.get("intent_code") or "")
+        if isinstance(node_payload, dict)
+        else ""
+    )
+    current_task = _assistant_task_name(
+        task_id=(
+            str(node_payload.get("task_id"))
+            if isinstance(node_payload, dict) and node_payload.get("task_id") not in (None, "")
+            else (fallback_task_id if node_payload is None else None)
+        ),
+        node_id=(
+            str(node_payload.get("node_id"))
+            if isinstance(node_payload, dict) and node_payload.get("node_id") not in (None, "")
+            else None
+        ),
+        intent_code=intent_code,
+        position=(
+            node_payload.get("position")
+            if isinstance(node_payload, dict) and isinstance(node_payload.get("position"), int)
+            else None
+        ),
+    )
+    slot_memory = (
+        dict(node_payload.get("slot_memory") or {})
+        if isinstance(node_payload, dict)
+        else {}
+    )
+    return _assistant_output_template(
+        current_task=current_task,
+        task_list=_assistant_task_list_from_graph_payload(graph_payload),
+        completion_state=completion_state,
+        completion_reason=completion_reason,
+        intent_code=intent_code,
+        status=status,
+        message=_assistant_router_placeholder_message(
+            status=status,
+            blocking_reason=blocking_reason,
+            graph_status=graph_status,
+            fallback=message,
+        ),
+        slot_memory=slot_memory,
+        output={},
+    )
+
+
 def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     """Translate one internal router task event into the assistant-facing v0.4 SSE payload."""
     payload = dict(event.payload or {})
@@ -532,6 +638,8 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
 
     allowed_events = {
         "graph.unrecognized",
+        "graph.proposed",
+        "graph.waiting_confirmation",
         "node.message",
         "node.waiting_user_input",
         "node.waiting_confirmation",
@@ -555,6 +663,14 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
             completion_state=2,
             completion_reason="router_no_match",
             message=event.message or "",
+        )
+
+    if event.event.startswith("graph."):
+        return _assistant_output_from_graph_payload(
+            graph_payload=graph_payload,
+            message=event.message or "",
+            fallback_status=event.status.value,
+            fallback_task_id=event.task_id if event.task_id not in (None, "", "graph") else None,
         )
 
     if node_payload is None:

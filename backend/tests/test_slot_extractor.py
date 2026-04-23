@@ -5,7 +5,7 @@ import json
 
 from router_service.core.shared.domain import IntentDefinition
 from router_service.core.slots.extractor import SlotExtractor
-from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingSource
+from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingSource, SlotBindingState
 
 
 class _RetryableLLMError(Exception):
@@ -50,6 +50,30 @@ class _CapturingLLMClient:
         self.variables = dict(variables)
         return {
             "slots": [],
+            "ambiguousSlotKeys": [],
+        }
+
+
+class _HallucinatingTransferLLMClient:
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, variables, model, on_delta
+        return {
+            "slots": [
+                {
+                    "slot_key": "payee_name",
+                    "value": "小明",
+                    "source": "user_message",
+                    "source_text": "给小明转账",
+                    "confidence": 0.99,
+                },
+                {
+                    "slot_key": "amount",
+                    "value": "200",
+                    "source": "user_message",
+                    "source_text": "转200元",
+                    "confidence": 0.99,
+                },
+            ],
             "ambiguousSlotKeys": [],
         }
 
@@ -239,10 +263,71 @@ def test_slot_extractor_passes_existing_slot_memory_into_llm_prompt() -> None:
             ),
             graph_source_message="给小明转账",
             current_message="200",
+            recent_messages=["user: 给小明转账", "assistant: 请提供金额"],
             long_term_memory=[],
         )
 
         assert llm_client.variables is not None
         assert json.loads(str(llm_client.variables["existing_slot_memory_json"])) == {"payee_name": "小明"}
+        assert json.loads(str(llm_client.variables["recent_messages_json"])) == [
+            "user: 给小明转账",
+            "assistant: 请提供金额",
+        ]
+
+    asyncio.run(run())
+
+
+def test_slot_extractor_rejects_llm_slots_backed_only_by_fabricated_source_text() -> None:
+    async def run() -> None:
+        extractor = SlotExtractor(llm_client=_HallucinatingTransferLLMClient())
+        result = await extractor.extract(
+            intent=_transfer_intent(),
+            node=GraphNodeState(
+                intent_code="AG_TRANS",
+                title="转账",
+                confidence=0.97,
+                source_fragment="我要转账",
+            ),
+            graph_source_message="我要转账",
+            current_message="我要转账",
+            long_term_memory=[],
+        )
+
+        assert result.slot_memory == {}
+        assert result.ambiguous_slot_keys == []
+
+    asyncio.run(run())
+
+
+def test_slot_extractor_preserves_previous_user_message_slot_across_turns() -> None:
+    async def run() -> None:
+        extractor = SlotExtractor()
+        result = await extractor.extract(
+            intent=_transfer_intent(),
+            node=GraphNodeState(
+                intent_code="AG_TRANS",
+                title="转账",
+                confidence=0.97,
+                source_fragment="我要转账",
+                slot_memory={"payee_name": "小红"},
+                slot_bindings=[
+                    SlotBindingState(
+                        slot_key="payee_name",
+                        value="小红",
+                        source=SlotBindingSource.USER_MESSAGE,
+                        source_text="小红吧",
+                        confidence=0.95,
+                    )
+                ],
+            ),
+            graph_source_message="我要转账",
+            current_message="金额200",
+            recent_messages=["我要转账", "小红吧", "金额200"],
+            long_term_memory=[],
+        )
+
+        assert result.slot_memory == {"payee_name": "小红", "amount": "200"}
+        binding_by_key = {binding.slot_key: binding for binding in result.slot_bindings}
+        assert binding_by_key["payee_name"].source_text == "小红吧"
 
     asyncio.run(run())

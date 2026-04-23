@@ -11,6 +11,7 @@ from router_service.core.shared.diagnostics import (
 )
 from router_service.core.support.llm_client import llm_exception_is_retryable
 from router_service.core.support.trace_logging import current_trace_id, router_stage
+from router_service.core.support.context_builder import ContextBuilder
 from router_service.core.recognition.recognizer import (
     IntentRecognizer,
     NullIntentRecognizer,
@@ -44,6 +45,8 @@ class IntentUnderstandingService:
         graph_builder: IntentGraphBuilder | None,
         turn_interpreter: TurnInterpreter,
         event_publisher: Any,
+        context_builder: ContextBuilder | None = None,
+        long_term_memory_store: Any | None = None,
     ) -> None:
         """Initialize the understanding service with recognition, planning, and event dependencies."""
         self.intent_catalog = intent_catalog
@@ -51,6 +54,8 @@ class IntentUnderstandingService:
         self.graph_builder = graph_builder
         self.turn_interpreter = turn_interpreter
         self.event_publisher = event_publisher
+        self.context_builder = context_builder or ContextBuilder()
+        self.long_term_memory_store = long_term_memory_store
 
     @property
     def has_graph_builder(self) -> bool:
@@ -262,6 +267,25 @@ class IntentUnderstandingService:
             ],
         )
 
+    def _blocked_turn_recent_messages(
+        self,
+        *,
+        session: GraphSessionState,
+        content: str,
+    ) -> list[str]:
+        """Return prior-turn context for blocked-turn recognition without duplicating the current input."""
+        recent_messages = self.context_builder.build_recent_messages(session)
+        current_turn_entry = f"user: {content.strip()}"
+        if content.strip() and recent_messages and recent_messages[-1].strip() == current_turn_entry:
+            return recent_messages[:-1]
+        return recent_messages
+
+    def _blocked_turn_long_term_memory(self, session: GraphSessionState) -> list[str]:
+        """Return recalled customer memory for blocked-turn recognition when available."""
+        if self.long_term_memory_store is None:
+            return []
+        return list(self.long_term_memory_store.recall(session.cust_id))
+
     async def _recognize_turn_message(
         self,
         *,
@@ -270,14 +294,16 @@ class IntentUnderstandingService:
         mode: str,
     ) -> RecognitionResult:
         """Recognize blocked-turn follow-ups via the lightest available path."""
+        recent_messages = self._blocked_turn_recent_messages(session=session, content=content)
+        long_term_memory = self._blocked_turn_long_term_memory(session)
         fast_recognizer = self._resolve_fast_recognizer()
         if fast_recognizer is not None:
             try:
                 return await fast_recognizer.recognize(
                     message=content,
                     intents=self.intent_catalog.active_intents_by_code().values(),
-                    recent_messages=[],
-                    long_term_memory=[],
+                    recent_messages=recent_messages,
+                    long_term_memory=long_term_memory,
                 )
             except Exception as exc:
                 logger.debug(
@@ -294,8 +320,8 @@ class IntentUnderstandingService:
             return await self.recognize_message(
                 session,
                 content,
-                recent_messages=[],
-                long_term_memory=[],
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
                 emit_events=False,
             )
         except Exception as exc:

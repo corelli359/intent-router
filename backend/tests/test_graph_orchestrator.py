@@ -35,6 +35,7 @@ class _SpyUnderstandingValidator:
         node,
         graph_source_message,
         current_message,
+        recent_messages=None,
         long_term_memory=None,
     ) -> UnderstandingValidationResult:
         self.calls.append(
@@ -43,6 +44,7 @@ class _SpyUnderstandingValidator:
                 "node_id": node.node_id,
                 "graph_source_message": graph_source_message,
                 "current_message": current_message,
+                "recent_messages": list(recent_messages or []),
                 "long_term_memory": list(long_term_memory or []),
             }
         )
@@ -353,6 +355,11 @@ def test_graph_orchestrator_validate_node_understanding_passes_history_memory_ca
             session_id="session_memory_slots",
             cust_id="cust_memory_slots",
             shared_slot_memory={"payee_name": "小明"},
+            messages=[
+                {"role": "user", "content": "我要转账"},
+                {"role": "assistant", "content": "请提供金额"},
+                {"role": "user", "content": "200"},
+            ],
         )
         graph = ExecutionGraphState(source_message="我要转账")
         node = GraphNodeState(
@@ -377,6 +384,10 @@ def test_graph_orchestrator_validate_node_understanding_passes_history_memory_ca
                 "node_id": node.node_id,
                 "graph_source_message": "我要转账",
                 "current_message": "200",
+                "recent_messages": [
+                    "user: 我要转账",
+                    "assistant: 请提供金额",
+                ],
                 "long_term_memory": [
                     "memory_fact",
                     "payee_name=小明",

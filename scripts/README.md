@@ -219,7 +219,38 @@ This script checks:
   - handover result
   - failed result
 
-### 7) Build target-cluster frontend artifacts
+### 7) Focused `/api/v1/message` regression suite
+
+This script targets the current production router entry:
+
+- `POST /api/v1/message`
+
+It uses the assistant-style request body and validates the current stable
+single-intent transfer cases, with emphasis on multi-turn slot continuity and
+overwrite cases.
+
+List built-in cases:
+
+```bash
+python scripts/run_router_v1_regression_suite.py --list-cases
+```
+
+Run the full suite:
+
+```bash
+python scripts/run_router_v1_regression_suite.py \
+  --base-url "$INTENT_ROUTER_BASE_URL"
+```
+
+Run only one focused case:
+
+```bash
+python scripts/run_router_v1_regression_suite.py \
+  --base-url "$INTENT_ROUTER_BASE_URL" \
+  --case-id multi_turn_override_payee_before_amount
+```
+
+### 8) Build target-cluster frontend artifacts
 
 This generates:
 
@@ -242,7 +273,7 @@ ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
 ./scripts/build_prod_target.sh
 ```
 
-### 8) Register additional financial intents
+### 9) Register additional financial intents
 
 This upserts the extra V2 financial intents used by the multi-agent runtime:
 

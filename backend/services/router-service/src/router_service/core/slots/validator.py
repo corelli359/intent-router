@@ -12,6 +12,7 @@ from router_service.core.shared.diagnostics import (
 )
 from router_service.core.slots.grounding import (
     combine_distinct_text,
+    grounded_source_text,
     slot_value_grounded_with_currency_fallback,
 )
 from router_service.core.shared.graph_domain import SlotBindingSource, SlotBindingState
@@ -47,12 +48,14 @@ class SlotValidator:
         graph_source_message: str,
         node_source_fragment: str | None,
         current_message: str,
+        recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
     ) -> SlotValidationResult:
         """Validate extracted slots against grounding, history rules, and required fields."""
         slot_defs_by_key = {slot.slot_key: slot for slot in intent.slot_schema}
         binding_by_key = {binding.slot_key: binding for binding in slot_bindings}
         grounding_text = combine_distinct_text(graph_source_message, node_source_fragment, current_message)
+        turn_history_text = combine_distinct_text(*(recent_messages or []), grounding_text)
         history_text = "\n".join(entry for entry in (long_term_memory or []) if entry)
 
         validated_memory: dict[str, Any] = {}
@@ -77,6 +80,7 @@ class SlotValidator:
                 source=source,
                 source_text=binding.source_text if binding is not None else None,
                 grounding_text=grounding_text,
+                turn_history_text=turn_history_text,
                 history_text=history_text,
             ):
                 invalid_slot_keys.append(slot_key)
@@ -172,6 +176,7 @@ class SlotValidator:
         source: SlotBindingSource,
         source_text: str | None,
         grounding_text: str,
+        turn_history_text: str,
         history_text: str,
     ) -> bool:
         """Check whether one binding source/value pair may be trusted for dispatch."""
@@ -184,13 +189,17 @@ class SlotValidator:
         if source == SlotBindingSource.HISTORY:
             if not slot_def.allow_from_history:
                 return False
-            evidence_text = combine_distinct_text(source_text, history_text)
+            evidence_text = combine_distinct_text(
+                grounded_source_text(source_text, history_text),
+                history_text,
+            )
             return bool(evidence_text) and self._value_is_grounded(
                 slot_def=slot_def,
                 value=value,
                 grounding_text=evidence_text,
             )
-        evidence_text = source_text or grounding_text
+        trusted_source_text = grounded_source_text(source_text, turn_history_text)
+        evidence_text = trusted_source_text or grounding_text
         return bool(evidence_text) and self._value_is_grounded(
             slot_def=slot_def,
             value=value,

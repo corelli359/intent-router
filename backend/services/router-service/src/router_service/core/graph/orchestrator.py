@@ -161,6 +161,8 @@ class GraphRouterOrchestrator:
             graph_builder=self.graph_builder,
             turn_interpreter=self.turn_interpreter,
             event_publisher=self.event_publisher,
+            context_builder=self.context_builder,
+            long_term_memory_store=self.session_store.long_term_memory,
         )
         self.graph_compiler = graph_compiler or GraphCompiler(
             intent_catalog=self.intent_catalog,
@@ -1165,6 +1167,10 @@ class GraphRouterOrchestrator:
                 node=node,
                 graph_source_message=graph.source_message,
                 current_message=current_message,
+                recent_messages=self._recent_messages_without_current_turn(
+                    session,
+                    current_message=current_message,
+                ),
                 long_term_memory=memory_candidates,
             )
             node.slot_memory = dict(validation.slot_memory)
@@ -1516,6 +1522,22 @@ class GraphRouterOrchestrator:
             limit=self.config.memory_recall_limit,
         )
         return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
+
+    def _recent_messages_without_current_turn(
+        self,
+        session: GraphSessionState,
+        *,
+        current_message: str,
+    ) -> list[str]:
+        """Return prior chat context without duplicating the inflight user turn."""
+        recent_messages = self.context_builder.build_recent_messages(session)
+        normalized_message = current_message.strip()
+        if not normalized_message or not recent_messages:
+            return recent_messages
+        current_turn_entry = f"user: {normalized_message}"
+        if recent_messages[-1].strip() == current_turn_entry:
+            return recent_messages[:-1]
+        return recent_messages
 
     def _intent_requires_slot_understanding(self, intent: IntentDefinition) -> bool:
         """Return whether the router still needs to run slot extraction/validation for this intent."""

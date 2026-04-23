@@ -497,8 +497,6 @@ class GraphMessageFlow:
                     content,
                     assistant_protocol=assistant_protocol,
                     recognition=turn_result.recognition,
-                    recent_messages=[],
-                    long_term_memory=[],
                     emit_events=emit_events,
                 )
                 return
@@ -553,8 +551,6 @@ class GraphMessageFlow:
                     content,
                     assistant_protocol=assistant_protocol,
                     recognition=turn_result.recognition,
-                    recent_messages=[],
-                    long_term_memory=[],
                     emit_events=emit_events,
                 )
                 return

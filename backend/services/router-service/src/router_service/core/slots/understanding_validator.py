@@ -50,6 +50,7 @@ class UnderstandingValidator:
         node: GraphNodeState,
         graph_source_message: str,
         current_message: str,
+        recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
     ) -> UnderstandingValidationResult:
         """Extract then validate slots for one node before agent dispatch."""
@@ -70,6 +71,7 @@ class UnderstandingValidator:
                     node=node,
                     graph_source_message=graph_source_message,
                     current_message=current_message,
+                    recent_messages=recent_messages,
                     long_term_memory=long_term_memory,
                 )
             with router_stage(
@@ -87,6 +89,7 @@ class UnderstandingValidator:
                     graph_source_message=graph_source_message,
                     node_source_fragment=node.source_fragment,
                     current_message=current_message,
+                    recent_messages=recent_messages,
                     long_term_memory=long_term_memory,
                 )
             return self._compose(validation, extraction_diagnostics=extraction.diagnostics or [])

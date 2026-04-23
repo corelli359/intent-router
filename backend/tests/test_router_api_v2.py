@@ -215,12 +215,77 @@ class _ContractTransferUnderstandingValidator:
         node,
         graph_source_message,
         current_message,
+        recent_messages=None,
         long_term_memory=None,
     ) -> UnderstandingValidationResult:
-        del intent, graph_source_message, long_term_memory
+        del intent, graph_source_message, long_term_memory, recent_messages
         slot_memory = dict(node.slot_memory)
         if "小明" in current_message:
             slot_memory["payee_name"] = "小明"
+        digits = "".join(character for character in current_message if character.isdigit())
+        if digits:
+            slot_memory["amount"] = digits
+        missing_required_slots: list[str] = []
+        if "amount" not in slot_memory:
+            missing_required_slots.append("amount")
+        if "payee_name" not in slot_memory:
+            missing_required_slots.append("payee_name")
+        prompt_message = {
+            ("amount", "payee_name"): "请提供金额、收款人姓名",
+            ("amount",): "请提供金额",
+            ("payee_name",): "请提供收款人姓名",
+        }.get(tuple(missing_required_slots))
+        return UnderstandingValidationResult(
+            slot_memory=slot_memory,
+            slot_bindings=self._bindings(slot_memory, source_text=current_message),
+            history_slot_keys=[],
+            missing_required_slots=missing_required_slots,
+            ambiguous_slot_keys=[],
+            invalid_slot_keys=[],
+            needs_confirmation=False,
+            can_dispatch=not missing_required_slots,
+            prompt_message=prompt_message,
+            diagnostics=[],
+        )
+
+
+@dataclass
+class _MultiTurnOverrideTransferUnderstandingValidator:
+    payee_candidates: tuple[str, ...] = ("小明", "小刚", "小红", "王芳", "李雷", "妈妈", "弟弟")
+
+    def _bindings(self, slot_memory: dict[str, str], *, source_text: str) -> list[SlotBindingState]:
+        return [
+            SlotBindingState(
+                slot_key=slot_key,
+                value=value,
+                source=SlotBindingSource.USER_MESSAGE,
+                source_text=source_text,
+                confidence=0.95,
+            )
+            for slot_key, value in slot_memory.items()
+        ]
+
+    def _payee_name(self, current_message: str) -> str | None:
+        for candidate in self.payee_candidates:
+            if candidate in current_message:
+                return candidate
+        return None
+
+    async def validate_node(
+        self,
+        *,
+        intent,
+        node,
+        graph_source_message,
+        current_message,
+        recent_messages=None,
+        long_term_memory=None,
+    ) -> UnderstandingValidationResult:
+        del intent, graph_source_message, recent_messages, long_term_memory
+        slot_memory = dict(node.slot_memory)
+        payee_name = self._payee_name(current_message)
+        if payee_name is not None:
+            slot_memory["payee_name"] = payee_name
         digits = "".join(character for character in current_message if character.isdigit())
         if digits:
             slot_memory["amount"] = digits
@@ -3065,6 +3130,114 @@ def test_v2_router_only_transfer_contract_from_generic_request_fills_amount_then
     asyncio.run(run())
 
 
+def test_v1_message_router_only_keeps_latest_payee_across_multiple_waiting_turns() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_MultiTurnOverrideTransferUnderstandingValidator(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = "router_only_latest_payee_demo"
+
+            first_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "我要转账",
+                    "stream": False,
+                    "executionMode": "router_only",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert first_turn.status_code == 200
+            first_body = first_turn.json()
+            assert first_body["status"] == "waiting_user_input"
+            assert first_body["slot_memory"] == {}
+            assert first_body["message"] == "请提供金额、收款人姓名"
+
+            second_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "小刚",
+                    "stream": False,
+                    "executionMode": "router_only",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert second_turn.status_code == 200
+            second_body = second_turn.json()
+            assert second_body["status"] == "waiting_user_input"
+            assert second_body["slot_memory"] == {
+                "payee_name": "小刚",
+            }
+            assert second_body["message"] == "请提供金额"
+
+            third_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "小红吧",
+                    "stream": False,
+                    "executionMode": "router_only",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert third_turn.status_code == 200
+            third_body = third_turn.json()
+            assert third_body["status"] == "waiting_user_input"
+            assert third_body["slot_memory"] == {
+                "payee_name": "小红",
+            }
+            assert third_body["message"] == "请提供金额"
+
+            fourth_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "200",
+                    "stream": False,
+                    "executionMode": "router_only",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_confirm_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert fourth_turn.status_code == 200
+            fourth_body = fourth_turn.json()
+            assert fourth_body["status"] == "ready_for_dispatch"
+            assert fourth_body["completion_reason"] == "router_ready_for_dispatch"
+            assert fourth_body["slot_memory"] == {
+                "payee_name": "小红",
+                "amount": "200",
+            }
+            assert fourth_body["output"] == {}
+
+    asyncio.run(run())
+
+
 def test_v2_ag_trans_consumes_full_agent_stream_after_first_terminal_chunk() -> None:
     async def run() -> None:
         agent_client = _TrailingTerminalChunkAgentClient()
@@ -3589,6 +3762,165 @@ def test_v1_message_stream_assistant_protocol_waiting_then_completed() -> None:
         assert completed_payload["task_list"] == [{"name": completed_payload["current_task"], "status": "completed"}]
         assert completed_payload["output"]["message"] == "已向小明转账 200 CNY，转账成功"
         assert completed_payload["output"]["data"][0]["answer"] == "||200|小明|"
+
+    asyncio.run(run())
+
+
+def test_v1_message_assistant_protocol_keeps_latest_payee_across_multiple_waiting_turns() -> None:
+    async def run() -> None:
+        agent_client = _AssistantProtocolTransferAgentClient()
+        app, _ = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_MultiTurnOverrideTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = "assistant_multiturn_latest_payee_demo"
+
+            first_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "我要转账",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert first_turn.status_code == 200
+            first_body = first_turn.json()
+            assert first_body["status"] == "waiting_user_input"
+            assert first_body["slot_memory"] == {}
+            assert first_body["message"] == "请提供金额、收款人姓名"
+
+            second_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "小刚",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert second_turn.status_code == 200
+            second_body = second_turn.json()
+            assert second_body["status"] == "waiting_user_input"
+            assert second_body["slot_memory"] == {"payee_name": "小刚"}
+            assert second_body["message"] == "请提供金额"
+
+            third_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "小红吧",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert third_turn.status_code == 200
+            third_body = third_turn.json()
+            assert third_body["status"] == "waiting_user_input"
+            assert third_body["slot_memory"] == {"payee_name": "小红"}
+            assert third_body["message"] == "请提供金额"
+
+            fourth_turn = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "200",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                        {"name": "currentDisplay", "value": "transfer_confirm_page"},
+                        {"name": "agentSessionID", "value": session_id},
+                    ],
+                },
+            )
+            assert fourth_turn.status_code == 200
+            fourth_body = fourth_turn.json()
+            assert fourth_body["status"] == "completed"
+            assert fourth_body["completion_state"] == 2
+            assert fourth_body["slot_memory"] == {"payee_name": "小红", "amount": "200"}
+            assert fourth_body["output"]["data"] == [
+                {
+                    "isSubAgent": "True",
+                    "typIntent": "mbpTransfer",
+                    "answer": "||200|小红|",
+                }
+            ]
+
+        assert len(agent_client.tasks) == 1
+        assert agent_client.tasks[0].slot_memory == {"payee_name": "小红", "amount": "200"}
+
+    asyncio.run(run())
+
+
+def test_v1_message_stream_assistant_protocol_emits_graph_level_pending_payload() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(graph_builder=_SingleNodeConfirmGraphBuilder())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": "assistant_stream_graph_pending_demo",
+                    "txt": "小刚",
+                    "stream": True,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": "assistant_stream_graph_pending_demo"},
+                    ],
+                },
+            ) as response:
+                stream_text = "".join([chunk async for chunk in response.aiter_text()])
+
+            json_response = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": "assistant_json_graph_pending_demo",
+                    "txt": "小刚",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": "assistant_json_graph_pending_demo"},
+                    ],
+                },
+            )
+
+        frames = _parse_sse_frames(stream_text)
+        assert frames[-1] == ("done", "[DONE]")
+        message_payloads = [json.loads(data) for event, data in frames if event == "message"]
+        assert len(message_payloads) == 1
+        assert json_response.status_code == 200
+        assert message_payloads[0] == json_response.json()
+        assert set(message_payloads[0]) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS
+        assert message_payloads[0]["status"] == "draft"
+        assert message_payloads[0]["completion_state"] == 0
+        assert message_payloads[0]["completion_reason"] == "running"
+        assert message_payloads[0]["message"] == "执行图等待节点确认"
+        assert message_payloads[0]["output"] == {}
 
     asyncio.run(run())
 

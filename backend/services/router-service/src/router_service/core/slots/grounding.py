@@ -92,9 +92,26 @@ def slot_value_grounded(
         normalize_text(string_value),
         normalize_text(string_value.removeprefix("我")),
     }
-    if slot_def is not None:
-        candidates |= {normalize_text(alias) for alias in slot_def.aliases if alias}
     return any(candidate and candidate in normalized_grounding_text for candidate in candidates)
+
+
+def grounded_source_text(source_text: str | None, grounding_text: str) -> str | None:
+    """Return a trusted source-text snippet only when it is actually present in the evidence text."""
+    cleaned_source_text = (source_text or "").strip()
+    if not cleaned_source_text:
+        return None
+
+    normalized_source_text = normalize_text(cleaned_source_text)
+    normalized_grounding_text = normalize_text(grounding_text)
+    if normalized_source_text and normalized_source_text in normalized_grounding_text:
+        return cleaned_source_text
+
+    digits_source_text = normalize_digits(cleaned_source_text)
+    digits_grounding_text = normalize_digits(grounding_text)
+    if digits_source_text and digits_source_text in digits_grounding_text:
+        return cleaned_source_text
+
+    return None
 
 
 def slot_value_grounded_with_currency_fallback(

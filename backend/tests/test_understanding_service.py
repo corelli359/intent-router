@@ -5,7 +5,7 @@ import asyncio
 from router_service.core.graph.planner import TurnDecisionPayload
 from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.recognition.understanding_service import IntentUnderstandingService
-from router_service.core.shared.domain import IntentDefinition, IntentMatch
+from router_service.core.shared.domain import ChatMessage, IntentDefinition, IntentMatch
 from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
 
 
@@ -20,10 +20,14 @@ class _Catalog:
 class _FullRecognizerShouldNotRun:
     def __init__(self) -> None:
         self.calls = 0
+        self.last_recent_messages: list[str] | None = None
+        self.last_long_term_memory: list[str] | None = None
 
     async def recognize(self, *args, **kwargs):
-        del args, kwargs
+        del args
         self.calls += 1
+        self.last_recent_messages = list(kwargs.get("recent_messages", []))
+        self.last_long_term_memory = list(kwargs.get("long_term_memory", []))
         return RecognitionResult(
             primary=[
                 IntentMatch(
@@ -91,6 +95,13 @@ def test_waiting_node_turn_uses_full_recognizer_when_no_local_fast_path_exists()
             event_publisher=_EventPublisher(),
         )
         session = GraphSessionState(session_id="session-fast", cust_id="cust-fast")
+        session.messages.extend(
+            [
+                ChatMessage(role="user", content="我要转账"),
+                ChatMessage(role="assistant", content="请提供金额、收款人姓名"),
+                ChatMessage(role="user", content="给张三转200"),
+            ]
+        )
         graph = ExecutionGraphState(source_message="帮我转账")
         node = GraphNodeState(
             intent_code="transfer_money",
@@ -109,5 +120,10 @@ def test_waiting_node_turn_uses_full_recognizer_when_no_local_fast_path_exists()
 
         assert [match.intent_code for match in result.recognition.primary] == ["transfer_money"]
         assert recognizer.calls == 1
+        assert recognizer.last_recent_messages == [
+            "user: 我要转账",
+            "assistant: 请提供金额、收款人姓名",
+        ]
+        assert recognizer.last_long_term_memory == []
 
     asyncio.run(run())

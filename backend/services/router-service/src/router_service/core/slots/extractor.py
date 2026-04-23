@@ -23,6 +23,7 @@ from router_service.core.prompts.prompt_templates import (
 from router_service.core.recognition.recognizer import recognition_intent_payload
 from router_service.core.slots.grounding import (
     combine_distinct_text,
+    grounded_source_text,
     normalize_structured_slot_memory,
     slot_value_grounded_with_currency_fallback,
 )
@@ -109,6 +110,7 @@ class SlotExtractor:
         node: GraphNodeState,
         graph_source_message: str,
         current_message: str,
+        recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
     ) -> SlotExtractionResult:
         """Extract slot candidates from preserved bindings and optional LLM output."""
@@ -116,6 +118,7 @@ class SlotExtractor:
         slot_defs_by_key = {slot.slot_key: slot for slot in slot_schema}
         history_text = "\n".join(entry for entry in (long_term_memory or []) if entry)
         grounding_text = combine_distinct_text(graph_source_message, node.source_fragment, current_message)
+        turn_history_text = combine_distinct_text(*(recent_messages or []), grounding_text)
         seed_bindings = {binding.slot_key: binding for binding in node.slot_bindings}
 
         merged_memory: dict[str, Any] = {}
@@ -136,6 +139,7 @@ class SlotExtractor:
                 value=value,
                 binding=binding,
                 grounding_text=grounding_text,
+                turn_history_text=turn_history_text,
                 history_text=history_text,
                 from_history=slot_key in node.history_slot_keys,
             )
@@ -176,6 +180,7 @@ class SlotExtractor:
                 current_message=current_message or graph_source_message,
                 source_fragment=node.source_fragment or graph_source_message,
                 existing_slot_memory=merged_memory,
+                recent_messages=recent_messages,
             )
             if llm_result is not None:
                 ambiguous_slot_keys = list(llm_result.ambiguous_slot_keys)
@@ -689,6 +694,7 @@ class SlotExtractor:
         value: Any,
         binding: SlotBindingState | None,
         grounding_text: str,
+        turn_history_text: str,
         history_text: str,
         from_history: bool,
     ) -> tuple[SlotBindingState | None, bool]:
@@ -712,8 +718,12 @@ class SlotExtractor:
         if source == SlotBindingSource.HISTORY or from_history:
             if not slot_def.allow_from_history:
                 return None, False
-            evidence_text = combine_distinct_text(
+            trusted_source_text = grounded_source_text(
                 binding.source_text if binding is not None else None,
+                history_text,
+            )
+            evidence_text = combine_distinct_text(
+                trusted_source_text,
                 history_text,
             )
             if not evidence_text or not self._value_is_grounded(
@@ -734,7 +744,11 @@ class SlotExtractor:
                 True,
             )
 
-        evidence_text = binding.source_text if binding is not None and binding.source_text else grounding_text
+        trusted_source_text = grounded_source_text(
+            binding.source_text if binding is not None else None,
+            turn_history_text,
+        )
+        evidence_text = trusted_source_text or grounding_text
         if not self._value_is_grounded(slot_def=slot_def, value=value, grounding_text=evidence_text):
             return None, False
         return (
@@ -756,6 +770,7 @@ class SlotExtractor:
         current_message: str,
         source_fragment: str,
         existing_slot_memory: dict[str, Any],
+        recent_messages: list[str] | None = None,
     ) -> SlotExtractionPayload | None:
         """Call the slot extraction LLM and normalize its JSON output."""
         if self.llm_client is None:
@@ -766,6 +781,7 @@ class SlotExtractor:
                 variables={
                     "message": current_message,
                     "source_fragment": source_fragment,
+                    "recent_messages_json": json_dumps(recent_messages or []),
                     "intent_json": json_dumps(recognition_intent_payload(intent)),
                     "existing_slot_memory_json": json_dumps(existing_slot_memory),
                 },
@@ -835,13 +851,16 @@ class SlotExtractor:
             if source == SlotBindingSource.HISTORY:
                 if not slot_def.allow_from_history:
                     continue
-                evidence_text = item.source_text or history_text
+                evidence_text = combine_distinct_text(
+                    grounded_source_text(item.source_text, history_text),
+                    history_text,
+                )
             elif source == SlotBindingSource.RECOMMENDATION:
                 if not slot_def.allow_from_recommendation:
                     continue
                 evidence_text = item.source_text or grounding_text
             else:
-                evidence_text = item.source_text or grounding_text
+                evidence_text = grounded_source_text(item.source_text, grounding_text) or grounding_text
 
             if source != SlotBindingSource.RECOMMENDATION and not self._value_is_grounded(
                 slot_def=slot_def,

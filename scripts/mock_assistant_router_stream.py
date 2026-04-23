@@ -106,7 +106,10 @@ def _request_json(*, url: str, payload: dict[str, Any], timeout_seconds: int) ->
     request = urllib.request.Request(
         url=url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Connection": "close",
+        },
         method="POST",
     )
     try:
@@ -132,6 +135,7 @@ def _iter_sse_frames(
         headers={
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
+            "Connection": "close",
         },
         method="POST",
     )

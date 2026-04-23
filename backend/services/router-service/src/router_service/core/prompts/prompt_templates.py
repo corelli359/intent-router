@@ -74,6 +74,9 @@ DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT = (
     "只有在确实无法区分应该落到哪个槽位时，才把 slot_key 放进 ambiguousSlotKeys。"
     "如果已有 existing_slot_memory 中的值明显已经成立，不必重复输出；重点补充缺失槽位。"
     "如果当前轮明确修改了已有值，可以输出新的值覆盖旧值。"
+    "recent_messages 只用于帮助你理解当前轮和既有槽位之间的上下文连续性。"
+    "不要仅凭 recent_messages 里出现过的旧值就新增槽位；除非该值已经在 existing_slot_memory 中成立，"
+    "或者当前轮消息明确表达了该值。"
     "source_text 应尽量提供当前消息或当前节点原始片段中的最小证据片段。"
     "输出必须是 JSON，不能输出解释。"
 )
@@ -81,6 +84,7 @@ DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT = (
 DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT = (
     "当前消息:\n{message}\n\n"
     "当前节点原始片段:\n{source_fragment}\n\n"
+    "最近对话(JSON):\n{recent_messages_json}\n\n"
     "意图定义(JSON):\n{intent_json}\n\n"
     "已有槽位(JSON):\n{existing_slot_memory_json}\n\n"
     "当前任务:\n"

@@ -226,6 +226,8 @@ def test_pending_graph_replan_preserves_emit_events_flag() -> None:
     route_calls = [call for call in callbacks.actions if call[0] == "route_new_message"]
     assert route_calls
     assert route_calls[-1][2]["emit_events"] is True
+    assert "recent_messages" not in route_calls[-1][2]
+    assert "long_term_memory" not in route_calls[-1][2]
 
 
 def test_pending_graph_cancel_triggers_cancel_callback() -> None:
@@ -318,6 +320,8 @@ def test_waiting_node_replan_preserves_emit_events_flag() -> None:
     route_calls = [call for call in callbacks.actions if call[0] == "route_new_message"]
     assert route_calls
     assert route_calls[-1][2]["emit_events"] is True
+    assert "recent_messages" not in route_calls[-1][2]
+    assert "long_term_memory" not in route_calls[-1][2]
 
 
 def test_route_new_message_forwards_emit_events_to_graph_compiler() -> None:

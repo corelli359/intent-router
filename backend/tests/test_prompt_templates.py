@@ -13,12 +13,15 @@ from router_service.core.prompts.prompt_templates import (  # noqa: E402
     DEFAULT_RECOGNIZER_SYSTEM_PROMPT,
     DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
     DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
+    DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
+    DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT,
     DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT,
     DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT,
     DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT,
     DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT,
     build_recognizer_prompt,
     build_graph_planner_prompt,
+    build_slot_extractor_prompt,
     build_turn_interpreter_prompt,
     build_unified_graph_builder_prompt,
 )
@@ -124,6 +127,26 @@ def test_v2_turn_interpreter_prompt_accepts_expected_variables() -> None:
     assert len(messages) == 2
     assert "resume_current" in messages[1].content
     assert '"target_intent_code": "string | null"' in messages[1].content
+
+
+def test_v2_slot_extractor_prompt_accepts_recent_messages_and_existing_slots() -> None:
+    prompt = build_slot_extractor_prompt(
+        system_prompt=DEFAULT_SLOT_EXTRACTOR_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_SLOT_EXTRACTOR_HUMAN_PROMPT,
+    )
+
+    messages = prompt.format_messages(
+        message="200",
+        source_fragment="我要转账",
+        recent_messages_json='["user: 我要转账","assistant: 请提供金额"]',
+        intent_json='{"intent_code":"AG_TRANS"}',
+        existing_slot_memory_json='{"payee_name":"小红"}',
+    )
+
+    assert len(messages) == 2
+    assert "recent_messages 只用于帮助你理解当前轮和既有槽位之间的上下文连续性" in messages[0].content
+    assert "最近对话(JSON)" in messages[1].content
+    assert '"payee_name":"小红"' in messages[1].content
 
 
 def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:

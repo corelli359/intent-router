@@ -32,6 +32,34 @@ def _gas_intent() -> IntentDefinition:
     )
 
 
+def _transfer_intent() -> IntentDefinition:
+    return IntentDefinition(
+        intent_code="AG_TRANS",
+        name="转账",
+        description="执行转账，需要收款人姓名和金额。",
+        examples=["给小明转500元"],
+        keywords=["转账", "汇款"],
+        agent_url="http://agent.example.com/transfer",
+        slot_schema=[
+            {
+                "slot_key": "payee_name",
+                "label": "收款人姓名",
+                "description": "当前转账的收款人姓名",
+                "aliases": ["收款人", "对方姓名"],
+                "value_type": "string",
+                "required": True,
+            },
+            {
+                "slot_key": "amount",
+                "label": "转账金额",
+                "description": "当前转账金额",
+                "value_type": "currency",
+                "required": True,
+            },
+        ],
+    )
+
+
 def _binding(slot_key: str, value: str, source_text: str) -> SlotBindingState:
     return SlotBindingState(
         slot_key=slot_key,
@@ -81,3 +109,45 @@ def test_slot_validator_accepts_grounded_slots() -> None:
     assert result.can_dispatch is True
     assert result.missing_required_slots == []
     assert result.slot_memory == {"gas_account_number": "88001234", "amount": "88"}
+
+
+def test_slot_validator_rejects_user_message_binding_when_source_text_is_fabricated() -> None:
+    validator = SlotValidator()
+    result = validator.validate(
+        intent=_transfer_intent(),
+        slot_memory={"payee_name": "小明"},
+        slot_bindings=[_binding("payee_name", "小明", "给小明转账")],
+        history_slot_keys=[],
+        ambiguous_slot_keys=[],
+        graph_source_message="我要转账",
+        node_source_fragment="我要转账",
+        current_message="我要转账",
+        long_term_memory=[],
+    )
+
+    assert result.can_dispatch is False
+    assert result.invalid_slot_keys == ["payee_name"]
+    assert result.slot_memory == {}
+
+
+def test_slot_validator_preserves_previously_grounded_user_message_binding_across_turns() -> None:
+    validator = SlotValidator()
+    result = validator.validate(
+        intent=_transfer_intent(),
+        slot_memory={"payee_name": "小红", "amount": "200"},
+        slot_bindings=[
+            _binding("payee_name", "小红", "小红吧"),
+            _binding("amount", "200", "金额200"),
+        ],
+        history_slot_keys=[],
+        ambiguous_slot_keys=[],
+        graph_source_message="我要转账",
+        node_source_fragment="我要转账",
+        current_message="金额200",
+        recent_messages=["我要转账", "小红吧", "金额200"],
+        long_term_memory=[],
+    )
+
+    assert result.can_dispatch is True
+    assert result.invalid_slot_keys == []
+    assert result.slot_memory == {"payee_name": "小红", "amount": "200"}
