@@ -332,7 +332,7 @@ Accept: text/event-stream
   "message": "执行图等待助手确认完成态",
   "output": {
     "message": "已受理向小明转账 200 CNY，等待助手确认完成态",
-    "isHandOver": true,
+    "ishandover": true,
     "handOverReason": "等待助手确认完成态",
     "completion_state": 1,
     "data": [
@@ -376,7 +376,7 @@ Accept: text/event-stream
   "message": "执行图已完成",
   "output": {
     "message": "已受理向小明转账 200 CNY，等待助手确认完成态",
-    "isHandOver": true,
+    "ishandover": true,
     "handOverReason": "等待助手确认完成态",
     "completion_state": 1,
     "data": [
@@ -444,7 +444,7 @@ event: message
 data: {"ok":true,"current_task":"task_123","task_list":[{"name":"task_123","status":"waiting"}],"status":"running","intent_code":"AG_TRANS","completion_state":0,"completion_reason":"running","slot_memory":{"payee_name":"小明","amount":"200"},"message":"","output":{"node_id":"validate_payee","message":"收款人校验通过","completion_state":0,"data":[{"answer":"收款人校验通过"}]}}
 
 event: message
-data: {"ok":true,"current_task":"task_123","task_list":[{"name":"task_123","status":"completed"}],"status":"completed","intent_code":"AG_TRANS","completion_state":2,"completion_reason":"agent_final_done","slot_memory":{"payee_name":"小明","amount":"200"},"message":"执行图已完成","output":{"node_id":"execute_transfer","message":"已向小明转账 200 CNY，转账成功","completion_state":2,"completion_reason":"agent_final_done","isHandOver":true,"data":[{"isSubAgent":"True","typIntent":"mbpTransfer","answer":"||200|小明|"}]}}
+data: {"ok":true,"current_task":"task_123","task_list":[{"name":"task_123","status":"completed"}],"status":"completed","intent_code":"AG_TRANS","completion_state":2,"completion_reason":"agent_final_done","slot_memory":{"payee_name":"小明","amount":"200"},"message":"执行图已完成","output":{"node_id":"execute_transfer","message":"已向小明转账 200 CNY，转账成功","completion_state":2,"completion_reason":"agent_final_done","ishandover":true,"data":[{"isSubAgent":"True","typIntent":"mbpTransfer","answer":"||200|小明|"}]}}
 
 event: done
 data: [DONE]
@@ -539,4 +539,3 @@ Router 的最终完成态采用统一汇总语义：
 4. 读当前槽位：顶层 `slot_memory`
 5. 读 Agent 原始业务块：顶层 `output`
 6. 不看 `snapshot`
-

@@ -98,7 +98,9 @@ def _output_kind(response: dict[str, Any]) -> str:
     nested_output = response.get("output")
     if isinstance(response.get("status"), str) and response.get("status") == "failed" and isinstance(response.get("errorCode"), str):
         return "failed"
-    if isinstance(nested_output, dict) and nested_output.get("isHandOver") is True:
+    if isinstance(nested_output, dict) and (
+        nested_output.get("ishandover") is True or nested_output.get("isHandOver") is True
+    ):
         return "handover"
     if isinstance(response.get("status"), str) and isinstance(response.get("intent_code"), str):
         return "router_state"
@@ -149,8 +151,8 @@ def _ensure_assistant_response_shape(response: dict[str, Any]) -> dict[str, Any]
     elif kind == "handover":
         if not isinstance(response.get("intent_code"), str):
             raise AssertionError(f"handover output requires intent_code, got: {response}")
-        if output.get("isHandOver") is not True:
-            raise AssertionError(f"handover output requires isHandOver=true, got: {response}")
+        if output.get("ishandover") is not True and output.get("isHandOver") is not True:
+            raise AssertionError(f"handover output requires ishandover=true, got: {response}")
         if not isinstance(output.get("handOverReason"), str):
             raise AssertionError(f"handover output requires string handOverReason, got: {response}")
         if not isinstance(response.get("message"), str):

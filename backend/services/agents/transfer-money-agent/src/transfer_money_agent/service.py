@@ -270,7 +270,6 @@ class TransferMoneyAgentService:
                 event="final",
                 content="账户余额不足",
                 ishandover=True,
-                isHandOver=True,
                 handOverReason="insufficient_balance",
                 status="failed",
                 data=self._response_data(resolution),

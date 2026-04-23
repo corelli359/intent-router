@@ -387,7 +387,7 @@ class _AssistantProtocolTransferAgentClient:
                 "message": f"已向{payee_name}转账 {amount} CNY，转账成功",
                 "completion_state": 2,
                 "completion_reason": "agent_final_done",
-                "isHandOver": True,
+                "ishandover": True,
                 "handOverReason": "已提供收款人和金额交易对象",
                 "data": [
                     {
@@ -429,7 +429,7 @@ class _AssistantProtocolWorkflowAgentClient:
                 "node_id": "validate_payee",
                 "event": "message",
                 "message": "收款人校验通过",
-                "isHandOver": False,
+                "ishandover": False,
                 "data": [{"answer": "收款人校验通过"}],
                 "payload": {"workflow_node": "validate_payee"},
             },
@@ -447,7 +447,7 @@ class _AssistantProtocolWorkflowAgentClient:
                 "message": f"已向{payee_name}转账 {amount} CNY，转账成功",
                 "completion_state": 2,
                 "completion_reason": "agent_final_done",
-                "isHandOver": True,
+                "ishandover": True,
                 "handOverReason": "已提供收款人和金额交易对象",
                 "data": [
                     {
@@ -493,7 +493,7 @@ class _AssistantProtocolPartialCompletionAgentClient:
             output={
                 "message": f"已受理向{payee_name}转账 {amount} CNY，等待助手确认完成态",
                 "completion_state": 1,
-                "isHandOver": True,
+                "ishandover": True,
                 "handOverReason": "等待助手确认完成态",
                 "data": [
                     {
@@ -3402,7 +3402,7 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
         assert body["output"]["message"] == "已向小明转账 200 CNY，转账成功"
         assert body["output"]["completion_state"] == 2
         assert body["output"]["completion_reason"] == "agent_final_done"
-        assert body["output"]["isHandOver"] is True
+        assert body["output"]["ishandover"] is True
         assert body["output"]["handOverReason"] == "已提供收款人和金额交易对象"
         assert body["output"]["payload"] == {
             "agent": "transfer_money",
@@ -3563,7 +3563,7 @@ def test_v1_task_completion_real_chain_waits_for_assistant_then_joins_to_complet
         assert second_output["message"] == "执行图等待助手确认完成态"
         assert second_output["slot_memory"] == {"amount": "200", "payee_name": "小明"}
         assert second_output["output"]["completion_state"] == 1
-        assert second_output["output"]["isHandOver"] is True
+        assert second_output["output"]["ishandover"] is True
         assert second_output["output"]["handOverReason"] == "等待助手确认完成态"
         assert second_output["output"]["payload"] == {
             "agent": "transfer_money",
@@ -3992,14 +3992,14 @@ def test_v1_message_stream_assistant_protocol_flattens_agent_output_wrapper_with
                     [
                         (
                             'event: message\ndata: {"event":"message","output":{"node_id":"validate_payee",'
-                            '"message":"收款人校验通过","completion_state":0,"isHandOver":false,'
+                            '"message":"收款人校验通过","completion_state":0,"ishandover":false,'
                             '"data":[{"answer":"收款人校验通过"}],'
                             '"slot_memory":{"payee_name":"小明","amount":"200"}}}\n\n'
                         ).encode("utf-8"),
                         (
                             'event: message\ndata: {"event":"message","output":{"node_id":"execute_transfer",'
                             '"message":"已向小明转账 200 CNY，转账成功","completion_state":2,'
-                            '"completion_reason":"agent_final_done","isHandOver":true,'
+                            '"completion_reason":"agent_final_done","ishandover":true,'
                             '"handOverReason":"已提供收款人和金额交易对象",'
                             '"data":[{"isSubAgent":"True","typIntent":"mbpTransfer","answer":"||200|小明|"}],'
                             '"slot_memory":{"payee_name":"小明","amount":"200"}}}\n\n'
