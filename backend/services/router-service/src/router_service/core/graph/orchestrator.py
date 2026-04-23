@@ -750,13 +750,28 @@ class GraphRouterOrchestrator:
 
                 if next_node.status in TERMINAL_NODE_STATUSES:
                     continue
-                if next_node.status in {GraphNodeStatus.WAITING_USER_INPUT, GraphNodeStatus.WAITING_CONFIRMATION}:
+                if next_node.status in {
+                    GraphNodeStatus.WAITING_USER_INPUT,
+                    GraphNodeStatus.WAITING_CONFIRMATION,
+                    GraphNodeStatus.WAITING_ASSISTANT_COMPLETION,
+                }:
                     await self._emit_graph_progress(session)
-                    await self._publish_session_state(
-                        session,
-                        "session.waiting_confirmation"
-                        if next_node.status == GraphNodeStatus.WAITING_CONFIRMATION
-                        else "session.waiting_user_input",
+                    if next_node.status in {
+                        GraphNodeStatus.WAITING_USER_INPUT,
+                        GraphNodeStatus.WAITING_CONFIRMATION,
+                    }:
+                        await self._publish_session_state(
+                            session,
+                            "session.waiting_confirmation"
+                            if next_node.status == GraphNodeStatus.WAITING_CONFIRMATION
+                            else "session.waiting_user_input",
+                        )
+                    return
+                if next_node.status == GraphNodeStatus.RUNNING:
+                    logger.debug(
+                        "Node %s (%s) run loop ended while still running; waiting for downstream terminal signal",
+                        next_node.node_id,
+                        next_node.intent_code,
                     )
                     return
                 logger.warning(

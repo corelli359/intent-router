@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
 from router_service.core.shared.domain import IntentDefinition, Task, TaskStatus
@@ -205,6 +205,78 @@ def test_graph_orchestrator_refreshes_graph_for_terminal_agent_chunk() -> None:
 
         orchestrator._refresh_graph_state.assert_awaited_once()
         orchestrator._emit_graph_progress.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_drain_graph_accepts_waiting_assistant_completion_without_warning() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        session = GraphSessionState(session_id="session_waiting_assistant", cust_id="cust_waiting_assistant")
+        graph = ExecutionGraphState(source_message="测试等待助手完成态")
+        node = GraphNodeState(
+            intent_code="AG_TRANS",
+            title="转账",
+            confidence=0.95,
+            position=0,
+            status=GraphNodeStatus.READY,
+        )
+        graph.nodes.append(node)
+        session.current_graph = graph
+
+        async def fake_run_node(_session, _graph, target_node, _seed_input) -> None:
+            target_node.touch(GraphNodeStatus.WAITING_ASSISTANT_COMPLETION)
+
+        orchestrator._refresh_graph_state = AsyncMock()
+        orchestrator._run_node = AsyncMock(side_effect=fake_run_node)
+        orchestrator._next_ready_node = lambda _graph: node
+        orchestrator._emit_graph_progress = AsyncMock()
+        orchestrator._publish_session_state = AsyncMock()
+
+        with patch("router_service.core.graph.orchestrator.logger.warning") as mock_warning:
+            await orchestrator._drain_graph(session, graph.source_message)
+
+        orchestrator._emit_graph_progress.assert_awaited_once()
+        orchestrator._publish_session_state.assert_not_awaited()
+        mock_warning.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_graph_orchestrator_drain_graph_downgrades_running_exit_to_debug() -> None:
+    async def run() -> None:
+        orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
+        session = GraphSessionState(session_id="session_running_exit", cust_id="cust_running_exit")
+        graph = ExecutionGraphState(source_message="测试运行中退出")
+        node = GraphNodeState(
+            intent_code="query_account_balance",
+            title="查余额",
+            confidence=0.95,
+            position=0,
+            status=GraphNodeStatus.READY,
+        )
+        graph.nodes.append(node)
+        session.current_graph = graph
+
+        async def fake_run_node(_session, _graph, target_node, _seed_input) -> None:
+            target_node.touch(GraphNodeStatus.RUNNING)
+
+        orchestrator._refresh_graph_state = AsyncMock()
+        orchestrator._run_node = AsyncMock(side_effect=fake_run_node)
+        orchestrator._next_ready_node = lambda _graph: node
+        orchestrator._emit_graph_progress = AsyncMock()
+        orchestrator._publish_session_state = AsyncMock()
+
+        with (
+            patch("router_service.core.graph.orchestrator.logger.warning") as mock_warning,
+            patch("router_service.core.graph.orchestrator.logger.debug") as mock_debug,
+        ):
+            await orchestrator._drain_graph(session, graph.source_message)
+
+        orchestrator._emit_graph_progress.assert_not_awaited()
+        orchestrator._publish_session_state.assert_not_awaited()
+        mock_warning.assert_not_called()
+        mock_debug.assert_called_once()
 
     asyncio.run(run())
 
