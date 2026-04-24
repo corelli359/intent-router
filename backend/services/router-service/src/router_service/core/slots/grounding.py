@@ -132,6 +132,32 @@ def slot_value_grounded_with_currency_fallback(
     return any(alias.upper() in upper_text or alias in grounding_text for alias in aliases)
 
 
+def slot_value_grounded_or_source_text_backed(
+    *,
+    slot_def: IntentSlotDefinition,
+    value: Any,
+    grounding_text: str,
+    source_text: str | None,
+) -> bool:
+    """Accept grounded values or trusted source-text-backed numeric normalizations."""
+    if slot_value_grounded_with_currency_fallback(
+        slot_def=slot_def,
+        value=value,
+        grounding_text=grounding_text,
+    ):
+        return True
+
+    trusted_source_text = grounded_source_text(source_text, grounding_text)
+    if not trusted_source_text:
+        return False
+
+    if slot_def.value_type in _DIGIT_VALUE_TYPES:
+        normalized_value = normalize_digits(str(value).strip())
+        return bool(normalized_value)
+
+    return False
+
+
 def normalize_slot_memory(
     *,
     slot_memory: dict[str, Any],

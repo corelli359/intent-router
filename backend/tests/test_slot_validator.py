@@ -151,3 +151,26 @@ def test_slot_validator_preserves_previously_grounded_user_message_binding_acros
     assert result.can_dispatch is True
     assert result.invalid_slot_keys == []
     assert result.slot_memory == {"payee_name": "小红", "amount": "200"}
+
+
+def test_slot_validator_accepts_source_text_backed_normalized_numeric_slot() -> None:
+    validator = SlotValidator()
+    result = validator.validate(
+        intent=_gas_intent(),
+        slot_memory={"gas_account_number": "88001234", "amount": "123"},
+        slot_bindings=[
+            _binding("gas_account_number", "88001234", "燃气户号88001234"),
+            _binding("amount", "123", "一二三"),
+        ],
+        history_slot_keys=[],
+        ambiguous_slot_keys=[],
+        graph_source_message="帮我交燃气费",
+        node_source_fragment="帮我交燃气费",
+        current_message="一二三",
+        recent_messages=["帮我交燃气费", "燃气户号88001234", "一二三"],
+        long_term_memory=[],
+    )
+
+    assert result.can_dispatch is True
+    assert result.invalid_slot_keys == []
+    assert result.slot_memory == {"gas_account_number": "88001234", "amount": "123"}

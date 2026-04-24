@@ -13,7 +13,7 @@ from router_service.core.shared.diagnostics import (
 from router_service.core.slots.grounding import (
     combine_distinct_text,
     grounded_source_text,
-    slot_value_grounded_with_currency_fallback,
+    slot_value_grounded_or_source_text_backed,
 )
 from router_service.core.shared.graph_domain import SlotBindingSource, SlotBindingState
 
@@ -189,14 +189,16 @@ class SlotValidator:
         if source == SlotBindingSource.HISTORY:
             if not slot_def.allow_from_history:
                 return False
+            trusted_source_text = grounded_source_text(source_text, history_text)
             evidence_text = combine_distinct_text(
-                grounded_source_text(source_text, history_text),
+                trusted_source_text,
                 history_text,
             )
             return bool(evidence_text) and self._value_is_grounded(
                 slot_def=slot_def,
                 value=value,
                 grounding_text=evidence_text,
+                source_text=trusted_source_text,
             )
         trusted_source_text = grounded_source_text(source_text, turn_history_text)
         evidence_text = trusted_source_text or grounding_text
@@ -204,6 +206,7 @@ class SlotValidator:
             slot_def=slot_def,
             value=value,
             grounding_text=evidence_text,
+            source_text=trusted_source_text,
         )
 
     def _build_prompt_message(
@@ -233,10 +236,18 @@ class SlotValidator:
             return None
         return "；".join(parts)
 
-    def _value_is_grounded(self, *, slot_def, value: Any, grounding_text: str) -> bool:
+    def _value_is_grounded(
+        self,
+        *,
+        slot_def,
+        value: Any,
+        grounding_text: str,
+        source_text: str | None,
+    ) -> bool:
         """Apply grounding logic, including currency-specific fallback matching."""
-        return slot_value_grounded_with_currency_fallback(
+        return slot_value_grounded_or_source_text_backed(
             slot_def=slot_def,
             value=value,
             grounding_text=grounding_text,
+            source_text=source_text,
         )

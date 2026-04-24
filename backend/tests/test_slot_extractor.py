@@ -78,6 +78,23 @@ class _HallucinatingTransferLLMClient:
         }
 
 
+class _NormalizedNumericLLMClient:
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, variables, model, on_delta
+        return {
+            "slots": [
+                {
+                    "slot_key": "amount",
+                    "value": "123",
+                    "source": "user_message",
+                    "source_text": "一二三",
+                    "confidence": 0.98,
+                }
+            ],
+            "ambiguousSlotKeys": [],
+        }
+
+
 def _gas_intent() -> IntentDefinition:
     return IntentDefinition(
         intent_code="pay_gas_bill",
@@ -329,5 +346,39 @@ def test_slot_extractor_preserves_previous_user_message_slot_across_turns() -> N
         assert result.slot_memory == {"payee_name": "小红", "amount": "200"}
         binding_by_key = {binding.slot_key: binding for binding in result.slot_bindings}
         assert binding_by_key["payee_name"].source_text == "小红吧"
+
+    asyncio.run(run())
+
+
+def test_slot_extractor_keeps_source_text_backed_normalized_numeric_slot() -> None:
+    async def run() -> None:
+        extractor = SlotExtractor(llm_client=_NormalizedNumericLLMClient())
+        result = await extractor.extract(
+            intent=_gas_intent(),
+            node=GraphNodeState(
+                intent_code="pay_gas_bill",
+                title="缴纳燃气费",
+                confidence=0.95,
+                source_fragment="帮我交燃气费",
+                slot_memory={"gas_account_number": "88001234"},
+                slot_bindings=[
+                    SlotBindingState(
+                        slot_key="gas_account_number",
+                        value="88001234",
+                        source=SlotBindingSource.USER_MESSAGE,
+                        source_text="燃气户号88001234",
+                        confidence=0.95,
+                    )
+                ],
+            ),
+            graph_source_message="帮我交燃气费",
+            current_message="一二三",
+            recent_messages=["帮我交燃气费", "燃气户号88001234", "一二三"],
+            long_term_memory=[],
+        )
+
+        assert result.slot_memory == {"gas_account_number": "88001234", "amount": "123"}
+        binding_by_key = {binding.slot_key: binding for binding in result.slot_bindings}
+        assert binding_by_key["amount"].source_text == "一二三"
 
     asyncio.run(run())
