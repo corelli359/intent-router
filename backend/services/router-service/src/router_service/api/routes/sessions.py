@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from enum import StrEnum
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
@@ -25,6 +27,7 @@ from router_service.core.support.json_codec import JSONDecodeError, json_dumps, 
 
 
 public_router = APIRouter(tags=["router"])
+logger = logging.getLogger(__name__)
 
 
 class MessageExecutionMode(StrEnum):
@@ -874,7 +877,14 @@ def _assistant_message_stream_response(
     upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(config_variables)
 
     async def event_generator():
+        started_at = time.perf_counter()
         queue = broker.register(session_id)
+        logger.debug(
+            "Assistant protocol stream started (session_id=%s, execution_mode=%s, content_chars=%s)",
+            session_id,
+            execution_mode.value,
+            len(content),
+        )
         processing_task = asyncio.create_task(
             orchestrator.handle_user_message(
                 session_id=session_id,
@@ -895,7 +905,19 @@ def _assistant_message_stream_response(
                 if processing_task.done() and queue.empty():
                     try:
                         await processing_task
+                        logger.debug(
+                            "Assistant protocol processing completed (session_id=%s, elapsed_ms=%.2f)",
+                            session_id,
+                            (time.perf_counter() - started_at) * 1000,
+                        )
                     except LLMServiceUnavailableError as exc:
+                        logger.debug(
+                            "Assistant protocol processing failed with LLM unavailable (session_id=%s, elapsed_ms=%.2f, stage=%s, details=%s)",
+                            session_id,
+                            (time.perf_counter() - started_at) * 1000,
+                            exc.stage,
+                            exc.details,
+                        )
                         yield _encode_sse(
                             "message",
                             _assistant_sse_payload(ok=False, payload=_assistant_llm_unavailable_output(exc)),
@@ -944,7 +966,23 @@ def _assistant_message_stream_response(
                     continue
                 payload = _assistant_output_from_event(event)
                 if payload is None:
+                    logger.debug(
+                        "Assistant protocol event filtered (session_id=%s, event=%s, task_id=%s, elapsed_ms=%.2f)",
+                        session_id,
+                        event.event,
+                        event.task_id,
+                        (time.perf_counter() - started_at) * 1000,
+                    )
                     continue
+                logger.debug(
+                    "Assistant protocol event emitted (session_id=%s, event=%s, task_id=%s, status=%s, completion_state=%s, elapsed_ms=%.2f)",
+                    session_id,
+                    event.event,
+                    event.task_id,
+                    payload.get("status"),
+                    payload.get("completion_state"),
+                    (time.perf_counter() - started_at) * 1000,
+                )
                 yield _encode_sse("message", _assistant_sse_payload(ok=True, payload=payload))
         finally:
             broker.unregister(session_id, queue)
@@ -954,6 +992,11 @@ def _assistant_message_stream_response(
                     await processing_task
             if not await http_request.is_disconnected():
                 yield _encode_done_sse()
+            logger.debug(
+                "Assistant protocol stream closed (session_id=%s, elapsed_ms=%.2f)",
+                session_id,
+                (time.perf_counter() - started_at) * 1000,
+            )
 
     return StreamingResponse(
         event_generator(),

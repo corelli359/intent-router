@@ -276,13 +276,24 @@ class LangChainLLMClient:
     ) -> str:
         """Execute one non-retried streaming prompt call."""
         rendered_messages = self._render_chat_messages(prompt, variables)
+        started_at = time.perf_counter()
         request = self._request_payload(
             messages=rendered_messages,
             model=model,
             stream=True,
         )
         chunks: list[str] = []
+        line_count = 0
+        text_chunk_count = 0
+        first_delta_logged = False
         assert self.http_async_client is not None
+        logger.debug(
+            "LLM stream request started (trace_id=%s, model=%s, base_url=%s, message_count=%s)",
+            current_trace_id(),
+            model or self.default_model,
+            self.base_url,
+            len(rendered_messages),
+        )
         async with self.http_async_client.stream(
             "POST",
             self._chat_completions_url(),
@@ -290,7 +301,15 @@ class LangChainLLMClient:
             content=json_dumpb(request),
         ) as response:
             await self._raise_for_status(response)
+            logger.debug(
+                "LLM stream response opened (trace_id=%s, model=%s, status_code=%s, elapsed_ms=%.2f)",
+                current_trace_id(),
+                model or self.default_model,
+                response.status_code,
+                (time.perf_counter() - started_at) * 1000,
+            )
             async for line in response.aiter_lines():
+                line_count += 1
                 raw_line = line.strip()
                 if not raw_line or not raw_line.startswith("data:"):
                     continue
@@ -302,8 +321,27 @@ class LangChainLLMClient:
                 if not text:
                     continue
                 chunks.append(text)
+                text_chunk_count += 1
+                if not first_delta_logged:
+                    first_delta_logged = True
+                    logger.debug(
+                        "LLM stream first text delta (trace_id=%s, model=%s, elapsed_ms=%.2f, delta_chars=%s)",
+                        current_trace_id(),
+                        model or self.default_model,
+                        (time.perf_counter() - started_at) * 1000,
+                        len(text),
+                    )
                 if on_delta is not None:
                     await on_delta(text)
+        logger.debug(
+            "LLM stream completed (trace_id=%s, model=%s, elapsed_ms=%.2f, line_count=%s, text_chunk_count=%s, response_chars=%s)",
+            current_trace_id(),
+            model or self.default_model,
+            (time.perf_counter() - started_at) * 1000,
+            line_count,
+            text_chunk_count,
+            sum(len(chunk) for chunk in chunks),
+        )
         return "".join(chunks)
 
     async def _invoke_once(
