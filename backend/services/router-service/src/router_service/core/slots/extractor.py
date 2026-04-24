@@ -23,9 +23,7 @@ from router_service.core.prompts.prompt_templates import (
 from router_service.core.recognition.recognizer import recognition_intent_payload
 from router_service.core.slots.grounding import (
     combine_distinct_text,
-    grounded_source_text,
     normalize_structured_slot_memory,
-    slot_value_grounded_or_source_text_backed,
 )
 from router_service.core.shared.graph_domain import GraphNodeState, SlotBindingSource, SlotBindingState
 from router_service.models.intent import IntentSlotDefinition, SlotOverwritePolicy, SlotValueType
@@ -718,21 +716,6 @@ class SlotExtractor:
         if source == SlotBindingSource.HISTORY or from_history:
             if not slot_def.allow_from_history:
                 return None, False
-            trusted_source_text = grounded_source_text(
-                binding.source_text if binding is not None else None,
-                history_text,
-            )
-            evidence_text = combine_distinct_text(
-                trusted_source_text,
-                history_text,
-            )
-            if not evidence_text or not self._value_is_grounded(
-                slot_def=slot_def,
-                value=value,
-                grounding_text=evidence_text,
-                source_text=trusted_source_text,
-            ):
-                return None, False
             return (
                 SlotBindingState(
                     slot_key=slot_key,
@@ -744,19 +727,6 @@ class SlotExtractor:
                 ),
                 True,
             )
-
-        trusted_source_text = grounded_source_text(
-            binding.source_text if binding is not None else None,
-            turn_history_text,
-        )
-        evidence_text = trusted_source_text or grounding_text
-        if not self._value_is_grounded(
-            slot_def=slot_def,
-            value=value,
-            grounding_text=evidence_text,
-            source_text=trusted_source_text,
-        ):
-            return None, False
         return (
             SlotBindingState(
                 slot_key=slot_key,
@@ -857,27 +827,9 @@ class SlotExtractor:
             if source == SlotBindingSource.HISTORY:
                 if not slot_def.allow_from_history:
                     continue
-                trusted_source_text = grounded_source_text(item.source_text, history_text)
-                evidence_text = combine_distinct_text(
-                    trusted_source_text,
-                    history_text,
-                )
             elif source == SlotBindingSource.RECOMMENDATION:
                 if not slot_def.allow_from_recommendation:
                     continue
-                evidence_text = item.source_text or grounding_text
-                trusted_source_text = item.source_text
-            else:
-                trusted_source_text = grounded_source_text(item.source_text, grounding_text)
-                evidence_text = trusted_source_text or grounding_text
-
-            if source != SlotBindingSource.RECOMMENDATION and not self._value_is_grounded(
-                slot_def=slot_def,
-                value=value,
-                grounding_text=evidence_text,
-                source_text=trusted_source_text,
-            ):
-                continue
 
             existing = merged_bindings.get(item.slot_key)
             if existing is not None and not self._should_replace(
@@ -922,19 +874,3 @@ class SlotExtractor:
         if existing.source == SlotBindingSource.USER_MESSAGE and incoming.source == SlotBindingSource.USER_MESSAGE:
             return allow_replace_existing_user_message and existing.value != incoming.value
         return existing.value != incoming.value
-
-    def _value_is_grounded(
-        self,
-        *,
-        slot_def: IntentSlotDefinition,
-        value: Any,
-        grounding_text: str,
-        source_text: str | None,
-    ) -> bool:
-        """Apply grounding checks, including currency-specific fallback matching."""
-        return slot_value_grounded_or_source_text_backed(
-            slot_def=slot_def,
-            value=value,
-            grounding_text=grounding_text,
-            source_text=source_text,
-        )

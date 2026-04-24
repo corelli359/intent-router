@@ -10,11 +10,7 @@ from router_service.core.shared.diagnostics import (
     diagnostic,
     merge_diagnostics,
 )
-from router_service.core.slots.grounding import (
-    combine_distinct_text,
-    grounded_source_text,
-    slot_value_grounded_or_source_text_backed,
-)
+from router_service.core.slots.grounding import combine_distinct_text
 from router_service.core.shared.graph_domain import SlotBindingSource, SlotBindingState
 
 
@@ -180,6 +176,7 @@ class SlotValidator:
         history_text: str,
     ) -> bool:
         """Check whether one binding source/value pair may be trusted for dispatch."""
+        del source_text, grounding_text, turn_history_text, history_text
         if value is None:
             return False
         if isinstance(value, str) and not value.strip():
@@ -187,27 +184,8 @@ class SlotValidator:
         if source == SlotBindingSource.RECOMMENDATION:
             return slot_def.allow_from_recommendation
         if source == SlotBindingSource.HISTORY:
-            if not slot_def.allow_from_history:
-                return False
-            trusted_source_text = grounded_source_text(source_text, history_text)
-            evidence_text = combine_distinct_text(
-                trusted_source_text,
-                history_text,
-            )
-            return bool(evidence_text) and self._value_is_grounded(
-                slot_def=slot_def,
-                value=value,
-                grounding_text=evidence_text,
-                source_text=trusted_source_text,
-            )
-        trusted_source_text = grounded_source_text(source_text, turn_history_text)
-        evidence_text = trusted_source_text or grounding_text
-        return bool(evidence_text) and self._value_is_grounded(
-            slot_def=slot_def,
-            value=value,
-            grounding_text=evidence_text,
-            source_text=trusted_source_text,
-        )
+            return slot_def.allow_from_history
+        return True
 
     def _build_prompt_message(
         self,
@@ -235,19 +213,3 @@ class SlotValidator:
         if not parts:
             return None
         return "；".join(parts)
-
-    def _value_is_grounded(
-        self,
-        *,
-        slot_def,
-        value: Any,
-        grounding_text: str,
-        source_text: str | None,
-    ) -> bool:
-        """Apply grounding logic, including currency-specific fallback matching."""
-        return slot_value_grounded_or_source_text_backed(
-            slot_def=slot_def,
-            value=value,
-            grounding_text=grounding_text,
-            source_text=source_text,
-        )

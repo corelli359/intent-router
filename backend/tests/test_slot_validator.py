@@ -111,7 +111,7 @@ def test_slot_validator_accepts_grounded_slots() -> None:
     assert result.slot_memory == {"gas_account_number": "88001234", "amount": "88"}
 
 
-def test_slot_validator_rejects_user_message_binding_when_source_text_is_fabricated() -> None:
+def test_slot_validator_keeps_user_message_binding_without_source_text_grounding() -> None:
     validator = SlotValidator()
     result = validator.validate(
         intent=_transfer_intent(),
@@ -126,8 +126,9 @@ def test_slot_validator_rejects_user_message_binding_when_source_text_is_fabrica
     )
 
     assert result.can_dispatch is False
-    assert result.invalid_slot_keys == ["payee_name"]
-    assert result.slot_memory == {}
+    assert result.invalid_slot_keys == []
+    assert result.missing_required_slots == ["amount"]
+    assert result.slot_memory == {"payee_name": "小明"}
 
 
 def test_slot_validator_preserves_previously_grounded_user_message_binding_across_turns() -> None:
@@ -157,20 +158,20 @@ def test_slot_validator_accepts_source_text_backed_normalized_numeric_slot() -> 
     validator = SlotValidator()
     result = validator.validate(
         intent=_gas_intent(),
-        slot_memory={"gas_account_number": "88001234", "amount": "123"},
+        slot_memory={"gas_account_number": "88001234", "amount": "4321"},
         slot_bindings=[
             _binding("gas_account_number", "88001234", "燃气户号88001234"),
-            _binding("amount", "123", "一二三"),
+            _binding("amount", "4321", "肆叁贰壹元"),
         ],
         history_slot_keys=[],
         ambiguous_slot_keys=[],
         graph_source_message="帮我交燃气费",
         node_source_fragment="帮我交燃气费",
-        current_message="一二三",
-        recent_messages=["帮我交燃气费", "燃气户号88001234", "一二三"],
+        current_message="肆叁贰壹元",
+        recent_messages=["帮我交燃气费", "燃气户号88001234", "肆叁贰壹元"],
         long_term_memory=[],
     )
 
     assert result.can_dispatch is True
     assert result.invalid_slot_keys == []
-    assert result.slot_memory == {"gas_account_number": "88001234", "amount": "123"}
+    assert result.slot_memory == {"gas_account_number": "88001234", "amount": "4321"}

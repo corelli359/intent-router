@@ -95,25 +95,6 @@ def slot_value_grounded(
     return any(candidate and candidate in normalized_grounding_text for candidate in candidates)
 
 
-def grounded_source_text(source_text: str | None, grounding_text: str) -> str | None:
-    """Return a trusted source-text snippet only when it is actually present in the evidence text."""
-    cleaned_source_text = (source_text or "").strip()
-    if not cleaned_source_text:
-        return None
-
-    normalized_source_text = normalize_text(cleaned_source_text)
-    normalized_grounding_text = normalize_text(grounding_text)
-    if normalized_source_text and normalized_source_text in normalized_grounding_text:
-        return cleaned_source_text
-
-    digits_source_text = normalize_digits(cleaned_source_text)
-    digits_grounding_text = normalize_digits(grounding_text)
-    if digits_source_text and digits_source_text in digits_grounding_text:
-        return cleaned_source_text
-
-    return None
-
-
 def slot_value_grounded_with_currency_fallback(
     *,
     slot_def: IntentSlotDefinition,
@@ -130,32 +111,6 @@ def slot_value_grounded_with_currency_fallback(
         return False
     upper_text = grounding_text.upper()
     return any(alias.upper() in upper_text or alias in grounding_text for alias in aliases)
-
-
-def slot_value_grounded_or_source_text_backed(
-    *,
-    slot_def: IntentSlotDefinition,
-    value: Any,
-    grounding_text: str,
-    source_text: str | None,
-) -> bool:
-    """Accept grounded values or trusted source-text-backed numeric normalizations."""
-    if slot_value_grounded_with_currency_fallback(
-        slot_def=slot_def,
-        value=value,
-        grounding_text=grounding_text,
-    ):
-        return True
-
-    trusted_source_text = grounded_source_text(source_text, grounding_text)
-    if not trusted_source_text:
-        return False
-
-    if slot_def.value_type in _DIGIT_VALUE_TYPES:
-        normalized_value = normalize_digits(str(value).strip())
-        return bool(normalized_value)
-
-    return False
 
 
 def normalize_slot_memory(

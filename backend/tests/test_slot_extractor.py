@@ -85,9 +85,9 @@ class _NormalizedNumericLLMClient:
             "slots": [
                 {
                     "slot_key": "amount",
-                    "value": "123",
+                    "value": "4321",
                     "source": "user_message",
-                    "source_text": "一二三",
+                    "source_text": "肆叁贰壹元",
                     "confidence": 0.98,
                 }
             ],
@@ -294,7 +294,7 @@ def test_slot_extractor_passes_existing_slot_memory_into_llm_prompt() -> None:
     asyncio.run(run())
 
 
-def test_slot_extractor_rejects_llm_slots_backed_only_by_fabricated_source_text() -> None:
+def test_slot_extractor_keeps_llm_slots_without_source_text_grounding_validation() -> None:
     async def run() -> None:
         extractor = SlotExtractor(llm_client=_HallucinatingTransferLLMClient())
         result = await extractor.extract(
@@ -310,7 +310,7 @@ def test_slot_extractor_rejects_llm_slots_backed_only_by_fabricated_source_text(
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {}
+        assert result.slot_memory == {"payee_name": "小明", "amount": "200"}
         assert result.ambiguous_slot_keys == []
 
     asyncio.run(run())
@@ -372,13 +372,13 @@ def test_slot_extractor_keeps_source_text_backed_normalized_numeric_slot() -> No
                 ],
             ),
             graph_source_message="帮我交燃气费",
-            current_message="一二三",
-            recent_messages=["帮我交燃气费", "燃气户号88001234", "一二三"],
+            current_message="肆叁贰壹元",
+            recent_messages=["帮我交燃气费", "燃气户号88001234", "肆叁贰壹元"],
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {"gas_account_number": "88001234", "amount": "123"}
+        assert result.slot_memory == {"gas_account_number": "88001234", "amount": "4321"}
         binding_by_key = {binding.slot_key: binding for binding in result.slot_bindings}
-        assert binding_by_key["amount"].source_text == "一二三"
+        assert binding_by_key["amount"].source_text == "肆叁贰壹元"
 
     asyncio.run(run())
