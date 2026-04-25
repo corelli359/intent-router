@@ -43,6 +43,28 @@ def test_router_settings_missing_explicit_env_file_is_safe(monkeypatch, tmp_path
     assert settings.llm_model is None
 
 
+def test_router_settings_loads_local_env_file_when_explicit_path_is_absent(monkeypatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        "\n".join(
+            (
+                "ROUTER_API_ENV=local",
+                "ROUTER_V4_SKILL_ROOT=/tmp/local-skills",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ROUTER_ENV_FILE", raising=False)
+    monkeypatch.delenv("ROUTER_API_ENV", raising=False)
+    monkeypatch.delenv("ROUTER_V4_SKILL_ROOT", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.env == "local"
+    assert settings.router_v4_skill_root == "/tmp/local-skills"
+
+
 def test_router_settings_support_file_catalog_backend(monkeypatch) -> None:
     monkeypatch.setenv("ROUTER_INTENT_CATALOG_BACKEND", "file")
     monkeypatch.setenv("ROUTER_INTENT_CATALOG_FILE", "/etc/intent-router/catalog.json")

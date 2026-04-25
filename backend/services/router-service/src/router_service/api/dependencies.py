@@ -20,6 +20,7 @@ from router_service.core.support.llm_client import JsonLLMClient, LangChainLLMCl
 from router_service.core.support.perf_llm_client import FastPerfLLMClient
 from router_service.core.support.jwt_utils import AuthHTTPClient
 from router_service.core.support.memory_store import LongTermMemoryStore
+from router_service.core.skill_runtime.runtime import SkillRuntimeController
 from router_service.core.prompts.prompt_templates import (
     DEFAULT_DOMAIN_ROUTER_HUMAN_PROMPT,
     DEFAULT_DOMAIN_ROUTER_SYSTEM_PROMPT,
@@ -99,6 +100,7 @@ class RouterRuntime:
     agent_client: AgentClient
     orchestrator: GraphRouterOrchestrator
     session_store: GraphSessionStore
+    skill_runtime: SkillRuntimeController
 
 
 def _warn_null_recognizer(*, recognizer_backend: str, llm_available: bool) -> NullIntentRecognizer:
@@ -253,6 +255,9 @@ def build_router_runtime() -> RouterRuntime:
         agent_client=agent_client,
         orchestrator=orchestrator,
         session_store=session_store,
+        skill_runtime=SkillRuntimeController.from_spec_root(
+            getattr(settings, "router_v4_skill_root", None)
+        ),
     )
 
 
@@ -326,6 +331,11 @@ def get_intent_catalog(request: Request) -> RepositoryIntentCatalog:
 def get_orchestrator(request: Request) -> GraphRouterOrchestrator:
     """FastAPI dependency returning the graph router orchestrator."""
     return get_router_runtime(request).orchestrator
+
+
+def get_skill_runtime(request: Request) -> SkillRuntimeController:
+    """FastAPI dependency returning the markdown-first v4 Skill runtime."""
+    return get_router_runtime(request).skill_runtime
 
 
 def get_event_broker_v2(request: Request) -> EventBroker:

@@ -23,3 +23,10 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"router_service.core.skill_runtime" = [
+  "default_specs/*.md",
+  "default_specs/skills/*.md",
+  "default_specs/skills/references/*.md",
+]

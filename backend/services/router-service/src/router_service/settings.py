@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+ROUTER_ENV_FILE_ENV = "ROUTER_ENV_FILE"
+DEFAULT_ROUTER_ENV_FILE = "/etc/intent-router/.env.local"
+ROUTER_AGENT_BARRIER_ENABLED_ENV = "ROUTER_AGENT_BARRIER_ENABLED"
+JWT_SALT = 'a358f520-6477-484e-8a48-91899677152a'
+X_APP_ID = 'app-test'
+LOCAL_ROUTER_ENV_FILE = ".env.local"
+
 import os
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field
 
-from router_service.core.support.agent_barrier import ROUTER_AGENT_BARRIER_ENABLED_ENV
 from router_service.core.support.json_codec import json_loads
 
-
-ROUTER_ENV_FILE_ENV = "ROUTER_ENV_FILE"
-DEFAULT_ROUTER_ENV_FILE = "/etc/intent-router/.env.local"
-JWT_SALT = 'a358f520-6477-484e-8a48-91899677152a'
-X_APP_ID = 'app-test'
 
 def _load_env_file(env_path: str | os.PathLike[str] | None) -> None:
     """Load one explicit env file without scanning parent directories."""
@@ -39,9 +40,34 @@ def _load_env_file(env_path: str | os.PathLike[str] | None) -> None:
         os.environ[key] = value
 
 
-def _configured_env_file() -> str:
-    """Return the single explicit env file path used by the router runtime."""
-    return os.getenv(ROUTER_ENV_FILE_ENV, DEFAULT_ROUTER_ENV_FILE)
+def _repo_root() -> Path:
+    """Return the repository root when settings are imported from the source tree."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "AGENTS.md").is_file() or (parent / ".git").exists():
+            return parent
+    return Path.cwd()
+
+
+def _configured_env_files() -> tuple[str, ...]:
+    """Return env files in load order, with explicit configuration taking precedence."""
+    explicit = os.getenv(ROUTER_ENV_FILE_ENV)
+    if explicit:
+        return (explicit,)
+
+    candidates = [
+        Path.cwd() / LOCAL_ROUTER_ENV_FILE,
+        _repo_root() / LOCAL_ROUTER_ENV_FILE,
+        Path(DEFAULT_ROUTER_ENV_FILE),
+    ]
+    paths: list[str] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        paths.append(str(resolved))
+        seen.add(resolved)
+    return tuple(paths)
 
 
 def _env_headers(name: str) -> dict[str, str]:
@@ -116,6 +142,7 @@ class Settings(BaseModel):
     router_session_max_businesses: int = Field(default=5, gt=0)
     router_session_cleanup_enabled: bool = Field(default=True)
     router_session_cleanup_interval_seconds: float = Field(default=60.0, gt=0)
+    router_v4_skill_root: str | None = Field(default=None)
     router_drain_max_iterations: int | None = Field(default=None, gt=0)
     router_drain_iteration_multiplier: int = Field(default=3, gt=0)
     router_drain_iteration_floor: int = Field(default=8, gt=0)
@@ -153,7 +180,8 @@ class Settings(BaseModel):
     @classmethod
     def from_env(cls) -> "Settings":
         """Build settings from process environment plus one explicit env file."""
-        _load_env_file(_configured_env_file())
+        for env_file in _configured_env_files():
+            _load_env_file(env_file)
         return cls(
             app_name=os.getenv("ROUTER_API_APP_NAME", "Intent Router API"),
             env=os.getenv("ROUTER_API_ENV", "dev"),
@@ -187,6 +215,7 @@ class Settings(BaseModel):
             router_session_cleanup_interval_seconds=float(
                 os.getenv("ROUTER_SESSION_CLEANUP_INTERVAL_SECONDS", "60")
             ),
+            router_v4_skill_root=os.getenv("ROUTER_V4_SKILL_ROOT"),
             router_drain_max_iterations=(
                 int(os.getenv("ROUTER_DRAIN_MAX_ITERATIONS"))
                 if os.getenv("ROUTER_DRAIN_MAX_ITERATIONS")

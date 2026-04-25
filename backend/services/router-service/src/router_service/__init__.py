@@ -14,13 +14,4 @@ def create_router_app():
 
     return _create_router_app()
 
-
-try:
-    from router_service.api.app import app as _app
-except ModuleNotFoundError as exc:
-    if exc.name not in {"fastapi", "starlette"}:
-        raise
-else:
-    app = _app
-
 __all__ = ["app", "create_router_app"]

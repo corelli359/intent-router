@@ -24,6 +24,7 @@ from router_service.api.dependencies import (
     run_session_cleanup,
 )
 from router_service.api.routes.sessions import public_router as public_message_router
+from router_service.api.routes.skill_runtime import router as skill_runtime_router
 from router_service.core.support.agent_barrier import AgentBarrierTriggeredError
 from router_service.logging_utils import (
     bind_router_logger_to_runtime_handlers,
@@ -194,6 +195,7 @@ def create_router_app() -> FastAPI:
         return ORJSONResponse(status_code=500, content=payload.model_dump(mode="json"))
 
     app.include_router(public_message_router, prefix="/api")
+    app.include_router(skill_runtime_router, prefix="/api/router")
     return app
 
 

@@ -69,6 +69,40 @@ The repository now ships two router experiences in parallel:
 
 V2 is implemented inside the existing chat-web and router-api services instead of cloning a second full deployment set. This keeps memory usage lower while still exposing a separate versioned path for rollout.
 
+## V4 Markdown Skill Runtime
+
+This branch also includes an experimental markdown-first Skill runtime:
+
+- default controller rules: `backend/services/router-service/src/router_service/core/skill_runtime/default_specs/agent.md`
+- default Skill specs: `backend/services/router-service/src/router_service/core/skill_runtime/default_specs/skills/*.md`
+- runtime package: `router_service.core.skill_runtime`
+- API endpoint: `POST /api/router/v4/message`
+
+The v4 runtime keeps business flow in markdown Skill specs and keeps execution state in code. The runtime only calls capabilities declared by the selected Skill and granted in the request `businessApis` map.
+
+Run the local demo:
+
+```bash
+python scripts/demo_v4_skill_runtime.py --demo transfer
+```
+
+Minimal request:
+
+```json
+{
+  "sessionId": "sess_001",
+  "message": "给张三转500元",
+  "userProfile": {"available_balance": 50000},
+  "pageContext": {"current_page": "首页"},
+  "businessApis": {
+    "risk_check": "mock://risk/check",
+    "transfer": "mock://transfer"
+  }
+}
+```
+
+Use `ROUTER_V4_SKILL_ROOT=/path/to/specs` to point the router service at an alternate Skill spec root with the same `agent.md` and `skills/*.md` layout.
+
 ## Runtime and LLM Wiring
 
 Connection secrets must stay in local env files or shell env vars. This repo ignores `.env` and `.env.*` by default.
@@ -89,6 +123,8 @@ Minimum runtime env:
      - `ROUTER_INTENT_CATALOG_BACKEND=database` plus `ROUTER_INTENT_CATALOG_DATABASE_URL` or `ADMIN_DATABASE_URL`
      - or `ROUTER_INTENT_CATALOG_BACKEND=file` plus `ROUTER_INTENT_CATALOG_FILE`
 3. Set recognizer backend with `ROUTER_RECOGNIZER_BACKEND=llm`.
+
+For local development, router-service loads `.env.local` from the current working directory or repository root when `ROUTER_ENV_FILE` is not set. Deployed manifests set `ROUTER_ENV_FILE=/etc/intent-router/.env.local` explicitly.
 
 Supported `agent_url`:
 
