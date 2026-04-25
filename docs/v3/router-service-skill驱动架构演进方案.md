@@ -435,7 +435,393 @@ skill 化后，不必改掉这些基础语义，而应增加两层约束：
 2. skill 返回标准化决策或执行结果
 3. Router 统一落状态
 
-## 9. 用户旅程如何变化
+## 9. 全局 Spec 驱动的运行时心智
+
+### 9.1 什么叫“整个服务是 spec 驱动”
+
+如果把 Router Service 演进为真正的 skill runtime，那么 **spec 驱动** 不应只停留在 skill 层。
+
+更准确地说，运行时应当消费一个统一的 `SpecBundle`，而不是只消费若干孤立的 `SkillSpec`。
+
+也就是说：
+
+1. SkillSpec 只是其中一个子 spec。
+2. Session、Recall、Turn Policy、Graph、Execution、Presentation、Memory 都应有各自的 spec。
+3. Runtime 内核尽量不写业务 if/else，而是只做：
+   - 读取当前 `SpecBundle`
+   - 推进 session / graph / node 状态机
+   - 执行标准化副作用
+
+一句话：
+
+> skill 驱动是能力层升级，全局 spec 驱动才是服务级架构升级。
+
+### 9.2 推荐的全局 `SpecBundle`
+
+建议至少包含以下组成：
+
+1. `IngressSpec`
+   - 入口协议
+   - API 版本绑定
+   - 请求预处理规则
+2. `SessionSpec`
+   - session 生命周期
+   - session 与 spec version 的绑定规则
+   - transcript / context 装配范围
+3. `FieldSpec`
+   - 全局字段语义
+   - 字段别名
+   - 敏感字段等级
+4. `RecallSpec`
+   - shortlist 召回策略
+   - domain / recommendation / history 参与规则
+5. `SkillSpec`
+   - 能力定义
+   - 槽位定义
+   - graph policy
+   - execution contract
+6. `TurnPolicySpec`
+   - `resume_current`
+   - `replan`
+   - `cancel_current`
+   - `wait`
+   - `confirm_pending_graph`
+7. `GraphSpec`
+   - 编图规则
+   - graph confirmation 规则
+   - node dependency 规则
+8. `GuardrailSpec`
+   - 强确认
+   - 敏感槽位确认
+   - 历史槽位复用条件
+9. `ExecutionSpec`
+   - executor 类型
+   - 调用参数映射
+   - 超时 / 取消 / 重试
+10. `PresentationSpec`
+    - 缺槽追问模板
+    - waiting / completed 文案投影
+    - SSE 事件文案策略
+11. `MemorySpec`
+    - 短期 / 长期记忆写回策略
+    - 可继承槽位规则
+    - 敏感信息落库策略
+
+### 9.3 全局 spec 驱动的一个关键原则
+
+每次 session 首次接入时，Runtime 都应为该 session 绑定明确的 `spec_bundle_version`。
+
+这样做的原因：
+
+1. 同一会话内的首轮、续轮、恢复和回放都使用同一版规则。
+2. skill 升级不会污染进行中的 waiting / pending graph。
+3. 问题排查时，可以精确知道某次错误是由哪版 spec 造成。
+4. 回归评测可以复用线上真实旅程。
+
+因此建议：
+
+1. `session.spec_bundle_version` 必须持久化。
+2. `graph.node` 必须记录 `skill_code@version`。
+3. `executor dispatch` 也应记录实际命中的 execution contract version。
+
+### 9.4 标准旅程：用户说“帮我给王芳转账”，下一轮补“300”
+
+下面用一条最典型的多轮补槽旅程，说明“整个服务是 spec 驱动”到底意味着什么。
+
+#### 场景前提
+
+用户第一轮输入：
+
+> 帮我给王芳转账
+
+用户第二轮输入：
+
+> 300
+
+目标：
+
+1. 首轮识别 `transfer_money`
+2. 首轮抽取到收款人 `王芳`
+3. 首轮发现缺失金额，进入 `waiting_user_input`
+4. 第二轮识别为 `resume_current`
+5. 补齐金额后继续执行
+
+#### 旅程总表
+
+| 阶段 | 用户动作 | Runtime 行为 | 决策依据 spec | 结果 |
+| --- | --- | --- | --- | --- |
+| 1 | 发送“帮我给王芳转账” | 创建/获取 session，并绑定 `spec_bundle_version` | `IngressSpec` + `SessionSpec` | 会话进入统一规则域 |
+| 2 | 无 | 先做 shortlist recall | `RecallSpec` + `FieldSpec` + `SkillSpec.match_policy` | 候选 skill 收敛 |
+| 3 | 无 | 在 shortlist 中做深判，选出 `transfer_money` | `SkillSpec` | 形成主 skill |
+| 4 | 无 | 提取槽位：`receiver_name=王芳`，`amount=missing` | `FieldSpec` + `SkillSpec.slot_schema` | 形成 node slot memory |
+| 5 | 无 | 校验可执行门，发现缺失必填金额 | `GuardrailSpec` + `SkillSpec.slot_schema` | node 进入 `waiting_user_input` |
+| 6 | 看到追问 | 输出“请补充转账金额” | `PresentationSpec` | 用户知道缺什么 |
+| 7 | 发送“300” | 优先解释为 waiting node 的续轮输入 | `TurnPolicySpec` + `SessionSpec` | 不新开事项，继续当前节点 |
+| 8 | 无 | 判定为 `resume_current`，并将金额并入现有 node | `TurnPolicySpec` + `MemorySpec` | node 槽位补齐 |
+| 9 | 无 | 再次校验是否需要确认 | `GuardrailSpec` + `SkillSpec.graph_policy` | 决定直接执行或转确认 |
+| 10 | 无 | 读取 execution contract，调用对应 executor / agent | `ExecutionSpec` + `SkillSpec.execution_contract` | 任务下发 |
+| 11 | 等待结果 | 投影 dispatching / completed 事件 | `PresentationSpec` | 前端看到状态推进 |
+| 12 | 看到完成回复 | 写回短期/长期记忆 | `MemorySpec` | 后续轮次可复用上下文 |
+
+#### 分阶段展开说明
+
+##### 第一阶段：接入与规则绑定
+
+用户第一句话进入系统时，Runtime 做的第一件事不是“立刻识别 skill”，而是：
+
+1. 获取或创建 session
+2. 为该 session 绑定 `spec_bundle_version`
+
+这一步非常关键，因为后续所有动作——识别、提槽、追问、恢复、执行、记忆写回——都必须在同一版规则下完成。
+
+否则会出现：
+
+1. 第一轮按 A 版 skill 规则进入 waiting
+2. 第二轮按 B 版 turn policy 恢复
+3. 第三轮按 C 版 execution contract 调用 agent
+
+最终既不可审计，也无法回放。
+
+##### 第二阶段：召回候选 skill
+
+Runtime 不应让所有 skill 全量参与深判。
+
+更推荐先按全局 `RecallSpec` 做 shortlist：
+
+1. 根据“转账”这类词汇命中支付域
+2. 根据 `FieldSpec` 识别“王芳”更像对象类槽位，而不是新事项
+3. 根据历史上下文、前端推荐、最近活跃 domain 再做加权
+
+于是候选可能被收敛为：
+
+1. `transfer_money`
+2. `credit_card_repayment`
+3. `account_balance`
+
+这一步的目标不是得到最终答案，而是把全量空间压缩成一个稳定的可解释候选集。
+
+##### 第三阶段：深判与主 skill 确定
+
+随后 Runtime 在 shortlist 范围内做深判。
+
+这里不是简单输出一个标签，而是要产出结构化理解结果：
+
+1. `primary_skill = transfer_money`
+2. `candidate_skills = [...]`
+3. `confidence = ...`
+4. `reason = ...`
+
+决定依据主要来自：
+
+1. `SkillSpec.description`
+2. `SkillSpec.examples`
+3. `SkillSpec.match_policy`
+4. 当前消息与上下文
+
+##### 第四阶段：按 slot schema 提槽
+
+主 skill 确定后，Runtime 根据 `transfer_money` 的 `slot_schema` 做提槽。
+
+第一轮可以提取出：
+
+1. `receiver_name = 王芳`
+2. `amount = missing`
+
+这里最重要的点是：
+
+> “金额是必填”这件事，不应写死在业务代码里，而应由 `SkillSpec.slot_schema` 声明。
+
+换句话说，Router 只是执行一个统一的“按 spec 提槽和校验”的流程。
+
+##### 第五阶段：可执行门校验并进入 waiting
+
+接着 Runtime 根据：
+
+1. `slot_schema.required`
+2. `GuardrailSpec`
+3. `GraphSpec`
+
+判断该节点当前是否可执行。
+
+此时因为缺失金额，所以不会直接下发 Agent，而会：
+
+1. 创建单节点 graph
+2. 将 node 标记为 `waiting_user_input`
+3. 记录缺失槽位列表
+4. 准备缺槽追问
+
+##### 第六阶段：追问投影
+
+用户看到的追问文案，不应只是底层错误文本。
+
+更推荐由 `PresentationSpec` 负责把状态投影成前端可见结果，例如：
+
+> 请补充转账金额
+
+这样做的意义是：
+
+1. 缺槽提示可统一治理
+2. 不同渠道可有不同呈现
+3. Runtime 状态与用户文案解耦
+
+##### 第七阶段：第二轮输入优先解释为续轮
+
+用户第二句话是：
+
+> 300
+
+这时 Runtime 不能把这句话当作一个新的独立事项立刻重编图。
+
+更合理的处理顺序应是：
+
+1. 先检查 session 是否有 waiting node
+2. 若有，则优先走 `TurnPolicySpec`
+3. 判断这是：
+   - `resume_current`
+   - `replan`
+   - `cancel_current`
+   - `wait`
+
+在这个案例里，应判定为 `resume_current`。
+
+##### 第八阶段：槽位合并与恢复
+
+一旦判定为 `resume_current`，Runtime 应把第二轮信息合并回当前 waiting node：
+
+1. 原有：`receiver_name = 王芳`
+2. 新增：`amount = 300`
+
+最终节点槽位变为：
+
+1. `receiver_name = 王芳`
+2. `amount = 300`
+
+这里推荐由以下 spec 联合决定合并规则：
+
+1. `TurnPolicySpec`
+2. `MemorySpec`
+3. `FieldSpec`
+
+例如：
+
+1. 金额能否覆盖旧值
+2. 名称冲突时是否需要二次确认
+3. 数值是否允许由纯数字短句补齐
+
+##### 第九阶段：再次校验是否可直接执行
+
+恢复后，Runtime 还要再过一遍可执行门。
+
+如果命中了以下任何规则，则仍可能进入确认态：
+
+1. 敏感金额阈值超限
+2. 命中了风险收款对象
+3. 复用了历史账户但未获确认
+4. skill graph policy 要求先确认
+
+如果没有命中这些规则，则可以直接执行。
+
+##### 第十阶段：执行器选择与请求下发
+
+到这一步，Runtime 不应写死“直接调某个 URL”。
+
+它应根据 `ExecutionSpec` 和 skill 的 `execution_contract` 来决定：
+
+1. 使用哪种 executor
+2. 请求参数如何映射
+3. 超时、取消、重试如何处理
+
+例如：
+
+1. `executor_type = agent_http`
+2. `endpoint = transfer-money-agent`
+3. `field_mapping = ...`
+
+然后再由对应 executor 完成标准化调用。
+
+##### 第十一阶段：事件投影与完成回复
+
+执行过程中，Runtime 继续维护统一状态：
+
+1. `dispatching`
+2. `running`
+3. `completed`
+4. `failed`
+
+这些内部状态最终由 `PresentationSpec` 投影成：
+
+1. SSE 事件
+2. 前端可见 loading / completed 提示
+3. 对用户最终回复
+
+例如：
+
+> 已为你向王芳发起 300 元转账
+
+##### 第十二阶段：记忆写回
+
+旅程结束后，Runtime 根据 `MemorySpec` 判断哪些事实可以写回：
+
+1. 收款对象是否写入短期记忆
+2. 金额是否允许写入长期记忆
+3. 敏感账号是否只写结构化引用而不保留原文
+
+这一步决定了未来用户再说“再给她转 500”时，系统是否能稳定续接上下文。
+
+#### 这条旅程说明了什么
+
+这条旅程最核心的价值在于说明：
+
+1. spec 驱动不是只有 skill 匹配阶段使用 spec。
+2. 从 ingress 到 session，到 recall、提槽、waiting、恢复、执行、记忆写回，全部都有对应 spec owner。
+3. Runtime 内核只负责统一推进状态，不直接承担业务语义硬编码。
+
+因此用户看到的是：
+
+1. 说一句
+2. 被追问一句
+3. 补一句
+4. 完成
+
+而系统内部实际完成的是：
+
+1. 绑定 spec 版本
+2. 召回
+3. 深判
+4. 提槽
+5. waiting
+6. 续轮恢复
+7. 再校验
+8. 执行
+9. 投影
+10. 记忆写回
+
+### 9.5 该旅程对应的三泳道时序图
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Runtime as Router Skill Runtime
+    participant Spec as SpecBundle
+    participant Executor as Skill Executor / Agent
+
+    User->>Runtime: 帮我给王芳转账
+    Runtime->>Spec: 绑定 session.spec_bundle_version
+    Runtime->>Spec: recall shortlist
+    Runtime->>Spec: deep understand + slot extract
+    Runtime->>Spec: validate dispatch gate
+    Runtime-->>User: 请补充转账金额
+
+    User->>Runtime: 300
+    Runtime->>Spec: interpret waiting turn
+    Runtime->>Spec: merge slots + re-validate
+    Runtime->>Executor: dispatch by execution contract
+    Executor-->>Runtime: completed
+    Runtime->>Spec: project result + write memory
+    Runtime-->>User: 已为你向王芳发起 300 元转账
+```
+
+## 10. 用户旅程如何变化
 
 ### 9.1 旅程 A：单 skill 单轮完成
 
@@ -504,7 +890,7 @@ skill 化后，不必改掉这些基础语义，而应增加两层约束：
 2. Router 仍然掌握全局 graph
 3. 不允许 skill 在全局 session 上自由写状态
 
-## 10. 推荐的实现分层
+## 11. 推荐的实现分层
 
 ### 10.1 控制面
 
@@ -549,7 +935,7 @@ skill 化后，不必改掉这些基础语义，而应增加两层约束：
 
 但不建议直接照搬外部 workflow skill 的产品形态。
 
-## 11. 渐进式落地方案
+## 12. 渐进式落地方案
 
 ### Phase 0：兼容层
 
@@ -625,7 +1011,7 @@ skill 化后，不必改掉这些基础语义，而应增加两层约束：
 1. 支持更复杂的跨域能力
 2. 仍保持 Router 总控边界
 
-## 12. 风险与关键约束
+## 13. 风险与关键约束
 
 ### 12.1 最大风险不是实现，而是治理失控
 
@@ -651,7 +1037,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 3. 不建议一开始就做每个 skill 独立插件运行时。
 4. 不建议没有评测集就大规模开放 skill 自定义。
 
-## 13. 与当前代码的直接映射建议
+## 14. 与当前代码的直接映射建议
 
 ### 13.1 可直接复用的现有对象
 
@@ -678,7 +1064,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 2. `agent_client` -> `skill_executor`
 3. `intent_catalog` -> `skill_registry`
 
-## 14. 最终建议
+## 15. 最终建议
 
 ### 14.1 战略建议
 
@@ -708,7 +1094,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 
 而不是仅仅一个 prompt 片段或 agent 地址。
 
-## 15. 开放问题
+## 16. 开放问题
 
 以下问题建议在正式立项前进一步确认：
 
@@ -718,7 +1104,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 4. composite skill 是否从第一期就纳入，还是放到第三阶段以后？
 5. 结构化长期记忆是否要同步进入 `SkillSpec v0.1`，还是先保持外置？
 
-## 16. 一句话结论
+## 17. 一句话结论
 
 当前 Router 改造成 skill 驱动是可行的，而且最优路径并不是“削弱 Router”，而是：
 
