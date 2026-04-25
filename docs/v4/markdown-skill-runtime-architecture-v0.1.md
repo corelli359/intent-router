@@ -12,28 +12,28 @@ scope: router-service v4 markdown skill runtime
 
 ```mermaid
 flowchart TD
-    Client[掌银 APP / 调用方] -->|POST /api/router/v4/message| Api[FastAPI v4 Skill Route]
+    Client["掌银 APP / 调用方"] --> Api["FastAPI v4 Skill Route: POST /api/router/v4/message"]
 
-    Api --> Runtime[SkillRuntimeController]
+    Api --> Runtime["SkillRuntimeController"]
 
-    Runtime --> PromptBuilder[SkillPromptBuilder]
-    Runtime --> Loader[SkillSpecLoader]
-    Runtime --> Matcher[SkillMatcher]
-    Runtime --> Extractor[SlotExtractor]
-    Runtime --> Session[(In-Memory SkillSessionState)]
-    Runtime --> ApiTool[ApiTool]
+    Runtime --> PromptBuilder["SkillPromptBuilder"]
+    Runtime --> Loader["SkillSpecLoader"]
+    Runtime --> Matcher["SkillMatcher"]
+    Runtime --> Extractor["SlotExtractor"]
+    Runtime --> Session["In-Memory SkillSessionState"]
+    Runtime --> ApiTool["ApiTool"]
 
-    Loader --> AgentMd[default_specs/agent.md]
-    Loader --> SkillMd[default_specs/skills/*.md]
-    Loader --> Refs[default_specs/skills/references/*.md]
+    Loader --> AgentMd["default_specs/agent.md"]
+    Loader --> SkillMd["default_specs/skills/*.md"]
+    Loader --> Refs["default_specs/skills/references/*.md"]
 
-    Matcher --> SkillIndex[Skill Index]
-    Extractor --> Slots[Structured Slots]
+    Matcher --> SkillIndex["Skill Index"]
+    Extractor --> Slots["Structured Slots"]
 
-    ApiTool -->|capability name| BusinessApis{request.businessApis}
-    BusinessApis -->|mock:// or http(s)://| Backend[受控业务后端能力]
+    ApiTool --> BusinessApis["request.businessApis capability map"]
+    BusinessApis --> Backend["受控业务后端能力: mock or HTTP"]
 
-    Runtime --> Response[SkillRuntimeOutput]
+    Runtime --> Response["SkillRuntimeOutput"]
     Response --> Client
 ```
 
