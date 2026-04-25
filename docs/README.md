@@ -5,6 +5,7 @@
 - `v3/router-service-需求说明文档.md`
 - `v3/router-service-功能说明文档.md`
 - `v3/router-service-架构设计文档.md`
+- `v3/router-service-skill驱动架构演进方案.md`
 - `v3/deepagent与router-service对比调研.md`
 - `v3/router-service-通信协议规范.md`
 - `v3/router-service-助手对接接口文档-v0.4.md`
