@@ -823,7 +823,7 @@ sequenceDiagram
 
 ## 10. 用户旅程如何变化
 
-### 9.1 旅程 A：单 skill 单轮完成
+### 10.1 旅程 A：单 skill 单轮完成
 
 #### 当前旅程
 
@@ -844,7 +844,7 @@ sequenceDiagram
 
 本质变化不大，只是“识别对象”从 intent 变为 skill。
 
-### 9.2 旅程 B：单 skill 多轮补槽
+### 10.2 旅程 B：单 skill 多轮补槽
 
 #### 推荐链路
 
@@ -864,7 +864,7 @@ sequenceDiagram
 1. 缺槽问题与追问模板可被 spec 治理
 2. 恢复条件与历史补全权限可被 spec 治理
 
-### 9.3 旅程 C：多 skill 图确认
+### 10.3 旅程 C：多 skill 图确认
 
 #### 推荐链路
 
@@ -876,7 +876,7 @@ sequenceDiagram
 
 这条旅程与当前多意图 graph 旅程高度连续。
 
-### 9.4 旅程 D：skill 内置 agent 调用编排
+### 10.4 旅程 D：skill 内置 agent 调用编排
 
 当某 skill 本身不是直接执行业务，而是“组合型 skill”时：
 
@@ -892,7 +892,7 @@ sequenceDiagram
 
 ## 11. 推荐的实现分层
 
-### 10.1 控制面
+### 11.1 控制面
 
 建议 Admin 侧从 `intent registry` 演进为 `skill registry`：
 
@@ -903,7 +903,7 @@ sequenceDiagram
 5. 绑定测试样例
 6. 绑定 field catalogs
 
-### 10.2 运行面
+### 11.2 运行面
 
 建议 Router 侧新增以下抽象：
 
@@ -915,7 +915,7 @@ sequenceDiagram
 6. `SkillExecutor`
 7. `SkillRuntimeContext`
 
-### 10.3 资产面
+### 11.3 资产面
 
 建议把 skill 资产拆出，而不是继续集中堆在一个超长 prompt 文件中。
 
@@ -1013,7 +1013,7 @@ sequenceDiagram
 
 ## 13. 风险与关键约束
 
-### 12.1 最大风险不是实现，而是治理失控
+### 13.1 最大风险不是实现，而是治理失控
 
 skill 化以后，最容易出问题的不是“能不能跑”，而是：
 
@@ -1022,7 +1022,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 3. skill 版本不固定导致续轮不可重放
 4. skill 抢状态写路径导致 graph 不可审计
 
-### 12.2 必须坚持的约束
+### 13.2 必须坚持的约束
 
 1. `field_catalog` 仍要保留为统一语义底座。
 2. `slot_schema` 仍要是 Router 级可治理对象。
@@ -1030,7 +1030,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 4. skill 节点必须绑定具体版本。
 5. 历史槽位复用必须受 policy 控制。
 
-### 12.3 不建议做的事情
+### 13.3 不建议做的事情
 
 1. 不建议把所有理解逻辑都塞进 skill 内部 prompt。
 2. 不建议让 skill 直接修改 session / graph。
@@ -1039,7 +1039,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 
 ## 14. 与当前代码的直接映射建议
 
-### 13.1 可直接复用的现有对象
+### 14.1 可直接复用的现有对象
 
 1. `IntentUnderstandingService`
 2. `TurnInterpreter`
@@ -1048,7 +1048,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 5. `StreamingAgentClient`
 6. `RepositoryIntentCatalog`
 
-### 13.2 推荐新增对象
+### 14.2 推荐新增对象
 
 1. `SkillSpec`
 2. `SkillRegistry`
@@ -1058,7 +1058,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 6. `SkillExecutionContract`
 7. `SkillPolicyEngine`
 
-### 13.3 推荐重命名或包裹的对象
+### 14.3 推荐重命名或包裹的对象
 
 1. `IntentDefinition` -> 兼容包裹为 `LegacyIntentSkillSpec`
 2. `agent_client` -> `skill_executor`
@@ -1066,7 +1066,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 
 ## 15. 最终建议
 
-### 14.1 战略建议
+### 15.1 战略建议
 
 推荐把 skill 化定义为：
 
@@ -1076,7 +1076,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 
 > Router 退化成一个只转发请求的壳。
 
-### 14.2 实施建议
+### 15.2 实施建议
 
 最值得优先做的三件事：
 
@@ -1084,7 +1084,7 @@ skill 化以后，最容易出问题的不是“能不能跑”，而是：
 2. 再建立 `intent -> skill` 兼容层
 3. 再把理解资产从单 prompt 聚合演进为 spec + assets 驱动
 
-### 14.3 产品建议
+### 15.3 产品建议
 
 对外部使用者来说，skill 的心智应当是：
 
