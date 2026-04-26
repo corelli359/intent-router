@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Router V4 架构方案与业务旅程 v0.2</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --paper: #ffffff;
+      --ink: #16202c;
+      --muted: #637083;
+      --line: #d7dee9;
+      --blue: #245fd0;
+      --blue-soft: #e9f0ff;
+      --green: #137a55;
+      --green-soft: #e7f7ef;
+      --orange: #ad5b00;
+      --orange-soft: #fff2dc;
+      --red: #b42318;
+      --red-soft: #fff0ed;
+      --violet: #6546d7;
+      --violet-soft: #f0edff;
+      --gray-soft: #eef2f6;
+      --shadow: 0 12px 32px rgba(22, 32, 44, 0.08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.62;
+    }
+
+    main {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 34px 20px 78px;
+    }
+
+    header {
+      display: grid;
+      gap: 14px;
+      padding: 30px 0 26px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    section {
+      margin-top: 28px;
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.24;
+      letter-spacing: 0;
+    }
+
+    h1 { font-size: clamp(30px, 4vw, 48px); }
+    h2 { margin-bottom: 18px; font-size: 26px; }
+    h3 { margin-bottom: 8px; font-size: 18px; }
+    p { margin: 0; }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #edf1f7;
+      color: #243042;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 8px;
+      border: 1px solid #202a38;
+      background: #101722;
+      color: #e9eef7;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .eyebrow {
+      color: var(--blue);
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+    }
+
+    .lead {
+      max-width: 920px;
+      color: #334155;
+      font-size: 18px;
+    }
+
+    .note {
+      padding: 14px 16px;
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      background: var(--blue-soft);
+      color: #21385f;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card,
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+    }
+
+    .box {
+      min-height: 76px;
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      text-align: center;
+      font-weight: 800;
+    }
+
+    .box small,
+    .card small {
+      display: block;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .blue { border-color: #b8caff; background: var(--blue-soft); }
+    .green { border-color: #b8e5d0; background: var(--green-soft); }
+    .orange { border-color: #ffd498; background: var(--orange-soft); }
+    .red { border-color: #ffc6be; background: var(--red-soft); }
+    .violet { border-color: #d2c8ff; background: var(--violet-soft); }
+    .gray { border-color: var(--line); background: var(--gray-soft); }
+
+    .layer-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 190px 1fr;
+      gap: 16px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .layer-name {
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .layer-name small {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 1fr 38px 1fr 38px 1fr;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .lane.four {
+      grid-template-columns: 1fr 38px 1fr 38px 1fr 38px 1fr;
+    }
+
+    .arrow {
+      color: var(--muted);
+      font-size: 28px;
+      text-align: center;
+      align-self: center;
+      line-height: 1;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+      counter-reset: step;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 900;
+    }
+
+    .step > div {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .table {
+      display: grid;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .table.cols4 { grid-template-columns: 1.05fr 1.2fr 1.2fr 1.4fr; }
+    .cell {
+      padding: 13px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+    .cell:nth-child(4n) { border-right: none; }
+    .cell.head {
+      background: #eef2f7;
+      font-weight: 900;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    @media (max-width: 900px) {
+      .grid.two,
+      .grid.three,
+      .grid.four,
+      .lane,
+      .lane.four,
+      .layer {
+        grid-template-columns: 1fr;
+      }
+      .arrow { display: none; }
+      .table { display: block; }
+      .cell { border-right: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Router V4 / v0.2</div>
+      <h1>架构方案与业务旅程</h1>
+      <p class="lead">
+        v0.2 在 v0.1 的 spec 驱动路由基础上，增加主动推送、任务图、Agent structured output、handover 兜底改派和任务级拆流预留。核心边界仍然不变：Router 做判断、计划、派发和追踪；业务执行和安全确认仍在场景 Agent；最终用户话术由助手生成。
+      </p>
+    </header>
+
+    <section>
+      <h2>一、v0.2 总体架构</h2>
+      <div class="layer-stack">
+        <div class="layer blue">
+          <div class="layer-name">助手层<small>掌银助手前后端</small></div>
+          <div class="grid three">
+            <div class="card"><h3>入口</h3><p>接收用户输入、页面上下文、用户画像和推荐卡片上下文。</p></div>
+            <div class="card"><h3>展示</h3><p>消费 Router 结构化状态、task/graph 进度和 Agent output。</p></div>
+            <div class="card"><h3>最终表达</h3><p>任务结束后基于 <code>agent_output.data</code> 生成用户可见结果。</p></div>
+          </div>
+        </div>
+
+        <div class="layer orange">
+          <div class="layer-name">Router 层<small>router-v4-service</small></div>
+          <div class="grid three">
+            <div class="card"><h3>识别与计划</h3><p>按 routing spec 识别场景；主动推送时受 <code>push_context.intents</code> 约束；多意图生成 graph/tasks。</p></div>
+            <div class="card"><h3>派发与追踪</h3><p>创建 task，派发执行 Agent，维护 session、task、graph、transcript 和 snapshots。</p></div>
+            <div class="card"><h3>兜底改派</h3><p>仅在 <code>ishandover=true</code> 且 <code>output.data=[]</code> 时改派 <code>fallback-agent</code>。</p></div>
+          </div>
+        </div>
+
+        <div class="layer green">
+          <div class="layer-name">执行层<small>场景 Agent</small></div>
+          <div class="grid three">
+            <div class="card"><h3>业务执行</h3><p>业务提槽、确认、风控、限额、幂等和业务 API 调用。</p></div>
+            <div class="card"><h3>结构化结果</h3><p>只返回结构化状态和 output，不控制最终用户话术。</p></div>
+            <div class="card"><h3>误派判断</h3><p>发现不属于自己时按固定 handover 协议通知 Router。</p></div>
+          </div>
+        </div>
+      </div>
+      <p class="note" style="margin-top: 16px;">
+        Router 允许调用的 API 类型是基础设施 API：spec registry、session/task/graph store、Agent dispatch、Agent output callback。Router 不调用转账、申购、风控、限额等业务 API。
+      </p>
+    </section>
+
+    <section>
+      <h2>二、核心数据流</h2>
+      <div class="lane four">
+        <div class="box blue">Assistant Request<small>message + source + push_context</small></div>
+        <div class="arrow">›</div>
+        <div class="box orange">Router Runtime<small>recognize / plan / dispatch</small></div>
+        <div class="arrow">›</div>
+        <div class="box green">Execution Agent<small>business workflow</small></div>
+        <div class="arrow">›</div>
+        <div class="box violet">Assistant Result<small>final user wording</small></div>
+      </div>
+
+      <div class="grid three" style="margin-top: 16px;">
+        <div class="card">
+          <h3>Assistant -> Router</h3>
+          <pre><code>{
+  "session_id": "sess_001",
+  "message": "就按这个办",
+  "source": "assistant_push",
+  "push_context": {
+    "push_id": "push_001",
+    "intents": [
+      {"scene_id": "fund_query", "rank": 1},
+      {"scene_id": "balance_query", "rank": 2}
+    ]
+  }
+}</code></pre>
+        </div>
+        <div class="card">
+          <h3>Router -> Agent</h3>
+          <pre><code>{
+  "router_session_id": "sess_001",
+  "scene_id": "fund_query",
+  "task_type": "fund_query",
+  "raw_message": "就按这个办",
+  "routing_slots": {},
+  "push_context": {"push_id": "push_001"},
+  "scene_spec_hash": "sha256:..."
+}</code></pre>
+        </div>
+        <div class="card">
+          <h3>Agent -> Router</h3>
+          <pre><code>{
+  "session_id": "sess_001",
+  "task_id": "task_001",
+  "status": "completed",
+  "output": {
+    "data": [
+      {"type": "fund", "name": "沪深300ETF"}
+    ]
+  }
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>三、状态模型</h2>
+      <div class="table cols4">
+        <div class="cell head">对象</div>
+        <div class="cell head">主键</div>
+        <div class="cell head">关键状态</div>
+        <div class="cell head">用途</div>
+
+        <div class="cell">Session</div>
+        <div class="cell"><code>session_id</code></div>
+        <div class="cell"><code>dispatch_status</code>、<code>active_task_ids</code>、<code>active_graph_id</code></div>
+        <div class="cell">多轮续接、push context、handover records、agent outputs。</div>
+
+        <div class="cell">Task</div>
+        <div class="cell"><code>task_id</code></div>
+        <div class="cell"><code>dispatched</code>、<code>handover_requested</code>、<code>fallback_dispatched</code>、<code>completed</code></div>
+        <div class="cell">对应一次 Agent 派发，记录 scene、agent、stream_url、resume_token 和 structured output。</div>
+
+        <div class="cell">Graph</div>
+        <div class="cell"><code>graph_id</code></div>
+        <div class="cell"><code>running</code>、<code>partially_completed</code>、<code>completed</code></div>
+        <div class="cell">多意图计划，包含多个 task，助手可按 task 拆流展示。</div>
+
+        <div class="cell">Transcript</div>
+        <div class="cell"><code>turn_id</code></div>
+        <div class="cell">append-only events</div>
+        <div class="cell">审计、恢复、prompt report 和问题定位。</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>四、旅程 A：普通用户输入</h2>
+      <div class="timeline">
+        <div class="step"><div><h3>用户输入</h3><p>用户输入“给张三转5000块”，助手传入 session、用户画像和页面上下文。</p></div></div>
+        <div class="step"><div><h3>加载路由上下文</h3><p>Router 读取 session/transcript；若已有 active task，则直接转发给对应 Agent，不重新识别。</p></div></div>
+        <div class="step"><div><h3>识别场景</h3><p>根据 scene index 和 routing spec metadata 选中 <code>transfer</code>。</p></div></div>
+        <div class="step"><div><h3>提取 routing slots</h3><p>提取可直取 hints，例如 <code>recipient=张三</code>、<code>amount=5000</code>。</p></div></div>
+        <div class="step"><div><h3>派发 Agent</h3><p>创建 task，派发给 <code>transfer-agent</code>；Router 只追踪状态，不做业务确认、风控或交易 API。</p></div></div>
+        <div class="step"><div><h3>助手展示</h3><p>助手展示 Router/Agent 结构化状态；最终结果由助手基于 Agent output 组织。</p></div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>五、旅程 B：主动推送推荐</h2>
+      <div class="timeline">
+        <div class="step"><div><h3>助手推送卡片</h3><p>助手直接推送推荐卡片，并在后续请求里携带 <code>push_context.intents</code>。</p></div></div>
+        <div class="step"><div><h3>用户表达</h3><p>用户说“就按这个办”。Router 不再问“是否接受推荐”。</p></div></div>
+        <div class="step"><div><h3>候选约束</h3><p>Router 优先在推荐意图清单内判断；泛化接受默认选择第一推荐项或卡片绑定项。</p></div></div>
+        <div class="step"><div><h3>执行派发</h3><p>Router 直接派发对应 Agent。业务安全确认仍由 Agent/业务域处理。</p></div></div>
+        <div class="step"><div><h3>拒绝分支</h3><p>用户说“不用了”时返回 <code>no_action</code>，不创建 task。</p></div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>六、旅程 C：多意图拆流</h2>
+      <div class="timeline">
+        <div class="step"><div><h3>用户表达多意图</h3><p>例如“都看一下”，且 push context 里有余额和基金两个候选。</p></div></div>
+        <div class="step"><div><h3>Router 创建 Graph</h3><p>返回 <code>status=planned</code>、<code>graph_id</code>、<code>stream_mode=split_by_task</code>。</p></div></div>
+        <div class="step"><div><h3>生成多个 Task</h3><p>每个 task 包含 scene、target_agent、stream_url、resume_token。</p></div></div>
+        <div class="step"><div><h3>助手按 Task 消费</h3><p>v0.2 先提供 task snapshot 和 stream URL；真正 SSE resume 后续接入。</p></div></div>
+        <div class="step"><div><h3>汇总结果</h3><p>多个 Agent output 都完成后，助手汇总生成最终展示。</p></div></div>
+      </div>
+      <pre style="margin-top: 16px;"><code>{
+  "status": "planned",
+  "graph_id": "graph_001",
+  "stream_mode": "split_by_task",
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "scene_id": "balance_query",
+      "target_agent": "balance-agent",
+      "stream_url": "/api/router/v4/streams/task_001",
+      "resume_token": "rt_001"
+    }
+  ]
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>七、旅程 D：误派与兜底</h2>
+      <div class="lane four">
+        <div class="box orange">原任务<small>fund-agent</small></div>
+        <div class="arrow">›</div>
+        <div class="box red">handover<small>ishandover + empty data</small></div>
+        <div class="arrow">›</div>
+        <div class="box violet">fallback task<small>fallback-agent</small></div>
+        <div class="arrow">›</div>
+        <div class="box green">助手兜底展示<small>结构化结果生成话术</small></div>
+      </div>
+      <div class="grid two" style="margin-top: 16px;">
+        <div class="card">
+          <h3>触发条件</h3>
+          <pre><code>{
+  "ishandover": true,
+  "output": {"data": []}
+}</code></pre>
+        </div>
+        <div class="card">
+          <h3>不触发条件</h3>
+          <pre><code>{
+  "isHandover": true,
+  "output": {"data": []}
+}</code></pre>
+        </div>
+      </div>
+      <p class="note" style="margin-top: 16px;">
+        防循环规则：同一个原 task 最多 handover 一次；fallback-agent 如果再次返回 handover，Router 标记 <code>handover_exhausted</code>，不继续改派。
+      </p>
+    </section>
+
+    <section>
+      <h2>八、接口视图</h2>
+      <div class="grid three">
+        <div class="card">
+          <h3>主入口</h3>
+          <p><code>POST /api/router/v4/message</code></p>
+          <small>单意图派发、多意图计划、主动推送判断。</small>
+        </div>
+        <div class="card">
+          <h3>Agent 回调</h3>
+          <p><code>POST /api/router/v4/agent-output</code></p>
+          <small>结构化结果、handover、fallback 改派。</small>
+        </div>
+        <div class="card">
+          <h3>状态查询</h3>
+          <p><code>GET /sessions/{id}</code></p>
+          <small>session、task、graph、transcript 快照。</small>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>九、当前实现与后续</h2>
+      <div class="grid two">
+        <div class="card green">
+          <h3>已实现</h3>
+          <p>push context、no_action、planned graph、task snapshot、Agent output、固定 handover、fallback-agent、防循环、专项测试。</p>
+          <div class="pill-row">
+            <span class="pill">18 passed</span>
+            <span class="pill">router-v4-service</span>
+            <span class="pill">v0.2</span>
+          </div>
+        </div>
+        <div class="card orange">
+          <h3>后续实现</h3>
+          <p>真实 SSE task stream、resume token 消费、真实 Agent registry、Redis/SQL event store、fallback policy 配置化。</p>
+          <div class="pill-row">
+            <span class="pill">SSE resume</span>
+            <span class="pill">persistent store</span>
+            <span class="pill">policy</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

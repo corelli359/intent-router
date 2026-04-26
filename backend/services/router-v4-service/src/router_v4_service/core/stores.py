@@ -7,7 +7,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from router_v4_service.core.models import RoutingSessionState
+from router_v4_service.core.models import (
+    GraphStatus,
+    RouterGraphState,
+    RouterTaskState,
+    RoutingSessionState,
+    TaskStatus,
+)
 
 
 class RoutingSessionStore:
@@ -143,6 +149,19 @@ def _state_to_dict(state: RoutingSessionState) -> dict[str, Any]:
         "routing_slots": dict(state.routing_slots),
         "turn_count": state.turn_count,
         "summary": state.summary,
+        "active_graph_id": state.active_graph_id,
+        "active_task_ids": list(state.active_task_ids),
+        "source": state.source,
+        "push_context": dict(state.push_context),
+        "raw_messages": list(state.raw_messages),
+        "selected_scene_ids": list(state.selected_scene_ids),
+        "target_agents": list(state.target_agents),
+        "agent_task_ids": list(state.agent_task_ids),
+        "handover_records": list(state.handover_records),
+        "agent_outputs": dict(state.agent_outputs),
+        "assistant_result_status": state.assistant_result_status,
+        "tasks": {task_id: task.to_dict() for task_id, task in state.tasks.items()},
+        "graphs": {graph_id: graph.to_dict() for graph_id, graph in state.graphs.items()},
     }
 
 
@@ -157,6 +176,57 @@ def _state_from_dict(payload: dict[str, Any]) -> RoutingSessionState:
         routing_slots=dict(payload.get("routing_slots") or {}),
         turn_count=int(payload.get("turn_count") or 0),
         summary=str(payload.get("summary") or ""),
+        active_graph_id=_optional_str(payload.get("active_graph_id")),
+        active_task_ids=[str(value) for value in payload.get("active_task_ids", [])],
+        source=str(payload.get("source") or "user"),
+        push_context=dict(payload.get("push_context") or {}),
+        raw_messages=[str(value) for value in payload.get("raw_messages", [])],
+        selected_scene_ids=[str(value) for value in payload.get("selected_scene_ids", [])],
+        target_agents=[str(value) for value in payload.get("target_agents", [])],
+        agent_task_ids=[str(value) for value in payload.get("agent_task_ids", [])],
+        handover_records=[dict(value) for value in payload.get("handover_records", [])],
+        agent_outputs=dict(payload.get("agent_outputs") or {}),
+        assistant_result_status=str(payload.get("assistant_result_status") or ""),
+        tasks={
+            str(task_id): _task_from_dict(dict(task_payload))
+            for task_id, task_payload in dict(payload.get("tasks") or {}).items()
+        },
+        graphs={
+            str(graph_id): _graph_from_dict(dict(graph_payload))
+            for graph_id, graph_payload in dict(payload.get("graphs") or {}).items()
+        },
+    )
+
+
+def _task_from_dict(payload: dict[str, Any]) -> RouterTaskState:
+    return RouterTaskState(
+        task_id=str(payload.get("task_id") or ""),
+        scene_id=str(payload.get("scene_id") or ""),
+        target_agent=str(payload.get("target_agent") or ""),
+        agent_task_id=str(payload.get("agent_task_id") or ""),
+        status=_task_status(str(payload.get("status") or "")),
+        raw_message=str(payload.get("raw_message") or ""),
+        routing_slots=dict(payload.get("routing_slots") or {}),
+        scene_spec_hash=str(payload.get("scene_spec_hash") or ""),
+        stream_url=str(payload.get("stream_url") or ""),
+        resume_token=str(payload.get("resume_token") or ""),
+        source=str(payload.get("source") or "user"),
+        push_context=dict(payload.get("push_context") or {}),
+        original_task_id=_optional_str(payload.get("original_task_id")),
+        fallback_task_id=_optional_str(payload.get("fallback_task_id")),
+        handover_used=bool(payload.get("handover_used", False)),
+        agent_output=_optional_dict(payload.get("agent_output")),
+        abnormal_agent_output=_optional_dict(payload.get("abnormal_agent_output")),
+    )
+
+
+def _graph_from_dict(payload: dict[str, Any]) -> RouterGraphState:
+    return RouterGraphState(
+        graph_id=str(payload.get("graph_id") or ""),
+        task_ids=[str(value) for value in payload.get("task_ids", [])],
+        status=_graph_status(str(payload.get("status") or "")),
+        source=str(payload.get("source") or "user"),
+        stream_mode=str(payload.get("stream_mode") or "split_by_task"),
     )
 
 
@@ -179,6 +249,26 @@ def _optional_str(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _optional_dict(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return dict(value)
+
+
+def _task_status(value: str) -> TaskStatus:
+    try:
+        return TaskStatus(value)
+    except ValueError:
+        return TaskStatus.FAILED
+
+
+def _graph_status(value: str) -> GraphStatus:
+    try:
+        return GraphStatus(value)
+    except ValueError:
+        return GraphStatus.FAILED
 
 
 def _stable_key(value: str) -> str:

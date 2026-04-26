@@ -30,6 +30,7 @@ def test_spec_registry_loads_default_scenes_and_agents() -> None:
     assert transfer.target_agent == "transfer-agent"
     assert [slot.name for slot in transfer.routing_slots] == ["recipient", "amount"]
     assert agent.accepted_scene_ids == ("transfer",)
+    assert registry.agent("fallback-agent").accepted_scene_ids == ("fallback",)
 
 
 def test_runtime_dispatches_transfer_scene_with_routing_slots() -> None:
@@ -216,6 +217,163 @@ def test_context_report_applies_budget_and_keeps_core_blocks() -> None:
     assert output.prompt_report["included_blocks"][:3] == ["agent_rules", "routing_state", "scene_index"]
 
 
+def test_push_context_generic_acceptance_dispatches_first_recommended_scene() -> None:
+    runtime = RouterV4Runtime()
+
+    output = runtime.handle_turn(
+        RouterV4Input(
+            session_id="sess-push-generic",
+            message="就按这个办",
+            source="assistant_push",
+            push_context={
+                "push_id": "push-001",
+                "intents": [
+                    {"scene_id": "fund_query", "rank": 1},
+                    {"scene_id": "balance_query", "rank": 2},
+                ],
+            },
+        )
+    )
+
+    assert output.status == RouterTurnStatus.DISPATCHED
+    assert output.scene_id == "fund_query"
+    assert output.target_agent == "fund-agent"
+    assert output.action_required is None
+    assert output.events[0]["reasons"] == ["push_default"]
+    assert output.tasks[0]["push_context"]["push_id"] == "push-001"
+
+
+def test_push_context_rejection_returns_no_action_without_dispatch() -> None:
+    runtime = RouterV4Runtime()
+
+    output = runtime.handle_turn(
+        RouterV4Input(
+            session_id="sess-push-reject",
+            message="不用了",
+            source="assistant_push",
+            push_context={"intents": [{"scene_id": "fund_query", "rank": 1}]},
+        )
+    )
+
+    assert output.status == RouterTurnStatus.NO_ACTION
+    assert output.tasks == ()
+    snapshot = runtime.session_snapshot("sess-push-reject")
+    assert snapshot["session"]["dispatch_status"] == "no_action"
+
+
+def test_push_context_multi_intent_returns_split_task_plan() -> None:
+    runtime = RouterV4Runtime()
+
+    output = runtime.handle_turn(
+        RouterV4Input(
+            session_id="sess-push-plan",
+            message="都看一下",
+            source="assistant_push",
+            push_context={
+                "intents": [
+                    {"scene_id": "balance_query", "rank": 1},
+                    {"scene_id": "fund_query", "rank": 2},
+                ]
+            },
+        )
+    )
+
+    assert output.status == RouterTurnStatus.PLANNED
+    assert output.graph_id
+    assert output.stream_mode == "split_by_task"
+    assert [task["scene_id"] for task in output.tasks] == ["balance_query", "fund_query"]
+    assert all(task["stream_url"].startswith("/api/router/v4/streams/") for task in output.tasks)
+    graph = runtime.graph_snapshot("sess-push-plan", output.graph_id)
+    assert graph["found"] is True
+    assert graph["graph"]["status"] == "running"
+
+
+def test_agent_completed_output_is_preserved_for_assistant_generation() -> None:
+    runtime = RouterV4Runtime()
+    dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-agent-output", message="查一下余额"))
+
+    updated = runtime.handle_agent_output(
+        session_id="sess-agent-output",
+        task_id=dispatched.task_id or "",
+        agent_payload={
+            "status": "completed",
+            "output": {"data": [{"type": "balance", "currency": "CNY", "amount": "1000.00"}]},
+        },
+    )
+
+    assert updated.status == RouterTurnStatus.TASK_UPDATED
+    assert updated.response == "agent_output_recorded"
+    assert updated.agent_output == {"data": [{"type": "balance", "currency": "CNY", "amount": "1000.00"}]}
+    snapshot = runtime.session_snapshot("sess-agent-output")
+    assert snapshot["session"]["assistant_result_status"] == "ready_for_assistant"
+    assert snapshot["session"]["agent_outputs"][dispatched.task_id or ""]["data"][0]["amount"] == "1000.00"
+
+
+def test_agent_handover_protocol_dispatches_fallback_agent_once() -> None:
+    runtime = RouterV4Runtime()
+    dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-handover", message="基金"))
+
+    updated = runtime.handle_agent_output(
+        session_id="sess-handover",
+        task_id=dispatched.task_id or "",
+        agent_payload={"ishandover": True, "output": {"data": []}},
+    )
+
+    assert updated.status == RouterTurnStatus.TASK_UPDATED
+    assert updated.response == "fallback_dispatched"
+    assert updated.target_agent == "fallback-agent"
+    assert [event["type"] for event in updated.events] == [
+        "task.handover_requested",
+        "task.fallback_dispatched",
+    ]
+    snapshot = runtime.session_snapshot("sess-handover")
+    original = snapshot["tasks"][dispatched.task_id or ""]
+    fallback = snapshot["tasks"][updated.task_id or ""]
+    assert original["status"] == "handover_requested"
+    assert original["fallback_task_id"] == updated.task_id
+    assert fallback["status"] == "fallback_dispatched"
+    assert fallback["original_task_id"] == dispatched.task_id
+
+
+def test_agent_camel_case_handover_is_not_accepted() -> None:
+    runtime = RouterV4Runtime()
+    dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-camel-handover", message="基金"))
+
+    updated = runtime.handle_agent_output(
+        session_id="sess-camel-handover",
+        task_id=dispatched.task_id or "",
+        agent_payload={"isHandover": True, "output": {"data": []}},
+    )
+
+    assert updated.status == RouterTurnStatus.TASK_UPDATED
+    assert updated.response == "agent_output_abnormal"
+    assert updated.target_agent == "fund-agent"
+    snapshot = runtime.session_snapshot("sess-camel-handover")
+    assert len(snapshot["tasks"]) == 1
+    assert snapshot["tasks"][dispatched.task_id or ""]["status"] == "failed"
+
+
+def test_fallback_handover_does_not_loop() -> None:
+    runtime = RouterV4Runtime()
+    dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-no-loop", message="基金"))
+    fallback = runtime.handle_agent_output(
+        session_id="sess-no-loop",
+        task_id=dispatched.task_id or "",
+        agent_payload={"ishandover": True, "output": {"data": []}},
+    )
+
+    exhausted = runtime.handle_agent_output(
+        session_id="sess-no-loop",
+        task_id=fallback.task_id or "",
+        agent_payload={"ishandover": True, "output": {"data": []}},
+    )
+
+    assert exhausted.response == "handover_exhausted"
+    snapshot = runtime.session_snapshot("sess-no-loop")
+    assert len(snapshot["tasks"]) == 2
+    assert snapshot["tasks"][fallback.task_id or ""]["status"] == "handover_exhausted"
+
+
 def test_api_message_endpoint_dispatches_scene() -> None:
     app = create_app()
 
@@ -252,3 +410,30 @@ def test_api_session_snapshot_exposes_router_owned_state() -> None:
     assert payload["session"]["active_scene_id"] == "transfer"
     assert payload["session"]["dispatch_status"] == "dispatched"
     assert payload["transcript"]
+
+
+def test_api_agent_output_records_structured_result_and_task_snapshot() -> None:
+    app = create_app()
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/router/v4/message",
+            json={"session_id": "sess-api-agent-output", "message": "查一下余额"},
+        ).json()
+        updated = client.post(
+            "/api/router/v4/agent-output",
+            json={
+                "session_id": "sess-api-agent-output",
+                "task_id": first["task_id"],
+                "status": "completed",
+                "output": {"data": [{"type": "balance", "amount": "1000.00"}]},
+            },
+        )
+        snapshot = client.get(
+            f"/api/router/v4/sessions/sess-api-agent-output/tasks/{first['task_id']}"
+        )
+
+    assert updated.status_code == 200
+    assert updated.json()["agent_output"]["data"][0]["amount"] == "1000.00"
+    assert snapshot.status_code == 200
+    assert snapshot.json()["task"]["status"] == "completed"

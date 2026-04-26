@@ -12,6 +12,16 @@ This service is intentionally separate from the existing `router-service`. It ow
 
 It does not perform business confirmation, risk checks, limits, idempotency, or direct business API calls. Those remain in scene execution agents.
 
+Implemented v0.2 capabilities:
+
+- assistant-push routing with `push_context.intents`
+- direct push acceptance/rejection handling without Router confirmation
+- multi-intent `planned` response with task-level stream URLs
+- execution-agent structured output callback
+- fixed `ishandover=true` plus `output.data=[]` handover protocol
+- one-hop fallback dispatch to `fallback-agent`
+- task and graph snapshots
+
 Runtime switches:
 
 ```bash
@@ -54,6 +64,19 @@ Inspect router-owned state:
 
 ```bash
 curl http://127.0.0.1:8024/api/router/v4/sessions/sess_001
+```
+
+Record execution-agent output:
+
+```bash
+curl -X POST http://127.0.0.1:8024/api/router/v4/agent-output \
+  -H 'content-type: application/json' \
+  -d '{
+    "session_id": "sess_001",
+    "task_id": "task_001",
+    "status": "completed",
+    "output": {"data": [{"type": "balance", "amount": "1000.00"}]}
+  }'
 ```
 
 Run focused tests:

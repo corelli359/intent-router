@@ -23,6 +23,14 @@
       "task_schema": "balance_agent_task.v1",
       "event_schema": "agent_task_event.v1",
       "supports_stream": true
+    },
+    {
+      "agent_id": "fallback-agent",
+      "endpoint": "mock://fallback-agent",
+      "accepted_scene_ids": ["fallback"],
+      "task_schema": "fallback_agent_task.v1",
+      "event_schema": "agent_task_event.v1",
+      "supports_stream": true
     }
   ]
 }
