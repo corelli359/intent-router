@@ -12,7 +12,7 @@ scope: router-service v4 markdown skill runtime
 
 ```mermaid
 flowchart TD
-    Client["掌银 APP / 调用方"] --> Api["FastAPI v4 Skill Route: POST /api/router/v4/message"]
+    Client["掌银 APP / 调用方"] --> Api[" Skill Router: POST /api/router/v4/message"]
 
     Api --> Runtime["SkillRuntimeController"]
 
