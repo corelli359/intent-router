@@ -73,6 +73,30 @@ class _NormalizedNumericLLMClient:
         }
 
 
+class _TailPayeeAndAmountLLMClient:
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, variables, model, on_delta
+        return {
+            "slots": [
+                {
+                    "slot_key": "amount",
+                    "value": "1234",
+                    "source": "user_message",
+                    "source_text": "壹贰叁肆",
+                    "confidence": 0.98,
+                },
+                {
+                    "slot_key": "payee_name",
+                    "value": "姐姐",
+                    "source": "user_message",
+                    "source_text": "姐姐",
+                    "confidence": 0.98,
+                },
+            ],
+            "ambiguousSlotKeys": [],
+        }
+
+
 def _gas_intent() -> IntentDefinition:
     return IntentDefinition(
         intent_code="pay_gas_bill",
@@ -300,5 +324,30 @@ def test_understanding_validator_accepts_source_text_backed_normalized_numeric_s
         assert result.can_dispatch is True
         assert result.missing_required_slots == []
         assert result.slot_memory == {"gas_account_number": "88001234", "amount": "4321"}
+
+    asyncio.run(run())
+
+
+def test_understanding_validator_keeps_tail_payee_name_when_llm_returns_it() -> None:
+    async def run() -> None:
+        validator = UnderstandingValidator(
+            slot_extractor=SlotExtractor(llm_client=_TailPayeeAndAmountLLMClient())
+        )
+        result = await validator.validate_node(
+            intent=_transfer_intent(),
+            node=GraphNodeState(
+                intent_code="AG_TRANS",
+                title="转账",
+                confidence=0.97,
+                source_fragment="我要转壹贰叁肆给姐姐",
+            ),
+            graph_source_message="我要转壹贰叁肆给姐姐",
+            current_message="我要转壹贰叁肆给姐姐",
+            long_term_memory=[],
+        )
+
+        assert result.can_dispatch is True
+        assert result.missing_required_slots == []
+        assert result.slot_memory == {"amount": "1234", "payee_name": "姐姐"}
 
     asyncio.run(run())

@@ -145,6 +145,7 @@ def test_v2_slot_extractor_prompt_accepts_recent_messages_and_existing_slots() -
 
     assert len(messages) == 2
     assert "recent_messages 只用于帮助你理解当前轮和既有槽位之间的上下文连续性" in messages[0].content
+    assert "我要转壹贰叁肆给姐姐" in messages[0].content
     assert "最近对话(JSON)" in messages[1].content
     assert '"payee_name":"小红"' in messages[1].content
 
@@ -165,6 +166,7 @@ def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
 
     assert len(messages) == 2
     assert "slot_schema 是强约束" in messages[0].content
+    assert "我要转壹贰叁肆给姐姐" in messages[0].content
     assert "field_catalog" in messages[0].content
     assert "请尽量输出 node.slot_bindings" in messages[0].content
     assert "条件阈值只能进入 edge.condition.right_value" in messages[0].content
@@ -172,3 +174,21 @@ def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
     assert '"candidate_intents"' in messages[1].content
     assert '"edges"' in messages[1].content
     assert '"slot_bindings"' in messages[1].content
+
+
+def test_v2_graph_planner_prompt_requires_tail_payee_and_amount_on_same_node() -> None:
+    prompt = build_graph_planner_prompt(
+        system_prompt=DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT,
+        human_prompt=DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT,
+    )
+
+    messages = prompt.format_messages(
+        message="我要转壹贰叁肆给姐姐",
+        recent_messages_json="[]",
+        long_term_memory_json="[]",
+        matched_intents_json="[]",
+    )
+
+    assert len(messages) == 2
+    assert "我要转壹贰叁肆给姐姐" in messages[0].content
+    assert "amount 与 payee_name 必须都落在同一个节点里" in messages[0].content

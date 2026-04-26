@@ -95,6 +95,30 @@ class _NormalizedNumericLLMClient:
         }
 
 
+class _TailPayeeAndAmountLLMClient:
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, variables, model, on_delta
+        return {
+            "slots": [
+                {
+                    "slot_key": "amount",
+                    "value": "1234",
+                    "source": "user_message",
+                    "source_text": "壹贰叁肆",
+                    "confidence": 0.98,
+                },
+                {
+                    "slot_key": "payee_name",
+                    "value": "姐姐",
+                    "source": "user_message",
+                    "source_text": "姐姐",
+                    "confidence": 0.98,
+                },
+            ],
+            "ambiguousSlotKeys": [],
+        }
+
+
 def _gas_intent() -> IntentDefinition:
     return IntentDefinition(
         intent_code="pay_gas_bill",
@@ -380,5 +404,28 @@ def test_slot_extractor_keeps_source_text_backed_normalized_numeric_slot() -> No
         assert result.slot_memory == {"gas_account_number": "88001234", "amount": "4321"}
         binding_by_key = {binding.slot_key: binding for binding in result.slot_bindings}
         assert binding_by_key["amount"].source_text == "肆叁贰壹元"
+
+    asyncio.run(run())
+
+
+def test_slot_extractor_keeps_tail_payee_name_when_llm_returns_it() -> None:
+    async def run() -> None:
+        extractor = SlotExtractor(llm_client=_TailPayeeAndAmountLLMClient())
+        result = await extractor.extract(
+            intent=_transfer_intent(),
+            node=GraphNodeState(
+                intent_code="AG_TRANS",
+                title="转账",
+                confidence=0.97,
+                source_fragment="我要转壹贰叁肆给姐姐",
+            ),
+            graph_source_message="我要转壹贰叁肆给姐姐",
+            current_message="我要转壹贰叁肆给姐姐",
+            long_term_memory=[],
+        )
+
+        assert result.slot_memory == {"amount": "1234", "payee_name": "姐姐"}
+        binding_by_key = {binding.slot_key: binding for binding in result.slot_bindings}
+        assert binding_by_key["payee_name"].source_text == "姐姐"
 
     asyncio.run(run())

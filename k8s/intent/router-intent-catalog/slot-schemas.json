@@ -138,7 +138,7 @@
         "bind_scope": "node_input",
         "confirmation_policy": "when_ambiguous",
         "overwrite_policy": "overwrite_if_new_nonempty",
-        "prompt_hint": "当用户在转账动作中说“给小明转账”“转给王芳”“给我妈转200”“帮我打给欧阳娜娜”等时，即使没有正式实名、只出现昵称/关系称呼/两到四字中文姓名，也应提取到 payee_name；保留用户原文称呼，不要把卡号、银行名、卡备注填到 payee_name。"
+        "prompt_hint": "当用户在转账动作中说“给小明转账”“转给王芳”“给我妈转200”“帮我打给欧阳娜娜”等时，即使没有正式实名、只出现昵称/关系称呼/两到四字中文姓名，也应提取到 payee_name；当用户把金额放在前面、把收款对象放在句尾时，例如“我要转壹贰叁肆给姐姐”“转1234给我妈”，也应提取到 payee_name；保留用户原文称呼，不要把卡号、银行名、卡备注填到 payee_name。"
       },
       {
         "slot_key": "payee_card_no",
