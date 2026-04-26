@@ -95,6 +95,23 @@ class _NormalizedNumericLLMClient:
         }
 
 
+class _AmountOnlyLLMClient:
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, variables, model, on_delta
+        return {
+            "slots": [
+                {
+                    "slot_key": "amount",
+                    "value": "200",
+                    "source": "user_message",
+                    "source_text": "金额200",
+                    "confidence": 0.98,
+                }
+            ],
+            "ambiguousSlotKeys": [],
+        }
+
+
 class _TailPayeeAndAmountLLMClient:
     async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
         del prompt, variables, model, on_delta
@@ -217,7 +234,7 @@ def test_slot_extractor_returns_structured_slots_from_llm() -> None:
     asyncio.run(run())
 
 
-def test_slot_extractor_local_typed_parser_does_not_guess_semantic_string_slots() -> None:
+def test_slot_extractor_without_llm_does_not_guess_any_new_slots() -> None:
     async def run() -> None:
         extractor = SlotExtractor()
         result = await extractor.extract(
@@ -233,10 +250,10 @@ def test_slot_extractor_local_typed_parser_does_not_guess_semantic_string_slots(
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {"amount": "500"}
+        assert result.slot_memory == {}
         assert "payee_name" not in result.slot_memory
-        assert "payee_card_no" not in result.slot_memory
-        assert "payee_phone" not in result.slot_memory
+        assert "amount" not in result.slot_memory
+        assert result.ambiguous_slot_keys == []
 
     asyncio.run(run())
 
@@ -281,7 +298,7 @@ def test_slot_extractor_keeps_empty_result_when_llm_is_rate_limited() -> None:
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {"gas_account_number": "88001234"}
+        assert result.slot_memory == {}
         assert result.ambiguous_slot_keys == []
         assert result.diagnostics
         assert result.diagnostics[0].code == "SLOT_EXTRACTOR_LLM_RETRYABLE_UNAVAILABLE"
@@ -342,7 +359,7 @@ def test_slot_extractor_keeps_llm_slots_without_source_text_grounding_validation
 
 def test_slot_extractor_preserves_previous_user_message_slot_across_turns() -> None:
     async def run() -> None:
-        extractor = SlotExtractor()
+        extractor = SlotExtractor(llm_client=_AmountOnlyLLMClient())
         result = await extractor.extract(
             intent=_transfer_intent(),
             node=GraphNodeState(

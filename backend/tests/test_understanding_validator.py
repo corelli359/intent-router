@@ -73,6 +73,23 @@ class _NormalizedNumericLLMClient:
         }
 
 
+class _AmountOnlyLLMClient:
+    async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
+        del prompt, variables, model, on_delta
+        return {
+            "slots": [
+                {
+                    "slot_key": "amount",
+                    "value": "200",
+                    "source": "user_message",
+                    "source_text": "金额200",
+                    "confidence": 0.98,
+                }
+            ],
+            "ambiguousSlotKeys": [],
+        }
+
+
 class _TailPayeeAndAmountLLMClient:
     async def run_json(self, *, prompt, variables, model=None, on_delta=None):  # pragma: no cover - tiny stub
         del prompt, variables, model, on_delta
@@ -177,15 +194,15 @@ def test_understanding_validator_requires_all_slots_before_dispatch() -> None:
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {"gas_account_number": "88001234"}
-        assert result.missing_required_slots == ["amount"]
+        assert result.slot_memory == {}
+        assert result.missing_required_slots == ["gas_account_number", "amount"]
         assert result.can_dispatch is False
         assert not result.needs_confirmation
 
     asyncio.run(run())
 
 
-def test_understanding_validator_keeps_waiting_when_only_amount_is_locally_grounded() -> None:
+def test_understanding_validator_does_not_dispatch_without_llm_slot_output() -> None:
     async def run() -> None:
         validator = UnderstandingValidator()
         result = await validator.validate_node(
@@ -201,8 +218,8 @@ def test_understanding_validator_keeps_waiting_when_only_amount_is_locally_groun
             long_term_memory=[],
         )
 
-        assert result.slot_memory == {"amount": "500"}
-        assert result.missing_required_slots == ["payee_name"]
+        assert result.slot_memory == {}
+        assert result.missing_required_slots == ["payee_name", "amount"]
         assert result.can_dispatch is False
 
     asyncio.run(run())
@@ -260,7 +277,9 @@ def test_understanding_validator_keeps_llm_slots_without_grounding_validation() 
 
 def test_understanding_validator_keeps_multiturn_transfer_slots_across_turns() -> None:
     async def run() -> None:
-        validator = UnderstandingValidator()
+        validator = UnderstandingValidator(
+            slot_extractor=SlotExtractor(llm_client=_AmountOnlyLLMClient())
+        )
         result = await validator.validate_node(
             intent=_transfer_intent(),
             node=GraphNodeState(
