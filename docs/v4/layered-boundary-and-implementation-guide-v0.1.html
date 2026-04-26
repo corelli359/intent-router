@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>掌银助手分层边界与技术落地指南 v0.1</title>
+  <style>
+    :root {
+      --bg: #f5f7fa;
+      --paper: #ffffff;
+      --ink: #17202c;
+      --muted: #647184;
+      --line: #d8dee8;
+      --blue: #2563d8;
+      --blue-soft: #eaf1ff;
+      --green: #147a55;
+      --green-soft: #e8f7f0;
+      --orange: #b75d00;
+      --orange-soft: #fff3df;
+      --red: #b42318;
+      --red-soft: #fff0ed;
+      --violet: #6546d7;
+      --violet-soft: #f1edff;
+      --gray-soft: #eef2f6;
+      --shadow: 0 14px 36px rgba(23, 32, 44, 0.08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.62;
+    }
+
+    main {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 34px 20px 76px;
+    }
+
+    header {
+      display: grid;
+      gap: 14px;
+      padding: 30px 0 26px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    section {
+      margin-top: 28px;
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.24;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4vw, 48px);
+    }
+
+    h2 {
+      margin-bottom: 18px;
+      font-size: 26px;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #edf1f7;
+      color: #263244;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 8px;
+      border: 1px solid #202a38;
+      background: #101722;
+      color: #e9eef7;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .eyebrow {
+      color: var(--blue);
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+    }
+
+    .lead {
+      max-width: 920px;
+      color: #334155;
+      font-size: 18px;
+    }
+
+    .note {
+      padding: 14px 16px;
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      background: var(--blue-soft);
+      color: #21385f;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.four {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card,
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+    }
+
+    .box {
+      min-height: 78px;
+      display: grid;
+      place-items: center;
+      gap: 4px;
+      text-align: center;
+      font-weight: 800;
+    }
+
+    .box small,
+    .card small {
+      display: block;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .blue { border-color: #b8caff; background: var(--blue-soft); }
+    .green { border-color: #b8e5d0; background: var(--green-soft); }
+    .orange { border-color: #ffd498; background: var(--orange-soft); }
+    .red { border-color: #ffc6be; background: var(--red-soft); }
+    .violet { border-color: #d2c8ff; background: var(--violet-soft); }
+    .gray { border-color: var(--line); background: var(--gray-soft); }
+
+    .layer-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 16px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .layer-name {
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .layer-name small {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .layer-body {
+      display: grid;
+      gap: 10px;
+    }
+
+    .layer-items {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .item {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      min-height: 68px;
+    }
+
+    .item strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .handoff {
+      display: grid;
+      grid-template-columns: 1fr 44px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .arrow {
+      color: var(--muted);
+      font-size: 28px;
+      text-align: center;
+      line-height: 1;
+    }
+
+    .table {
+      display: grid;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .table.cols4 {
+      grid-template-columns: 0.9fr 1.3fr 1.3fr 1.3fr;
+    }
+
+    .table.cols5 {
+      grid-template-columns: 0.8fr 1.1fr 1.15fr 1.15fr 1fr;
+    }
+
+    .cell {
+      min-height: 50px;
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .cell.head {
+      background: #edf3ff;
+      font-weight: 900;
+    }
+
+    .cell:nth-child(4n) {
+      border-right: none;
+    }
+
+    .cols5 .cell:nth-child(4n) {
+      border-right: 1px solid var(--line);
+    }
+
+    .cols5 .cell:nth-child(5n) {
+      border-right: none;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #334155;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+      counter-reset: step;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      counter-increment: step;
+    }
+
+    .step::before {
+      content: counter(step);
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--blue);
+      color: white;
+      font-weight: 900;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 40px 1fr 40px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .flow.four {
+      grid-template-columns: 1fr 40px 1fr 40px 1fr 40px 1fr;
+    }
+
+    .flow.five {
+      grid-template-columns: 1fr 36px 1fr 36px 1fr 36px 1fr 36px 1fr;
+    }
+
+    @media (max-width: 920px) {
+      section { padding: 20px; }
+
+      .grid.two,
+      .grid.three,
+      .grid.four,
+      .layer,
+      .layer-items,
+      .handoff,
+      .flow,
+      .flow.four,
+      .flow.five,
+      .table.cols4,
+      .table.cols5 {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        transform: rotate(90deg);
+      }
+
+      .cell,
+      .cell:nth-child(4n),
+      .cols5 .cell:nth-child(5n) {
+        border-right: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">v0.1 layered boundary guide</div>
+      <h1>掌银助手、意图识别框架、子智能体的边界与落地路线</h1>
+      <p class="lead">
+        本文把系统拆成助手层、意图识别层、场景执行层，说明安全、限额、会话、意图识别、提槽、报文流转分别在哪里做，并给出 workflow / skill / API 的使用规范和典型场景推演。
+      </p>
+      <div class="note">
+        总原则：Router 做路由，不执行业务；场景执行 Agent 做业务流程；掌银助手承载用户交互和上游上下文。
+      </div>
+    </header>
+
+    <section>
+      <h2>一、三层边界图</h2>
+      <div class="layer-stack">
+        <div class="layer blue">
+          <div class="layer-name">
+            助手层
+            <small>掌银助手前端 / 后端</small>
+          </div>
+          <div class="layer-body">
+            <p>面向用户的总控入口，负责承载会话、用户身份、页面上下文、展示交互和上游编排。它不应该承载具体业务执行流程。</p>
+            <div class="layer-items">
+              <div class="item"><strong>前端</strong>输入框、确认控件、页面上下文、结果展示。</div>
+              <div class="item"><strong>助手后端</strong>统一会话入口、用户画像快照、渠道权限、可用 Agent 列表。</div>
+              <div class="item"><strong>交互总控</strong>决定消息展示、卡片渲染、是否继续会话。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="handoff">
+          <div class="box gray">请求下行<small>message + session_id + user/page context</small></div>
+          <div class="arrow">↓</div>
+          <div class="box gray">响应上行<small>router decision / agent event / final response</small></div>
+        </div>
+
+        <div class="layer violet">
+          <div class="layer-name">
+            意图识别层
+            <small>Router / Intent Framework</small>
+          </div>
+          <div class="layer-body">
+            <p>负责识别用户要进入哪个场景，按场景提供的路由 spec 做候选槽位提取，派发给对应执行 Agent，并追踪 Agent 任务状态。</p>
+            <div class="layer-items">
+              <div class="item"><strong>识别</strong>场景召回、LLM 确认、歧义澄清。</div>
+              <div class="item"><strong>提槽 hints</strong>只提取对话中可直取、且场景 spec 允许的槽位。</div>
+              <div class="item"><strong>派发追踪</strong>创建 agent_task_id，记录 transcript 和 Agent event。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="handoff">
+          <div class="box gray">Agent Task<small>scene_id + raw_message + routing_slots + context refs</small></div>
+          <div class="arrow">↓</div>
+          <div class="box gray">Agent Event<small>waiting_input / running / completed / failed</small></div>
+        </div>
+
+        <div class="layer orange">
+          <div class="layer-name">
+            场景执行层
+            <small>Sub Agents</small>
+          </div>
+          <div class="layer-body">
+            <p>由具体场景团队提供执行 Skill 和执行 Agent。业务提槽、确认、风控、限额、幂等、业务 API 调用、异常处理都在这里完成。</p>
+            <div class="layer-items">
+              <div class="item"><strong>转账 Agent</strong>收款人/金额补槽、确认、风控、转账。</div>
+              <div class="item"><strong>基金 Agent</strong>产品理解、风险揭示、申购试算、交易。</div>
+              <div class="item"><strong>查询 Agent</strong>余额、账单、持仓等只读业务查询。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>二、职责矩阵：安全、限额、会话、提槽在哪里做</h2>
+      <div class="table cols5">
+        <div class="cell head">问题</div>
+        <div class="cell head">助手层</div>
+        <div class="cell head">意图识别层 Router</div>
+        <div class="cell head">场景执行 Agent</div>
+        <div class="cell head">业务后端</div>
+
+        <div class="cell">会话</div>
+        <div class="cell">用户会话入口、页面交互态、展示历史。</div>
+        <div class="cell">路由 session：active_scene、agent_task_id、routing_slots、transcript。</div>
+        <div class="cell">业务 task session：业务步骤、业务槽位、确认态。</div>
+        <div class="cell">交易流水、业务状态、最终结果。</div>
+
+        <div class="cell">安全</div>
+        <div class="cell">登录态、渠道权限、脱敏展示、交互防误触。</div>
+        <div class="cell">Agent allowlist、路由边界、prompt injection 防护、禁止直调业务 API。</div>
+        <div class="cell">业务安全策略、认证、确认、幂等、风控前置。</div>
+        <div class="cell">权威权限校验、交易校验、审计。</div>
+
+        <div class="cell">限额</div>
+        <div class="cell">展示限额提示或入口可用性。</div>
+        <div class="cell">不做业务限额判定，只可转交限额上下文引用。</div>
+        <div class="cell">读取限额规则、做试算、决定是否需要认证。</div>
+        <div class="cell">最终限额判定和拒绝原因。</div>
+
+        <div class="cell">意图识别</div>
+        <div class="cell">可做入口级分流，例如文本/语音/页面触发。</div>
+        <div class="cell">主责：场景识别、多意图切分、歧义澄清、Agent 选择。</div>
+        <div class="cell">场景内子意图，例如转账是普通转账还是预约转账。</div>
+        <div class="cell">不参与自然语言识别。</div>
+
+        <div class="cell">提槽</div>
+        <div class="cell">可提供页面已选项、用户输入控件值。</div>
+        <div class="cell">只提取场景 spec 声明的可直取槽位，作为 hints。</div>
+        <div class="cell">主责：业务槽位补全、校验、纠错、确认。</div>
+        <div class="cell">权威校验字段有效性。</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>三、Spec 驱动机制：谁提供，驱动什么，代码怎么跑</h2>
+      <div class="note">
+        Spec 不是说明文档，而是运行时输入。平台定义格式、校验、加载和解释器；场景方提供具体 Router 路由 spec 和 Agent 执行 spec。
+      </div>
+
+      <div class="flow five" style="margin-top: 16px;">
+        <div class="box blue">场景方提交<small>routing spec + execution spec</small></div>
+        <div class="arrow">→</div>
+        <div class="box green">Spec Registry<small>校验、版本、发布</small></div>
+        <div class="arrow">→</div>
+        <div class="box violet">Router 加载<small>scene index + routing spec</small></div>
+        <div class="arrow">→</div>
+        <div class="box orange">构造任务<small>routing_slots + handoff</small></div>
+        <div class="arrow">→</div>
+        <div class="box red">Agent 执行<small>execution skill + business APIs</small></div>
+      </div>
+
+      <div class="grid two" style="margin-top: 16px;">
+        <div class="card">
+          <h3>Router 侧 Routing Spec 示例</h3>
+          <pre><code>{
+  "scene_id": "transfer",
+  "name": "转账",
+  "target_agent": "transfer-agent",
+  "triggers": {
+    "examples": ["给张三转5000块", "向李四汇款"],
+    "negative_examples": ["查询转账记录"]
+  },
+  "routing_slots": [
+    {
+      "name": "recipient",
+      "source": "user_utterance",
+      "required_for_dispatch": false,
+      "handoff": true
+    },
+    {
+      "name": "amount",
+      "source": "user_utterance",
+      "required_for_dispatch": false,
+      "handoff": true
+    }
+  ],
+  "dispatch_contract": {
+    "task_type": "transfer",
+    "handoff_fields": [
+      "raw_message",
+      "recipient",
+      "amount",
+      "user_profile_ref",
+      "page_context_ref"
+    ]
+  }
+}</code></pre>
+        </div>
+        <div class="card">
+          <h3>Agent 侧 Execution Spec 示例</h3>
+          <pre><code>{
+  "agent_id": "transfer-agent",
+  "skill_id": "transfer-execution",
+  "required_slots": [
+    "recipient",
+    "amount",
+    "pay_account"
+  ],
+  "workflow": [
+    "collect_slots",
+    "risk_check",
+    "confirm",
+    "execute_transfer",
+    "final"
+  ],
+  "apis": {
+    "risk_check": "/api/risk/check",
+    "transfer": "/api/transfer"
+  }
+}</code></pre>
+        </div>
+      </div>
+
+      <div class="table cols4" style="margin-top: 16px;">
+        <div class="cell head">字段</div>
+        <div class="cell head">谁提供</div>
+        <div class="cell head">驱动代码做什么</div>
+        <div class="cell head">边界</div>
+
+        <div class="cell">`triggers`</div>
+        <div class="cell">场景方</div>
+        <div class="cell">Router 做召回、LLM 判别和负例抑制。</div>
+        <div class="cell">不代表一定派发，仍要过置信度和歧义判断。</div>
+
+        <div class="cell">`routing_slots`</div>
+        <div class="cell">场景方</div>
+        <div class="cell">Router 只提取声明过的可直取槽位。</div>
+        <div class="cell">只是 hints，Agent 拥有最终校验权。</div>
+
+        <div class="cell">`target_agent`</div>
+        <div class="cell">场景方 + 平台注册</div>
+        <div class="cell">Router 选择派发目标并创建 `agent_task_id`。</div>
+        <div class="cell">Router 不读取 Agent 内部业务步骤。</div>
+
+        <div class="cell">`workflow/apis`</div>
+        <div class="cell">场景执行 Agent</div>
+        <div class="cell">Agent 驱动业务提槽、确认、风控、执行。</div>
+        <div class="cell">Router 不直接调这些业务 API。</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>四、报文传递设计</h2>
+      <div class="flow four">
+        <div class="box blue">助手后端<small>统一入口</small></div>
+        <div class="arrow">→</div>
+        <div class="box violet">Router<small>识别与派发</small></div>
+        <div class="arrow">→</div>
+        <div class="box orange">执行 Agent<small>业务流程</small></div>
+        <div class="arrow">→</div>
+        <div class="box red">业务后端<small>权威执行</small></div>
+      </div>
+
+      <div class="grid three" style="margin-top: 16px;">
+        <div class="card">
+          <h3>助手层 -> Router</h3>
+          <pre><code>{
+  "session_id": "sess_001",
+  "message": "给张三转5000块",
+  "user_profile": {"user_id": "U001"},
+  "page_context": {"current_page": "首页"},
+  "agent_registry": ["transfer-agent", "fund-agent"]
+}</code></pre>
+        </div>
+        <div class="card">
+          <h3>Router -> Agent</h3>
+          <pre><code>{
+  "router_session_id": "sess_001",
+  "agent_task_id": "task_001",
+  "scene_id": "transfer",
+  "raw_message": "给张三转5000块",
+  "routing_slots": {
+    "recipient": "张三",
+    "amount": 5000
+  },
+  "context_refs": {
+    "profile_snapshot": "profile_001"
+  }
+}</code></pre>
+        </div>
+        <div class="card">
+          <h3>Agent -> Router / 助手</h3>
+          <pre><code>{
+  "agent_task_id": "task_001",
+  "status": "waiting_user_input",
+  "message": "请确认向张三转账5000元",
+  "action_required": {
+    "type": "confirm",
+    "owner": "transfer-agent"
+  }
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>五、技术落地规范：workflow、skill、API 分别怎么用</h2>
+      <div class="table cols4">
+        <div class="cell head">类型</div>
+        <div class="cell head">适合放什么</div>
+        <div class="cell head">不适合放什么</div>
+        <div class="cell head">在本体系里的位置</div>
+
+        <div class="cell">Workflow</div>
+        <div class="cell">确定性的状态流转、派发、回调追踪、业务步骤编排、异常分支。</div>
+        <div class="cell">大量业务说明文本、模糊知识、开放式推理。</div>
+        <div class="cell">Router 用 workflow 管路由生命周期；Agent 用 workflow 管业务执行生命周期。</div>
+
+        <div class="cell">Skill</div>
+        <div class="cell">场景说明、触发条件、槽位 schema、派发契约、业务执行说明、reference。</div>
+        <div class="cell">真实密钥、运行时状态、实时限额结果、最终交易事实。</div>
+        <div class="cell">Router 侧是路由 Skill；Agent 侧是执行 Skill。两者边界必须分开。</div>
+
+        <div class="cell">API</div>
+        <div class="cell">状态持久化、Spec Registry、Agent Dispatch、Agent Callback、业务后端。</div>
+        <div class="cell">让 LLM 直接自由选择任意 endpoint。</div>
+        <div class="cell">Router 只调用基础设施和 Agent API；业务 API 由执行 Agent 调用。</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>六、典型场景推演</h2>
+      <div class="timeline">
+        <div class="step">
+          <div>
+            <h3>用户输入</h3>
+            <p>用户在掌银助手输入“给张三转5000块”。助手后端附带 `session_id`、用户画像快照、页面上下文和可派发 Agent 列表。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Router 加载路由上下文</h3>
+            <p>读取 router session。如果没有未完成任务，则加载场景 index；如果已有 `agent_task_id`，优先恢复并转发到已有 Agent。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>场景识别</h3>
+            <p>Router 用场景 metadata 和 LLM/embedding 判断是 `transfer` 场景。歧义时只做路由澄清，例如“是转账还是查转账记录”。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>渐进读取路由 Skill</h3>
+            <p>选中 `transfer` 后才读取场景提供的路由 spec：目标 Agent 是 `transfer-agent`，可直取槽位是 `recipient` 和 `amount`。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Router 提取候选槽位</h3>
+            <p>从对话里提取 `recipient=张三`、`amount=5000`。这些只作为 `routing_slots`，执行 Agent 仍要做业务校验和必要补槽。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>派发 Agent Task</h3>
+            <p>Router 创建 `agent_task_id=task_001`，把 raw message、routing slots、profile/page context refs 派发给 `transfer-agent`。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Agent 执行业务流程</h3>
+            <p>`transfer-agent` 处理业务提槽、风控、限额、确认、转账 API 和异常。Router 不参与这些业务步骤。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>Router 追踪和回传</h3>
+            <p>Agent 返回 waiting/running/completed 事件，Router 更新 transcript 和 routing state，再把消息交给助手层展示。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>七、目标路径：分阶段演进</h2>
+      <div class="grid four">
+        <div class="card blue">
+          <h3>Phase 1 当前问题</h3>
+          <p>先把 Router / Agent 边界理清，去掉 Router 直接执行业务 API 的假设。</p>
+          <div class="pill-row">
+            <span class="pill">分层文档</span>
+            <span class="pill">路由 spec</span>
+          </div>
+        </div>
+        <div class="card green">
+          <h3>Phase 2 可运行闭环</h3>
+          <p>实现 scene index、routing slot hints、Agent dispatch、Agent callback、routing session store。</p>
+          <div class="pill-row">
+            <span class="pill">多轮恢复</span>
+            <span class="pill">派发追踪</span>
+          </div>
+        </div>
+        <div class="card orange">
+          <h3>Phase 3 长上下文治理</h3>
+          <p>引入 ContextBuilder、prompt report、reference 按需读取、transcript pruning 和 compaction。</p>
+          <div class="pill-row">
+            <span class="pill">渐进加载</span>
+            <span class="pill">压缩裁剪</span>
+          </div>
+        </div>
+        <div class="card violet">
+          <h3>Phase 4 规模化演进</h3>
+          <p>接 embedding/LLM recognizer、场景版本锁定、Agent registry、灰度发布和观测报表。</p>
+          <div class="pill-row">
+            <span class="pill">多场景</span>
+            <span class="pill">可治理</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>八、建议落地原则</h2>
+      <div class="grid three">
+        <div class="card">
+          <h3>先边界，后智能</h3>
+          <p>先确定 Router 不能做什么，再接 LLM。边界不清时，模型能力越强越容易越权。</p>
+        </div>
+        <div class="card">
+          <h3>先状态，后压缩</h3>
+          <p>多轮能不能接上，靠结构化 state，不靠摘要。摘要只是给模型看的辅助材料。</p>
+        </div>
+        <div class="card">
+          <h3>先派发，后执行</h3>
+          <p>Router 的成功标准是正确派给场景 Agent，并追踪任务，不是替业务系统完成交易。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

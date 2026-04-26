@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V4 Spec 驱动运行时图解 v0.1</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --paper: #ffffff;
+      --ink: #18202a;
+      --muted: #647184;
+      --line: #d7dde6;
+      --blue: #2663d8;
+      --blue-soft: #e8f0ff;
+      --green: #147a55;
+      --green-soft: #e8f7f0;
+      --orange: #b15f00;
+      --orange-soft: #fff3df;
+      --red: #b42318;
+      --red-soft: #fff0ed;
+      --violet: #6d4aff;
+      --violet-soft: #f0edff;
+      --gray-soft: #eef1f5;
+      --shadow: 0 12px 34px rgba(20, 31, 48, 0.08);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.62;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 20px 72px;
+    }
+
+    header {
+      display: grid;
+      gap: 14px;
+      padding: 34px 0 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.24;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: clamp(28px, 4vw, 46px);
+    }
+
+    h2 {
+      font-size: 26px;
+      margin-bottom: 18px;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #edf1f7;
+      color: #243042;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #101722;
+      color: #e9eef7;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    section {
+      margin-top: 34px;
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      color: var(--blue);
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+    }
+
+    .lead {
+      max-width: 880px;
+      color: #344154;
+      font-size: 18px;
+    }
+
+    .note {
+      padding: 14px 16px;
+      border-left: 4px solid var(--blue);
+      background: var(--blue-soft);
+      color: #20355e;
+      border-radius: 6px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.four {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card,
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+    }
+
+    .box {
+      min-height: 80px;
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .box small,
+    .card small {
+      display: block;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .blue {
+      border-color: #b9ccff;
+      background: var(--blue-soft);
+    }
+
+    .green {
+      border-color: #b7e4d0;
+      background: var(--green-soft);
+    }
+
+    .orange {
+      border-color: #ffd59b;
+      background: var(--orange-soft);
+    }
+
+    .red {
+      border-color: #ffc4bd;
+      background: var(--red-soft);
+    }
+
+    .violet {
+      border-color: #d2c8ff;
+      background: var(--violet-soft);
+    }
+
+    .gray {
+      border-color: var(--line);
+      background: var(--gray-soft);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 38px 1fr 38px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .flow.four-step {
+      grid-template-columns: 1fr 38px 1fr 38px 1fr 38px 1fr;
+    }
+
+    .arrow {
+      color: var(--muted);
+      font-size: 28px;
+      text-align: center;
+      line-height: 1;
+    }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr 1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .column {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .lane-title {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .runtime-core {
+      border: 2px solid #9fb8ff;
+      border-radius: 8px;
+      background: #f9fbff;
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .runtime-core h3 {
+      text-align: center;
+      color: #193c8a;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+      counter-reset: step;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      counter-increment: step;
+    }
+
+    .step::before {
+      content: counter(step);
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--blue);
+      color: white;
+      font-weight: 800;
+    }
+
+    .step h3 {
+      margin-bottom: 4px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .state-row {
+      display: grid;
+      grid-template-columns: 1fr 28px 1fr 28px 1fr;
+      gap: 8px;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    .table {
+      display: grid;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .table.row4 {
+      grid-template-columns: 1fr 1.4fr 1.1fr 1.1fr;
+    }
+
+    .cell {
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+      min-height: 48px;
+    }
+
+    .cell:nth-child(4n) {
+      border-right: none;
+    }
+
+    .cell.head {
+      background: #eef3ff;
+      font-weight: 800;
+    }
+
+    .cell.last-row {
+      border-bottom: none;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #334155;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .callout-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .layer-stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 16px;
+      align-items: stretch;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .layer-name {
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      font-weight: 900;
+      color: #1d2a3a;
+    }
+
+    .layer-name small {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .layer-body {
+      display: grid;
+      gap: 10px;
+    }
+
+    .layer-items {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .layer-item {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fafbfc;
+      min-height: 70px;
+    }
+
+    .layer-item strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .handoff {
+      display: grid;
+      grid-template-columns: 1fr 40px 1fr;
+      gap: 10px;
+      align-items: center;
+      margin: 14px 0;
+    }
+
+    .handoff .box {
+      min-height: 62px;
+    }
+
+    @media (max-width: 900px) {
+      section {
+        padding: 20px;
+      }
+
+      .grid.two,
+      .grid.three,
+      .grid.four,
+      .architecture,
+      .split,
+      .callout-grid,
+      .layer,
+      .layer-items,
+      .handoff {
+        grid-template-columns: 1fr;
+      }
+
+      .flow,
+      .flow.four-step,
+      .state-row {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow {
+        transform: rotate(90deg);
+      }
+
+      .table.row4 {
+        grid-template-columns: 1fr;
+      }
+
+      .cell,
+      .cell:nth-child(4n) {
+        border-right: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">v0.1 architecture walkthrough</div>
+      <h1>Spec 驱动运行时怎么搭建，怎么从一次用户输入跑完整流程</h1>
+      <p class="lead">
+        这份图解只讲两件事：代码层面如何搭建 spec 驱动能力；用户输入以后，系统如何渐进加载状态、Skill、Reference 和业务能力，并在多轮里继续执行。
+      </p>
+      <div class="note">
+        最重要的边界：LLM 不直接执行业务。LLM 只参与理解和建议，Runtime 持有状态、校验步骤、控制 capability、写审计。
+      </div>
+    </header>
+
+    <section>
+      <h2>一、代码层面应该搭成什么样</h2>
+      <div class="layer-stack">
+        <div class="layer blue">
+          <div class="layer-name">
+            助手层
+            <small>掌银前端 / 后端</small>
+          </div>
+          <div class="layer-body">
+            <p>面向用户，承载会话入口、页面上下文、用户画像快照、展示与交互。它把用户输入和上下文传给 Router，并把 Router 或 Agent 的响应展示给用户。</p>
+            <div class="layer-items">
+              <div class="layer-item">
+                <strong>前端</strong>
+                用户输入、页面状态、确认控件、结果展示。
+              </div>
+              <div class="layer-item">
+                <strong>助手后端</strong>
+                session_id、用户画像、渠道权限、可派发 Agent 信息。
+              </div>
+              <div class="layer-item">
+                <strong>上游事实</strong>
+                user_profile、page_context、入口来源、用户原文。
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="handoff">
+          <div class="box gray">
+            请求下行
+            <small>message + session_id + context</small>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="box gray">
+            响应上行
+            <small>response + action/status</small>
+          </div>
+        </div>
+
+        <div class="layer violet">
+          <div class="layer-name">
+            意图识别层
+            <small>Router</small>
+          </div>
+          <div class="layer-body">
+            <p>做路由，不执行业务。读取场景提供的路由 spec，识别用户要进入哪个场景，提取可从对话直取的候选槽位，构造 Agent task 并追踪状态。</p>
+            <div class="layer-items">
+              <div class="layer-item">
+                <strong>识别</strong>
+                场景召回、LLM 确认、歧义澄清。
+              </div>
+              <div class="layer-item">
+                <strong>派发</strong>
+                target_agent、handoff fields、agent_task_id。
+              </div>
+              <div class="layer-item">
+                <strong>追踪</strong>
+                路由 state、transcript、Agent event summary。
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="handoff">
+          <div class="box gray">
+            Agent Task
+            <small>scene_id + raw_message + routing_slots</small>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="box gray">
+            Agent Event
+            <small>waiting / running / completed / failed</small>
+          </div>
+        </div>
+
+        <div class="layer orange">
+          <div class="layer-name">
+            场景执行层
+            <small>Execution Agents</small>
+          </div>
+          <div class="layer-body">
+            <p>按场景自己的执行 Skill 完成业务流程。这里才处理业务提槽、风控、确认、幂等、业务 API 调用和异常处理。</p>
+            <div class="layer-items">
+              <div class="layer-item">
+                <strong>Transfer Agent</strong>
+                转账提槽、确认、风控、转账 API。
+              </div>
+              <div class="layer-item">
+                <strong>Fund Agent</strong>
+                基金查询、申购试算、风险揭示。
+              </div>
+              <div class="layer-item">
+                <strong>Balance Agent</strong>
+                余额查询、账户信息、结果解释。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note" style="margin-top: 16px;">
+        这张分层图是最重要的边界图：Router 处在助手和场景执行 Agent 中间，负责“把用户请求正确送到哪个场景”，不负责“替场景完成业务流程”。
+      </div>
+
+      <div class="architecture">
+        <div class="column">
+          <div class="lane-title">入口与事实输入</div>
+          <div class="box blue">
+            掌银助手
+            <small>前端/后端、用户输入、session_id</small>
+          </div>
+          <div class="box blue">
+            API 接入层
+            <small>POST /api/router/v4/message</small>
+          </div>
+          <div class="box green">
+            请求快照
+            <small>user_profile、page_context、agent_endpoints</small>
+          </div>
+        </div>
+
+        <div class="runtime-core">
+          <h3>SkillRuntimeController</h3>
+          <div class="mini-grid">
+            <div class="box violet">
+              ContextBuilder
+              <small>决定本轮模型看什么</small>
+            </div>
+            <div class="box violet">
+              SkillSpecRegistry
+              <small>index、full skill、reference</small>
+            </div>
+            <div class="box orange">
+              Routing State Machine
+              <small>意图、候选场景、派发状态</small>
+            </div>
+            <div class="box orange">
+              AgentDispatchGateway
+              <small>派发契约、Agent 地址、回调追踪</small>
+            </div>
+          </div>
+          <div class="box red">
+            Runtime 强校验
+            <small>模型建议必须通过路由边界、场景契约和派发状态校验</small>
+          </div>
+        </div>
+
+        <div class="column">
+          <div class="lane-title">持久化与外部能力</div>
+          <div class="box green">
+            SkillSessionStore
+            <small>路由状态，恢复多轮识别/派发</small>
+          </div>
+          <div class="box green">
+            TurnTranscriptStore
+            <small>用户原文、路由决策、Agent 事件</small>
+          </div>
+          <div class="box gray">
+            Spec Files
+            <small>agent.md、skills/*.md、references/*.md</small>
+          </div>
+          <div class="box red">
+            Execution Agents
+            <small>transfer-agent、fund-agent、balance-agent</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout-grid" style="margin-top: 18px;">
+        <div class="card">
+          <h3>代码负责什么</h3>
+          <p>保存路由状态、组装上下文、读取场景提供的 spec、识别意图、抽取可直取槽位、派发执行 Agent、记录路由审计、压缩裁剪。</p>
+        </div>
+        <div class="card">
+          <h3>Spec 负责什么</h3>
+          <p>Router 侧 spec 由场景提供，描述触发条件、目标 Agent、可由 Router 直取的槽位、派发字段和 reference；业务步骤、确认、风控、业务 API 由场景执行 Agent 的 spec 定义。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>二、Router 和场景执行 Agent 的边界</h2>
+      <div class="grid two">
+        <div class="card blue">
+          <h3>Router 应该负责</h3>
+          <p>识别意图、做必要澄清、读取场景提供的路由 spec、提取可从对话直取的候选槽位、选择目标 Agent、派发任务、记录路由 transcript、追踪 Agent 状态。</p>
+          <div class="pill-row">
+            <span class="pill">识别</span>
+            <span class="pill">派发</span>
+            <span class="pill">追踪</span>
+            <span class="pill">路由审计</span>
+          </div>
+        </div>
+        <div class="card orange">
+          <h3>场景执行 Agent 应该负责</h3>
+          <p>业务提槽补全、业务校验、风控、确认、幂等、业务 API 调用、异常处理和最终业务结果。执行 Skill 由场景提供，用来说明对应执行 Agent 怎么工作。</p>
+          <div class="pill-row">
+            <span class="pill">业务流程</span>
+            <span class="pill">确认</span>
+            <span class="pill">风控</span>
+            <span class="pill">业务 API</span>
+          </div>
+        </div>
+      </div>
+      <div class="note" style="margin-top: 16px;">
+        Router 可以提槽，但槽位 schema 必须由场景 spec 提供；Router 提取出来的是派发 hints，执行 Agent 仍然拥有最终业务校验权。
+      </div>
+    </section>
+
+    <section>
+      <h2>三、四类事实不要混在一起</h2>
+      <div class="grid four">
+        <div class="card blue">
+          <h3>结构化状态</h3>
+          <p>当前候选场景、目标 Agent、路由级 slots、派发状态、Agent task_id、最近回调状态。</p>
+          <div class="pill-row">
+            <span class="pill">必须持久化</span>
+            <span class="pill">路由事实源</span>
+          </div>
+        </div>
+        <div class="card green">
+          <h3>Transcript</h3>
+          <p>用户原文、路由决策、提取槽位、派发请求、Agent 回调、compaction event。</p>
+          <div class="pill-row">
+            <span class="pill">可审计</span>
+            <span class="pill">可回放</span>
+          </div>
+        </div>
+        <div class="card orange">
+          <h3>Spec / Reference</h3>
+          <p>agent.md、场景路由 spec、槽位 spec、Agent 派发契约和说明文档。它们是可重载内容，不是每轮都塞全文。</p>
+          <div class="pill-row">
+            <span class="pill">按需加载</span>
+            <span class="pill">带版本/hash</span>
+          </div>
+        </div>
+        <div class="card violet">
+          <h3>Prompt View</h3>
+          <p>本轮真正给模型看的短视图，由 ContextBuilder 按预算组装。</p>
+          <div class="pill-row">
+            <span class="pill">可裁剪</span>
+            <span class="pill">可解释</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>四、渐进加载不是一句话，是分层接口</h2>
+      <div class="flow four-step">
+        <div class="box blue">
+          L0 Agent Rules
+          <small>短 agent.md，每轮可进 prompt</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box green">
+          L1 场景索引
+          <small>只读场景 metadata，不读全文</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box orange">
+          L2 场景路由 Spec
+          <small>选中场景后读取派发契约和 slot spec</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box violet">
+          L3 场景说明 / Reference
+          <small>识别或提槽需要时才读片段</small>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top: 18px;">
+        <div class="card">
+          <h3>错误方式</h3>
+          <pre><code>每轮 prompt =
+agent.md 全文
++ 所有 skills/*.md 全文
++ 所有 references/*.md 全文
++ 全部历史消息
++ 全部 Agent 回调和业务结果</code></pre>
+        </div>
+        <div class="card">
+          <h3>正确方式</h3>
+          <pre><code>每轮 prompt =
+短 agent rules
++ 当前路由 session state
++ 最近几轮原文
++ 候选场景 metadata
++ 场景提供的可直取 slot spec
++ 目标 Agent 派发契约</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>五、完整例子：用户说“给张三转5000块”</h2>
+      <div class="timeline">
+        <div class="step">
+          <div>
+            <h3>掌银助手发起请求</h3>
+            <p>上游传入 `session_id`、用户原文、用户画像、页面上下文和可派发的 Agent 信息。Router 不直接调用转账、申购等业务 API。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>加载或创建 Session State</h3>
+            <p>如果是新会话，`active_scene=null`、`routing_slots={}`。如果已有未完成路由或已派发任务，先恢复目标 Agent、task_id 和路由状态。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>写入 Transcript</h3>
+            <p>保存 `turn_id`、用户原文、请求快照引用、后续路由决策和派发事件。Transcript 是审计和回放来源，但不会全量进入 prompt。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>加载短 Agent Rules</h3>
+            <p>读取 `agent.md` 中稳定规则：Router 只做识别、澄清、提取可直取槽位、派发和追踪；业务确认和业务执行必须交给场景 Agent。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>加载场景索引</h3>
+            <p>只加载场景 metadata，例如 `transfer` 的名称、描述、目标 Agent、风险级别、关键词、hash。不读取全部场景说明正文。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>识别或恢复场景</h3>
+            <p>新会话用场景索引匹配到 `transfer`。如果 session 里已有 `active_scene=transfer` 或已派发 `agent_task_id`，则直接恢复，不从头识别。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>读取场景路由 Spec</h3>
+            <p>选中 `transfer` 后才读场景提供的路由 spec，拿到目标 `transfer-agent`、可由 Router 直取的 slot schema、派发字段和 reference 列表。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>按当前 step 读取 Reference</h3>
+            <p>如果识别或提槽需要业务说明，读取场景 reference 的必要片段。例如“收款人”和“金额”如何从自然语言中直取。完整业务执行规则仍由场景 Agent 持有。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>提取 Router 可直取 slots</h3>
+            <p>根据场景提供的 slot spec，从“给张三转5000块”提取候选 `recipient=张三`、`amount=5000`。这些是派发 hints，不替代执行 Agent 的业务校验。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>构造 Agent Task</h3>
+            <p>Router 把原始用户输入、路由槽位 hints、用户画像快照、页面上下文和场景 ID 打包成任务，不调用 `risk_check` 或 `transfer`。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>派发给执行 Agent</h3>
+            <p>通过 AgentDispatchGateway 调用 `transfer-agent`。`transfer-agent` 后续负责业务提槽补全、风控、确认、转账 API 和异常处理。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>保存派发状态</h3>
+            <p>Runtime 保存 `agent_task_id`、目标 Agent、派发摘要和当前状态，例如 `dispatched` 或 `waiting_agent`，用于多轮续接和回调关联。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>后续用户消息的流转</h3>
+            <p>如果任务已交给 `transfer-agent`，后续“确认”“改成3000”“取消”等消息应路由到该 Agent 或由 Agent 回调驱动，而不是 Router 自己解释业务确认。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>接收 Agent 进度或完成</h3>
+            <p>Router 记录 Agent 状态回调，例如 waiting_user_input、running、completed、failed。业务结果详情由 Agent 返回，Router 只负责传递和追踪。</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>完成并清理路由工作集</h3>
+            <p>Agent 完成后，Router 清理 active routing state，保留派发摘要和结果摘要。场景 spec、reference 原文、Agent 详细过程不再进入后续 prompt。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>六、多轮状态变化：Router 续接的是路由任务，不是业务确认</h2>
+      <div class="state-row">
+        <div class="box blue">
+          Turn 1 输入
+          <small>给张三转5000块</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box orange">
+          已派发 Agent
+          <small>提取 routing slots，创建 agent task</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box green">
+          返回上游
+          <small>任务已交给 transfer-agent</small>
+        </div>
+      </div>
+      <pre style="margin-top: 14px;"><code>{
+  "active_scene": "transfer",
+  "target_agent": "transfer-agent",
+  "agent_task_id": "task_001",
+  "routing_status": "dispatched",
+  "routing_slots": {
+    "recipient": "张三",
+    "amount": 5000
+  },
+  "handoff_summary": "用户希望向张三转账5000元，已派发给 transfer-agent"
+}</code></pre>
+
+      <div class="state-row">
+        <div class="box blue">
+          Turn 2 输入
+          <small>确认 / 改金额 / 取消</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box orange">
+          直接关联任务
+          <small>不重新识别，转给 transfer-agent</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box green">
+          等待 Agent 结果
+          <small>Router 只追踪完成态</small>
+        </div>
+      </div>
+      <pre style="margin-top: 14px;"><code>{
+  "active_scene": "transfer",
+  "target_agent": "transfer-agent",
+  "agent_task_id": "task_001",
+  "routing_status": "waiting_agent",
+  "summary": "后续消息已关联到 transfer-agent 的 task_001"
+}</code></pre>
+    </section>
+
+    <section>
+      <h2>七、Prompt View 到底应该长什么样</h2>
+      <div class="table row4">
+        <div class="cell head">块</div>
+        <div class="cell head">内容</div>
+        <div class="cell head">进入条件</div>
+        <div class="cell head">能否裁剪</div>
+
+        <div class="cell">L0 规则</div>
+        <div class="cell">短 agent rules、工具边界、输出格式</div>
+        <div class="cell">每轮</div>
+        <div class="cell">基本不可裁剪</div>
+
+        <div class="cell">L1 状态</div>
+        <div class="cell">active_scene、target_agent、agent_task_id、routing_slots、dispatch_status</div>
+        <div class="cell">每轮</div>
+        <div class="cell">不可裁剪</div>
+
+        <div class="cell">L2 工作集</div>
+        <div class="cell">候选场景、场景 slot spec、派发契约、最近几轮原文</div>
+        <div class="cell">按当前路由任务</div>
+        <div class="cell">部分可裁剪</div>
+
+        <div class="cell last-row">L3 可召回</div>
+        <div class="cell last-row">完整场景文档、完整 reference、旧 transcript、Agent 详细过程</div>
+        <div class="cell last-row">按需检索</div>
+        <div class="cell last-row">默认不进 prompt</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>八、和 OpenClaw / Hermes 的关系</h2>
+      <div class="grid two">
+        <div class="card">
+          <h3>借鉴它们</h3>
+          <p>Skill 只默认放索引，全文按需读；历史做 transcript；旧上下文做 compaction/pruning；memory 和 reference 通过工具按需检索。</p>
+        </div>
+        <div class="card">
+          <h3>不能照搬它们</h3>
+          <p>金融业务不能让 Router 或模型直接执行副作用。确认、幂等、风控、业务 API 应由场景执行 Agent 处理；Router 只校验路由和派发边界。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>九、落地顺序</h2>
+      <div class="flow four-step">
+        <div class="box green">
+          1. 持久化状态
+          <small>SkillSessionStore + TranscriptStore</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box violet">
+          2. 上下文构建
+          <small>ContextBuilder + prompt_report</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box orange">
+          3. 渐进 Skill Registry
+          <small>场景 index、路由 spec、slot spec、hash lock</small>
+        </div>
+        <div class="arrow">›</div>
+        <div class="box red">
+          4. 裁剪和检索
+          <small>pruning、compaction、session/reference search</small>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

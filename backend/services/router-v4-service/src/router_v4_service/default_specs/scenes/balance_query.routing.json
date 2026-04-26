@@ -1,0 +1,32 @@
+{
+  "scene_id": "balance_query",
+  "version": "0.1.0",
+  "name": "余额查询",
+  "description": "识别用户查询账户余额、银行卡余额、可用余额的请求，并派发给余额查询 Agent。",
+  "target_agent": "balance-agent",
+  "triggers": {
+    "keywords": ["余额", "可用余额", "账户余额", "银行卡余额", "还有多少钱"],
+    "negative_keywords": ["转账", "基金"],
+    "examples": ["查一下余额", "我卡里还有多少钱"],
+    "negative_examples": ["给张三转5000块"]
+  },
+  "routing_slots": [
+    {
+      "name": "account_hint",
+      "source": "user_utterance",
+      "required_for_dispatch": false,
+      "handoff": true,
+      "extractor": {
+        "type": "after_terms",
+        "terms": ["查", "查询"],
+        "stop_terms": ["余额"],
+        "max_chars": 16
+      }
+    }
+  ],
+  "dispatch_contract": {
+    "task_type": "balance_query",
+    "handoff_fields": ["raw_message", "account_hint", "user_profile_ref", "page_context_ref"]
+  },
+  "references": ["balance-routing.md"]
+}
