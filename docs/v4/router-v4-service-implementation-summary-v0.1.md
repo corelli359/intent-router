@@ -2,14 +2,14 @@
 
 ## 当前结论
 
-本版已把意图识别、场景契约、执行 Skill 拆开：
+本版把 v4 spec 结构进一步收敛为：**一个意图目录 `intent.md` + 按需 Skill reference**。
 
-- 意图识别层只读取 `default_specs/intents/*.intent.md`。
+- Router 识别阶段只读取 `default_specs/intent.md`。
+- `intent.md` 内集中维护所有意图清单、意图边界、正反例、目标 Agent、派发契约和 `skill_ref`。
 - Router 识别结果只包含 `intent_id`、置信度和理由。
-- Router 通过 `default_specs/routes/intent-routes.md` 把 `intent_id` 映射到执行 `scene_id`。
-- Router 在意图命中后才读取 `default_specs/scenes/*.scene.md`，只用于派发契约。
+- Router 命中意图后，直接使用该 intent 条目里的 `target_agent`、`dispatch_contract`、`skill_ref` 创建 Agent task。
 - Router 不读取 `skills/*.skill.md` 正文，不提槽、不追问、不执行业务 API。
-- 执行 Agent 在自己的生命周期内加载 Skill md，完成业务提槽、确认、风控、限额、API 和 handover。
+- 执行 Agent 按 `skill_ref.path` 加载自己的 Skill md，并按 Skill 步骤执行提槽、追问、确认、风控、限额、API 和 handover。
 
 ## 代码位置
 
@@ -27,12 +27,9 @@ backend/services/router-v4-service/
     │   ├── spec_registry.py
     │   └── stores.py
     └── default_specs/
-        ├── intents/*.intent.md
-        ├── routes/intent-routes.md
-        ├── scenes/*.scene.md
+        ├── intent.md
         ├── agents/agent-registry.md
-        ├── skills/*.skill.md
-        └── references/*-intent.md
+        └── skills/*.skill.md
 ```
 
 ## 分层边界
@@ -45,10 +42,9 @@ backend/services/router-v4-service/
 
 负责：
 
-- 加载独立 intent markdown spec。
+- 加载单个 `intent.md`。
 - 调用 LLM 识别 `intent_id`。
-- 通过路由映射找到执行场景。
-- 加载场景派发契约。
+- 从命中 intent 条目中读取 `target_agent`、`skill_ref`、`dispatch_contract`。
 - 创建 Agent task。
 - 跟踪 Router 侧 session、task、graph、handover。
 
@@ -61,22 +57,21 @@ backend/services/router-v4-service/
 
 ### 执行 Agent 层
 
-负责加载自己的 Skill md，并根据 Skill 完成业务生命周期。以转账为例，`transfer-agent` 加载 `services/transfer-agent-demo/skills/transfer.skill.md`，处理自由表达提槽、缺槽追问、确认、执行和 `ishandover=true && output.data=[]`。
+负责按 `skill_ref.path` 加载自己的 Skill md，并根据 Skill 完成业务生命周期。以转账为例，`transfer-agent` 加载 `services/transfer-agent-demo/skills/transfer.skill.md`，处理自由表达提槽、缺槽追问、确认、执行和 `ishandover=true && output.data=[]`。
 
 ## 渐进式加载
 
 当前 `prompt_report.load_trace` 的主线是：
 
 ```text
-turn_start           -> router_boundary / routing_state
-before_recognition   -> intent_markdown_index
-after_recognition    -> recognized_intents
-after_intent_mapped  -> scene_contract
-before_dispatch      -> dispatch_contract
-before_recognition   -> retrieved_references
+turn_start          -> router_boundary / routing_state
+before_recognition  -> intent_catalog
+after_recognition   -> recognized_intents
+after_recognition   -> skill_reference
+before_dispatch     -> dispatch_contract
 ```
 
-这里的关键点是：识别前没有 `scene_contract`，更没有 `skill_card`。Skill 加载证据只应来自执行 Agent 的 `agent.skill_loaded` 事件。
+这里的关键点是：识别阶段只读一个 `intent.md`。`skill_reference` 只是同一目录里的引用信息，不是 Skill 正文。Skill 加载证据只应来自执行 Agent 的 `agent.skill_loaded` 事件。
 
 ## 已验证场景
 
@@ -88,25 +83,14 @@ python -m compileall -q backend/services/router-v4-service/src/router_v4_service
 node --check services/router-v4-observer-ui/app.js
 ```
 
-结果：
-
-```text
-router-v4-service: 22 passed
-assistant-demo: 2 passed
-transfer-agent-demo: 3 passed
-compileall: passed
-observer-ui js check: passed
-```
-
 ## 关键修正
 
-- 删除默认 `*.routing.md` 场景源，改为 `*.intent.md` + `*.scene.md`。
-- 删除 Router prompt/report 中的 `agent_field_policy` 和 `skill_card`。
-- LLM recognizer 输入从 scene spec 改为 independent intent spec。
-- LLM recognizer 输出从 `selected_scene_id` 改为 `selected_intent_id`。
-- Router task payload 增加 `intent_id`，并把 `skill` 改为 `skill_ref`。
-- Observer UI 改为展示 `intent_markdown_index -> recognized_intents -> scene_contract -> dispatch_contract -> agent.skill_loaded`。
-- 默认 Skill 文档改写边界：Router 不读取 Skill 正文，Agent 执行阶段加载。
+- 删除默认 `intents/*.intent.md`、`routes/intent-routes.md`、`scenes/*.scene.md` 源。
+- 新增 `default_specs/intent.md` 作为唯一 Router 识别目录。
+- `IntentSpec` 自身携带 `scene_id`、`target_agent`、`skill_ref`、`dispatch_contract`。
+- `prompt_report` 从 `intent_markdown_index/scene_contract` 改为 `intent_catalog/skill_reference`。
+- Router task payload 保留 `intent_id`、`scene_id`、`skill_ref`、`intent_catalog_hash`。
+- 默认 Skill 文档改为可执行规范结构：Metadata、Boundary、Inputs、State、Steps、Slot Policy、Handover、Output Contract。
 
 ## 当前限制
 

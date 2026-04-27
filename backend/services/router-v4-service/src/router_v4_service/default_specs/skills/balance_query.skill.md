@@ -1,18 +1,47 @@
-# 余额查询 Skill 卡片 v0.1
+# Skill: balance_query
 
-owner: balance-agent
-scene_id: balance_query
-task_type: balance_query
+## Metadata
 
-## Router 交互边界
+- skill_id: balance_query
+- version: 0.1.0
+- owner_agent: balance-agent
+- task_type: balance_query
 
-Router 不读取本 Skill 正文做意图识别，也不使用本 Skill 做上下文构建。Router 只在场景契约中传递 `skill_ref`，由 balance-agent 在执行阶段加载本 Skill。
-Router 不直接访问账户系统，也不生成最终的余额展示文案。
+## Boundary
 
-## 执行 Agent 职责
+This Skill only handles balance query execution. Router passes `skill_ref` and raw context but does not load this Skill body during intent recognition.
 
-balance-agent 负责账户选择、权限校验、余额查询和结构化结果输出。
+## Inputs
 
-## 误派处理
+- router_session_id
+- task_id
+- intent_id
+- scene_id
+- raw_message
+- context_refs
 
-如果任务不属于余额查询，balance-agent 返回 `ishandover=true`，并让 `output.data=[]`，Router 据此转交兜底 Agent。
+## State
+
+- account_scope
+- auth_status
+- query_status
+
+## Steps
+
+1. Verify the task belongs to balance query.
+2. Resolve account scope from user expression and available context.
+3. Perform authentication and permission checks.
+4. Query balance service.
+5. Return structured balance data.
+
+## Slot Policy
+
+Account scope is owned by balance-agent. Router must not extract account scope.
+
+## Handover
+
+If the task does not belong to balance query, return `ishandover=true` and `output.data=[]`.
+
+## Output Contract
+
+Completed output contains `data[0].type=balance`.

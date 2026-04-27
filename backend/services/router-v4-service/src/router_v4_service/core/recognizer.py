@@ -35,7 +35,7 @@ class IntentRecognizerError(RuntimeError):
 
 
 class LLMIntentRecognizer:
-    """OpenAI-compatible recognizer driven by independent markdown intent specs."""
+    """OpenAI-compatible recognizer driven by the single markdown intent catalog."""
 
     def __init__(
         self,
@@ -72,9 +72,9 @@ class LLMIntentRecognizer:
                 {
                     "role": "system",
                     "content": (
-                        "你是银行助手的意图识别器。必须只根据用户表达、助手推送上下文和给定 markdown 意图 spec 进行判断。"
-                        "意图是否命中、是否多意图，都必须由独立 intent spec 的意图边界、正例、反例驱动。"
-                        "不要选择场景，不要读取或推断执行 Agent/Skill，不要提取业务字段。"
+                        "你是银行助手的意图识别器。必须只根据用户表达、助手推送上下文和给定 intent.md 意图目录进行判断。"
+                        "意图是否命中、是否多意图，都必须由 intent.md 的意图边界、正例、反例驱动。"
+                        "不要读取 skill_ref 指向的 Skill 正文，不要执行 Skill 步骤，不要提取业务字段。"
                         "不要使用外部知识补充未知意图；如果没有明确可执行的意图，selected_intent_id 返回 null。"
                         "助手主动推送时，用户表达可能是指代、承接或省略业务名称；你必须结合 push_context 中按 rank 排序的意图清单判断。"
                         "如果用户表达的是接受或继续办理某个推荐，但没有点名业务，选择最高 rank 的推送意图；"
@@ -170,6 +170,10 @@ def _intent_payload(intent: IntentSpec) -> dict[str, Any]:
         "name": intent.name,
         "description": intent.description,
         "markdown_spec": _markdown_excerpt(intent.spec_markdown, limit=1600),
+        "skill_ref": {
+            "skill_id": intent.skill.get("skill_id"),
+            "path": intent.skill.get("path"),
+        },
         "references": list(intent.references),
     }
 

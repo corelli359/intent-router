@@ -1,25 +1,86 @@
-# 转账 Skill 卡片 v0.1
+# Skill: transfer
 
-owner: transfer-agent
-scene_id: transfer
-task_type: transfer
+## Metadata
 
-## Router 交互边界
+- skill_id: transfer
+- version: 0.1.0
+- owner_agent: transfer-agent
+- task_type: transfer
 
-Router 不读取本 Skill 正文做意图识别，也不使用本 Skill 做上下文构建。Router 只在场景契约中传递 `skill_ref`，由 transfer-agent 在执行阶段加载本 Skill。
-Router 不执行转账流程，不调用风控、限额或转账 API，也不生成面向用户的最终办理结果。
+## Boundary
 
-## 执行 Agent 职责
+This Skill only handles transfer execution. Router may pass `skill_ref` and the raw user message, but Router must not load this Skill body during intent recognition.
 
-transfer-agent 负责业务理解、自由表达提槽、收款人和金额校验、业务缺槽追问、风控、限额、用户确认、幂等控制、转账 API 调用和结构化结果输出。
+The Skill owns recipient extraction, amount extraction, missing-field prompts, confirmation, risk check, limit check, transfer API invocation, and structured output.
 
-字段收集由本 Skill 声明并由 transfer-agent 执行：
+## Inputs
 
-- `recipient`：收款人姓名、称呼或可解析的收款对象。
-- `amount`：转账金额，必须在用户表达中明确出现。
+- router_session_id
+- task_id
+- intent_id
+- scene_id
+- raw_message
+- source
+- push_context
+- context_refs
 
-用户一次性说出“我要转账300给小红”时，Agent 应一次性提取收款人和金额并进入确认；用户只说“我要转账”时，Agent 应一次性追问“转给谁”和“转账金额”。
+## State
 
-## 误派处理
+- recipient: collected by transfer-agent
+- amount: collected by transfer-agent
+- currency: default CNY
+- skill_step: start | collecting_transfer_fields | waiting_confirmation | completed | cancelled | handover
 
-如果任务不属于转账，transfer-agent 返回 `ishandover=true`，并让 `output.data=[]`，Router 据此转交兜底 Agent。
+## Steps
+
+1. Load Router task snapshot and verify `scene_id=transfer`.
+2. If the task is not transfer, return `ishandover=true` and `output.data=[]`.
+3. Read the current user expression as free text.
+4. Extract all available transfer fields in one pass.
+5. If recipient or amount is missing, ask for all missing fields in one response.
+6. If recipient and amount are complete, ask for user confirmation.
+7. After confirmation, run risk check, limit check, and transfer API.
+8. Submit structured output to Router by `agent-output`.
+
+## Slot Policy
+
+- recipient: payee name, alias, or resolvable payee object.
+- amount: explicit transfer amount from the user expression.
+- If the user says only "我要转账", ask: "可以，请告诉我转给谁、转账金额是多少？"
+- If the user says "我要转账300给小红", collect both fields and enter confirmation.
+
+## Handover
+
+When the task does not belong to this Skill:
+
+```json
+{
+  "ishandover": true,
+  "output": {"data": []}
+}
+```
+
+## Output Contract
+
+Running:
+
+```json
+{
+  "status": "running",
+  "assistant_message": "string"
+}
+```
+
+Completed:
+
+```json
+{
+  "status": "completed",
+  "output": {
+    "data": [{"type": "transfer_result", "status": "success"}],
+    "risk": {"status": "passed"},
+    "limit": {"status": "passed"},
+    "business_api": {"name": "transfer.submit", "status": "success"}
+  }
+}
+```

@@ -45,29 +45,6 @@ class GraphStatus(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class IntentSpec:
-    """Intent-layer markdown spec used only for recognition."""
-
-    intent_id: str
-    name: str
-    version: str
-    description: str
-    references: tuple[str, ...]
-    spec_hash: str
-    spec_markdown: str
-    source_path: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class IntentRoute:
-    """Router-owned mapping from a recognized intent to an execution scene."""
-
-    intent_id: str
-    scene_id: str
-    description: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class DispatchContract:
     """Contract used to build an execution-agent task."""
 
@@ -76,9 +53,10 @@ class DispatchContract:
 
 
 @dataclass(frozen=True, slots=True)
-class SceneSpec:
-    """Execution-scene contract used after intent recognition."""
+class IntentSpec:
+    """One intent entry compiled from the single markdown intent catalog."""
 
+    intent_id: str
     scene_id: str
     name: str
     version: str
@@ -120,7 +98,7 @@ class RouterTaskState:
     status: TaskStatus
     raw_message: str
     routing_hints: dict[str, Any] = field(default_factory=dict)
-    scene_spec_hash: str = ""
+    intent_catalog_hash: str = ""
     stream_url: str = ""
     resume_token: str = ""
     source: str = "user"
@@ -141,7 +119,7 @@ class RouterTaskState:
             "status": self.status.value,
             "raw_message": self.raw_message,
             "routing_hints": dict(self.routing_hints),
-            "scene_spec_hash": self.scene_spec_hash,
+            "intent_catalog_hash": self.intent_catalog_hash,
             "stream_url": self.stream_url,
             "resume_token": self.resume_token,
             "source": self.source,

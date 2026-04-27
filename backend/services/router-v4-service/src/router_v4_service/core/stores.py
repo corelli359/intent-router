@@ -210,7 +210,7 @@ def _task_from_dict(payload: dict[str, Any]) -> RouterTaskState:
         status=_task_status(str(payload.get("status") or "")),
         raw_message=str(payload.get("raw_message") or ""),
         routing_hints=dict(payload.get("routing_hints") or {}),
-        scene_spec_hash=str(payload.get("scene_spec_hash") or ""),
+        intent_catalog_hash=str(payload.get("intent_catalog_hash") or ""),
         stream_url=str(payload.get("stream_url") or ""),
         resume_token=str(payload.get("resume_token") or ""),
         source=str(payload.get("source") or "user"),

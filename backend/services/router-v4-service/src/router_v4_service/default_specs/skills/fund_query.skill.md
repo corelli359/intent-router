@@ -1,18 +1,48 @@
-# 基金查询 Skill 卡片 v0.1
+# Skill: fund_query
 
-owner: fund-agent
-scene_id: fund_query
-task_type: fund_query
+## Metadata
 
-## Router 交互边界
+- skill_id: fund_query
+- version: 0.1.0
+- owner_agent: fund-agent
+- task_type: fund_query
 
-Router 不读取本 Skill 正文做意图识别，也不使用本 Skill 做上下文构建。Router 只在场景契约中传递 `skill_ref`，由 fund-agent 在执行阶段加载本 Skill。
-Router 不做基金推荐、不做购买确认、不做适当性校验，也不调用基金业务 API。
+## Boundary
 
-## 执行 Agent 职责
+This Skill only handles fund query execution. Router passes `skill_ref` and raw context but does not load this Skill body during intent recognition.
 
-fund-agent 负责基金名称或代码理解、产品查询、风险揭示、适当性校验、持仓或净值查询，以及结构化结果输出。
+## Inputs
 
-## 误派处理
+- router_session_id
+- task_id
+- intent_id
+- scene_id
+- raw_message
+- context_refs
 
-如果任务不属于基金查询，fund-agent 返回 `ishandover=true`，并让 `output.data=[]`，Router 据此转交兜底 Agent。
+## State
+
+- fund_scope
+- product_id
+- query_status
+- suitability_status
+
+## Steps
+
+1. Verify the task belongs to fund query.
+2. Resolve fund product, code, or product scope.
+3. Query product profile, risk level, net value, holdings, or return data.
+4. Apply suitability and disclosure rules if required.
+5. Return structured fund data.
+
+## Slot Policy
+
+Fund product resolution is owned by fund-agent. Router must not extract product fields.
+
+## Handover
+
+If the task does not belong to fund query, return `ishandover=true` and `output.data=[]`.
+
+## Output Contract
+
+Completed output contains `data[0].type=fund`.

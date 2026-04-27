@@ -73,49 +73,51 @@ def _runtime(decisions: dict[str, object] | None = None, **kwargs: object) -> Ro
     return RouterV4Runtime(recognizer=FakeIntentRecognizer(decisions), **kwargs)
 
 
-def _write_intent_and_route(spec_root: Path, *, intent_id: str = "transfer", scene_id: str = "transfer") -> None:
-    (spec_root / "intents").mkdir(parents=True, exist_ok=True)
-    (spec_root / "routes").mkdir(parents=True, exist_ok=True)
-    (spec_root / "intents" / f"{intent_id}.intent.md").write_text(
+def _write_intent_catalog(
+    spec_root: Path,
+    *,
+    intent_id: str = "transfer",
+    scene_id: str = "transfer",
+    target_agent: str = "transfer-agent",
+    handoff_fields: list[str] | None = None,
+) -> None:
+    (spec_root / "agents").mkdir(parents=True, exist_ok=True)
+    (spec_root / "skills").mkdir(parents=True, exist_ok=True)
+    fields = handoff_fields or ["raw_message"]
+    fields_literal = ", ".join(f'"{item}"' for item in fields)
+    (spec_root / "intent.md").write_text(
         f"""
 +++
+[[intents]]
 intent_id = "{intent_id}"
+scene_id = "{scene_id}"
 version = "0.1.0"
 name = "{intent_id}"
 description = "{intent_id} intent"
+target_agent = "{target_agent}"
 references = []
+skill = {{ skill_id = "{intent_id}", version = "0.1.0", owner = "{target_agent}", path = "skills/{intent_id}.skill.md", description = "{intent_id} skill" }}
+dispatch_contract = {{ task_type = "{scene_id}", handoff_fields = [{fields_literal}] }}
 +++
 
-# {intent_id} Intent
+# Intent Catalog
+
+## {intent_id}
 
 用户表达办理该业务时命中。
 """,
         encoding="utf-8",
     )
-    (spec_root / "routes" / "intent-routes.md").write_text(
-        f"""
-+++
-[[routes]]
-intent_id = "{intent_id}"
-scene_id = "{scene_id}"
-+++
-
-# Intent Routes
-""",
-        encoding="utf-8",
-    )
 
 
-def test_spec_registry_loads_default_scenes_and_agents() -> None:
+def test_spec_registry_loads_default_intent_catalog_and_agents() -> None:
     registry = SpecRegistry()
 
     intents = registry.intent_index()
-    scenes = registry.scene_index()
-    transfer = registry.scene("transfer")
+    transfer = registry.intent("transfer")
     agent = registry.agent("transfer-agent")
 
     assert [intent.intent_id for intent in intents] == ["balance_query", "fund_query", "transfer"]
-    assert [scene.scene_id for scene in scenes] == ["balance_query", "fund_query", "transfer"]
     assert [agent.agent_id for agent in registry.agent_index()] == [
         "balance-agent",
         "fallback-agent",
@@ -123,7 +125,8 @@ def test_spec_registry_loads_default_scenes_and_agents() -> None:
         "transfer-agent",
     ]
     assert transfer.target_agent == "transfer-agent"
-    assert registry.scene_for_intent("transfer").scene_id == "transfer"
+    assert transfer.scene_id == "transfer"
+    assert transfer.skill["path"] == "skills/transfer.skill.md"
     assert transfer.dispatch_contract.handoff_fields == ("raw_message", "user_profile_ref", "page_context_ref")
     assert agent.accepted_scene_ids == ("transfer",)
     assert registry.agent("fallback-agent").accepted_scene_ids == ("fallback",)
@@ -148,15 +151,16 @@ def test_runtime_dispatches_transfer_scene_without_router_business_slots() -> No
     assert output.response == "task_dispatched"
     assert output.routing_hints == {}
     assert any(event["type"] == "agent_dispatched" for event in output.events)
-    assert "scene_contract" in output.prompt_report["included_blocks"]
+    assert "skill_reference" in output.prompt_report["included_blocks"]
     blocks = [item["block"] for item in output.prompt_report["load_trace"]]
-    assert "intent_markdown_index" in blocks
+    assert "intent_catalog" in blocks
     assert "recognized_intents" in blocks
-    assert "scene_contract" in blocks
+    assert "skill_reference" in blocks
     assert "dispatch_contract" in blocks
     assert "skill_card" not in blocks
-    intent_trace = next(item for item in output.prompt_report["load_trace"] if item["block"] == "intent_markdown_index")
-    assert any(file["path"].endswith("transfer.intent.md") for file in intent_trace["files"])
+    intent_trace = next(item for item in output.prompt_report["load_trace"] if item["block"] == "intent_catalog")
+    assert len(intent_trace["files"]) == 1
+    assert intent_trace["files"][0]["path"].endswith("intent.md")
     dispatch_event = next(event for event in output.events if event["type"] == "agent_dispatched")
     assert dispatch_event["task_payload"]["intent_id"] == "transfer"
     assert dispatch_event["task_payload"]["scene_id"] == "transfer"
@@ -212,7 +216,7 @@ def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
     assert candidates[0].routing_hints == {}
     assert captured["url"] == "https://llm.example/v1/chat/completions"
     assert captured["payload"]["model"] == "test-model"
-    assert "不要选择场景" in captured["payload"]["messages"][0]["content"]
+    assert "intent.md 意图目录" in captured["payload"]["messages"][0]["content"]
     assert "markdown_spec" in captured["payload"]["messages"][1]["content"]
     assert "intents" in captured["payload"]["messages"][1]["content"]
     assert "给张三转5000块" in captured["payload"]["messages"][1]["content"]
@@ -282,37 +286,8 @@ def test_runtime_returns_clarification_when_scene_is_unknown() -> None:
 
 def test_runtime_does_not_dispatch_when_agent_missing(tmp_path: Path) -> None:
     spec_root = tmp_path / "specs"
-    (spec_root / "scenes").mkdir(parents=True)
     (spec_root / "agents").mkdir(parents=True)
-    _write_intent_and_route(spec_root)
-    (spec_root / "scenes" / "transfer.scene.md").write_text(
-        """
-+++
-scene_id = "transfer"
-version = "0.1.0"
-name = "转账"
-description = "转账场景"
-target_agent = "missing-agent"
-references = []
-
-[skill]
-skill_id = "transfer"
-version = "0.1.0"
-owner = "missing-agent"
-path = "skills/transfer.skill.md"
-description = "转账 Skill"
-
-[dispatch_contract]
-task_type = "transfer"
-handoff_fields = ["raw_message"]
-+++
-
-# 转账执行场景 Contract
-
-Router 只用于派发。
-""",
-        encoding="utf-8",
-    )
+    _write_intent_catalog(spec_root, target_agent="missing-agent")
     (spec_root / "agents" / "agent-registry.md").write_text(
         """
 +++
@@ -336,37 +311,8 @@ agents = []
 
 def test_runtime_dispatches_without_router_business_fields_even_if_contract_names_them(tmp_path: Path) -> None:
     spec_root = tmp_path / "specs"
-    (spec_root / "scenes").mkdir(parents=True)
     (spec_root / "agents").mkdir(parents=True)
-    _write_intent_and_route(spec_root)
-    (spec_root / "scenes" / "transfer.scene.md").write_text(
-        """
-+++
-scene_id = "transfer"
-version = "0.1.0"
-name = "转账"
-description = "转账场景"
-target_agent = "transfer-agent"
-references = []
-
-[skill]
-skill_id = "transfer"
-version = "0.1.0"
-owner = "transfer-agent"
-path = "skills/transfer.skill.md"
-description = "转账 Skill"
-
-[dispatch_contract]
-task_type = "transfer"
-handoff_fields = ["raw_message", "recipient", "amount"]
-+++
-
-# 转账执行场景 Contract
-
-即使派发契约误写了业务字段，Router runtime 也不会从用户表达里提取或补入。
-""",
-        encoding="utf-8",
-    )
+    _write_intent_catalog(spec_root, handoff_fields=["raw_message", "recipient", "amount"])
     (spec_root / "agents" / "agent-registry.md").write_text(
         """
 +++
@@ -442,7 +388,7 @@ def test_context_report_applies_budget_and_keeps_core_blocks() -> None:
     assert output.status == RouterTurnStatus.DISPATCHED
     assert output.prompt_report["max_chars"] == 700
     assert output.prompt_report["dropped_blocks"]
-    assert output.prompt_report["included_blocks"][:3] == ["router_boundary", "routing_state", "intent_markdown_index"]
+    assert output.prompt_report["included_blocks"][:3] == ["router_boundary", "routing_state", "intent_catalog"]
 
 
 def test_push_context_generic_acceptance_dispatches_first_recommended_scene() -> None:

@@ -5,15 +5,15 @@ Standalone v4 intent routing service.
 This service is intentionally separate from the existing `router-service`. It owns only:
 
 - independent intent recognition
-- intent-to-scene routing
-- markdown scene contract loading after intent recognition
+- single markdown intent catalog loading
+- skill reference dispatch
 - execution-agent task dispatch
 - router-level session and transcript tracking
 
-Intent specs and scene contracts are separate markdown sources. Router loads `default_specs/intents/*.intent.md` for recognition, `default_specs/routes/intent-routes.md` for mapping, `default_specs/scenes/*.scene.md` only after an intent is selected, and `default_specs/agents/agent-registry.md` for dispatch. TOML frontmatter is only the machine-readable header inside the markdown document. There are no hand-maintained JSON scene specs.
+Intent specs are centralized in one markdown source: `default_specs/intent.md`. Router loads that file for recognition and dispatch metadata. Each intent entry includes its intent boundary, target agent, dispatch contract and `skill_ref`. Router does not read the referenced Skill body; execution agents load `skills/*.skill.md` in their own lifecycle. TOML frontmatter is only the machine-readable header inside the markdown document. There are no hand-maintained JSON scene specs.
 
 It does not perform business confirmation, risk checks, limits, idempotency, or direct business API calls. Those remain in scene execution agents.
-The Router runtime also does not perform regex/keyword matching, hardcoded push acceptance, heuristic slot extraction, or business-slot clarification. Recognition is produced by the LLM recognizer from independent markdown intent specs. Business slot extraction belongs to the selected execution Agent and its Skill.
+The Router runtime also does not perform regex/keyword matching, hardcoded push acceptance, heuristic slot extraction, or business-slot clarification. Recognition is produced by the LLM recognizer from `intent.md`. Business slot extraction belongs to the selected execution Agent and its Skill.
 
 Implemented v0.2 capabilities:
 

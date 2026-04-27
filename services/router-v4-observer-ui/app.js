@@ -383,8 +383,8 @@ function buildDerivedFlow(output) {
   if (!output) return [];
   const scene = sceneSummary(output);
   const dispatch = dispatchEvent(output);
-  const intentTrace = findTrace("intent_markdown_index", output);
-  const sceneContractTrace = findTrace("scene_contract", output);
+  const intentTrace = findTrace("intent_catalog", output);
+  const skillReferenceTrace = findTrace("skill_reference", output);
   const referenceTrace = findTrace("retrieved_references", output);
   const recognizedTrace = findTrace("recognized_intents", output);
   const stateTrace = findTrace("routing_state", output);
@@ -436,7 +436,7 @@ function buildDerivedFlow(output) {
       id: "router-spec",
       type: "router/spec",
       title: "独立 Intent Spec 识别",
-      summary: `命中意图 ${scene.intentId}。Router 识别阶段只加载 intent markdown，不加载场景执行 Skill。`,
+      summary: `命中意图 ${scene.intentId}。Router 识别阶段只加载一个 intent.md，不加载 Skill 正文。`,
       status: output.status === "failed" ? "异常" : "已识别",
       owner: "意图识别服务",
       details: [
@@ -445,7 +445,7 @@ function buildDerivedFlow(output) {
         `映射场景：${scene.sceneId}`,
         `业务提槽：由执行 Agent 按 Skill 处理${Object.keys(hints).length ? `；兼容 hints=${Object.keys(hints).join("、")}` : ""}`
       ],
-      evidence: [stateTrace, intentTrace, recognizedTrace, sceneContractTrace].filter(Boolean),
+      evidence: [stateTrace, intentTrace, recognizedTrace, skillReferenceTrace].filter(Boolean),
       payload: {
         intent_id: scene.intentId,
         scene_id: scene.sceneId,
@@ -471,7 +471,7 @@ function buildDerivedFlow(output) {
         `职责说明：${skillRef.description || "按场景 Skill 完成业务动作"}`,
         "Router 不读取 skill md；Agent 会在自己的生命周期中加载 skill md。"
       ],
-      evidence: [dispatch, referenceTrace].filter(Boolean),
+      evidence: [skillReferenceTrace, dispatch, referenceTrace].filter(Boolean),
       payload: skillRef
     });
   }
@@ -655,7 +655,7 @@ function renderMechanism() {
       <div>
         <span>Skill 归属</span>
         <strong>${escapeHtml(skillRef.skill_id || "Agent 内加载")}</strong>
-        <small>${hintNames.length ? `兼容 hints：${escapeHtml(hintNames.join("、"))}` : "Router 不读取 Skill md"}</small>
+        <small>${hintNames.length ? `兼容 hints：${escapeHtml(hintNames.join("、"))}` : "Router 只传 skill_ref"}</small>
       </div>
       <div>
         <span>当前结果</span>
@@ -689,7 +689,7 @@ function renderMechanism() {
         </article>
         <article>
           <strong>渐进加载</strong>
-          <p>识别前只读 <code>intent_markdown_index</code>，命中后再读 <code>scene_contract</code> 和 <code>dispatch_contract</code>；Skill md 由 Agent 加载。</p>
+          <p>识别前只读一个 <code>intent_catalog</code>，命中后读取同一目录里的 <code>skill_reference</code> 和 <code>dispatch_contract</code>；Skill md 由 Agent 加载。</p>
         </article>
         <article>
           <strong>压缩 / 裁剪</strong>

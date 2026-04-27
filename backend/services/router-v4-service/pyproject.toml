@@ -20,10 +20,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "router_v4_service" = [
-  "default_specs/intents/*.md",
-  "default_specs/routes/*.md",
-  "default_specs/scenes/*.md",
+  "default_specs/intent.md",
   "default_specs/agents/*.md",
   "default_specs/skills/*.md",
-  "default_specs/references/*.md",
 ]
