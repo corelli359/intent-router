@@ -147,8 +147,8 @@ class AssistantRuntime:
                 "type": "assistant.router_request",
                 "service": "assistant-service",
                 "phase": "request",
-                "title": "助手调用意图识别服务",
-                "summary": "助手服务端把用户表达、页面上下文和推送上下文提交给 Router。",
+                "title": "助手调用 Intent ReAct 服务",
+                "summary": "助手服务端把用户表达、页面上下文和推送上下文提交给意图框架；框架从 intent.md 开始执行 ReAct。",
                 "artifact": {"url": url},
                 "input": payload,
             }
@@ -240,6 +240,8 @@ class AssistantRuntime:
         router_output: dict[str, Any],
         state: AssistantSessionState,
     ) -> bool:
+        if _router_handled_by_skill_runtime(router_output):
+            return False
         return bool(
             state.active_task_id
             and (
@@ -290,11 +292,15 @@ class AssistantRuntime:
     ) -> str:
         router_update = agent_output.get("router_update") if isinstance(agent_output, dict) else None
         agent_result = router_update.get("agent_output") if isinstance(router_update, dict) else None
-        transfer_result = _transfer_result(agent_result)
+        transfer_result = _transfer_result(agent_result) or _transfer_result(router_output.get("agent_output"))
         if transfer_result is not None:
             if transfer_result.get("status") == "success":
                 return f"转账成功，已向{transfer_result.get('recipient')}转账{transfer_result.get('amount')}元。"
             return "转账处理已返回结果，请查看详情。"
+        if _router_handled_by_skill_runtime(router_output):
+            response = router_output.get("response")
+            if isinstance(response, str) and response:
+                return response
         if isinstance(agent_output, dict) and agent_output.get("assistant_message"):
             return str(agent_output["assistant_message"])
         status = router_output.get("status")
@@ -339,6 +345,13 @@ def _transfer_result(agent_output: Any) -> dict[str, Any] | None:
         if isinstance(item, dict) and item.get("type") == "transfer_result":
             return item
     return None
+
+
+def _router_handled_by_skill_runtime(router_output: dict[str, Any]) -> bool:
+    return any(
+        isinstance(event, dict) and event.get("type") == "skill_react_decision"
+        for event in router_output.get("events") or []
+    )
 
 
 runtime = AssistantRuntime()

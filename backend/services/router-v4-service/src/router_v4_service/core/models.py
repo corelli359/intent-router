@@ -86,8 +86,9 @@ class AgentDefinition:
 class RouterTaskState:
     """Router-owned execution task state.
 
-    Business state remains inside the execution agent. Router stores only
-    dispatch, handover, event and structured-output correlation.
+    Router stores generic task correlation plus Skill ReAct memory. The memory
+    keys are not interpreted by Router business code; they come from Skill LLM
+    decisions and are passed back to later ReAct turns.
     """
 
     task_id: str
@@ -103,6 +104,8 @@ class RouterTaskState:
     resume_token: str = ""
     source: str = "user"
     push_context: dict[str, Any] = field(default_factory=dict)
+    business_context: dict[str, Any] = field(default_factory=dict)
+    skill_memory: dict[str, Any] = field(default_factory=dict)
     original_task_id: str | None = None
     fallback_task_id: str | None = None
     handover_used: bool = False
@@ -124,6 +127,8 @@ class RouterTaskState:
             "resume_token": self.resume_token,
             "source": self.source,
             "push_context": dict(self.push_context),
+            "business_context": dict(self.business_context),
+            "skill_memory": dict(self.skill_memory),
             "original_task_id": self.original_task_id,
             "fallback_task_id": self.fallback_task_id,
             "handover_used": self.handover_used,
@@ -156,8 +161,9 @@ class RouterGraphState:
 class RoutingSessionState:
     """Router-owned multi-turn state.
 
-    This is not business execution state. It only tracks scene routing and
-    execution-agent dispatch correlation.
+    Session state tracks Intent/Skill ReAct progress, task correlation and
+    compact completed-result memory. Business semantics remain in markdown
+    specs and Skill/tool outputs.
     """
 
     session_id: str
@@ -180,6 +186,7 @@ class RoutingSessionState:
     agent_task_ids: list[str] = field(default_factory=list)
     handover_records: list[dict[str, Any]] = field(default_factory=list)
     agent_outputs: dict[str, Any] = field(default_factory=dict)
+    business_memory: dict[str, Any] = field(default_factory=dict)
     assistant_result_status: str = ""
     tasks: dict[str, RouterTaskState] = field(default_factory=dict)
     graphs: dict[str, RouterGraphState] = field(default_factory=dict)

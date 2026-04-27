@@ -15,8 +15,8 @@ class AgentDispatchError(RuntimeError):
 class AgentDispatchClient:
     """Dispatches router tasks to execution agents.
 
-    `mock://` endpoints are provided for local tests and demos. Real deployments
-    should register `http://` or `https://` endpoints.
+    `local://` endpoints create an in-process Skill ReAct task. Real
+    deployments should register `http://` or `https://` endpoints.
     """
 
     def __init__(self, *, timeout_seconds: float = 10.0) -> None:
@@ -32,8 +32,8 @@ class AgentDispatchClient:
             raise AgentDispatchError(
                 f"agent {agent.agent_id} does not accept scene {task_payload.get('scene_id')}"
             )
-        if agent.endpoint.startswith("mock://"):
-            return self._mock_dispatch(agent=agent, task_payload=task_payload)
+        if agent.endpoint.startswith("local://"):
+            return self._local_dispatch(agent=agent, task_payload=task_payload)
         if agent.endpoint.startswith("http://") or agent.endpoint.startswith("https://"):
             with httpx.Client(timeout=self.timeout_seconds) as client:
                 response = client.post(agent.endpoint, json=task_payload)
@@ -63,7 +63,7 @@ class AgentDispatchClient:
             raw={"message": message, "agent_id": agent_id},
         )
 
-    def _mock_dispatch(
+    def _local_dispatch(
         self,
         *,
         agent: AgentDefinition,

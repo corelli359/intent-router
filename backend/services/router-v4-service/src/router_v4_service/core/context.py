@@ -9,12 +9,12 @@ from router_v4_service.core.stores import TranscriptRecord
 
 
 class ContextBuilder:
-    """Build a bounded report of context blocks used by Router.
+    """Build a bounded report of context blocks used by the Intent ReAct runtime.
 
     The service exposes the report instead of a provider-specific prompt so the
-    loading lifecycle is testable: state is always included, scene details are
-    loaded only after recognition/selection, and lower-priority blocks are
-    dropped when the budget is exceeded.
+    loading lifecycle is testable: state is always included, intent.md is the
+    first ReAct spec, selected skill references are loaded after intent
+    selection, and lower-priority blocks are dropped when the budget is exceeded.
     """
 
     def __init__(self, policy: ContextPolicy | None = None) -> None:
@@ -35,11 +35,13 @@ class ContextBuilder:
         blocks: list[dict[str, Any]] = []
         self._add_block(blocks, "router_boundary", 240, required=True, priority=0)
         self._add_block(blocks, "routing_state", 180 + len(state.summary), required=True, priority=0)
+        if state.business_memory:
+            self._add_block(blocks, "business_memory", 120 + len(str(state.business_memory)), priority=1)
         self._add_block(blocks, "intent_catalog", 260 + sum(len(self._excerpt(intent.spec_markdown)) for intent in intent_index), required=True, priority=1)
         if candidates:
             self._add_block(
                 blocks,
-                "recognized_intents",
+                "intent_react_output",
                 120 + sum(len(candidate.intent.description) for candidate in candidates),
                 priority=2,
             )
@@ -92,8 +94,9 @@ class ContextBuilder:
                     for block in (
                         "router_boundary",
                         "routing_state",
+                        "business_memory" if state.business_memory else "",
                         "intent_catalog",
-                        "recognized_intents" if candidates else "",
+                        "intent_react_output" if candidates else "",
                         "skill_reference" if selected_intent is not None else "",
                         "dispatch_contract" if selected_intent is not None else "",
                         "retrieved_references" if references else "",
@@ -136,11 +139,11 @@ class ContextBuilder:
             block="router_boundary",
             stage="turn_start",
             source_type="runtime_policy",
-            summary="加载三层边界：助手负责展示和最终话术，Router 负责识别/派发/追踪，Agent 负责业务执行。",
+            summary="加载三层边界：助手负责展示和最终话术，意图框架负责从 intent.md 开始的 ReAct 编排，业务能力按 Skill/API/Agent 归属执行。",
             content={
                 "assistant": "用户入口、展示、主动推送、最终话术",
-                "router": "spec-driven recognize / plan / dispatch / track / handover",
-                "agent": "业务提槽、确认、风控、限额、业务 API、结构化结果",
+                "intent_runtime": "spec-driven ReAct: select_intent / plan / load_skill / skill_decision / tool_call / track / handover",
+                "business_owner": "Skill/API/Agent 提供业务边界、确认、风控、限额、业务 API 和结构化结果",
             },
             included_blocks=included_blocks,
             dropped_blocks=dropped_blocks,
@@ -162,12 +165,23 @@ class ContextBuilder:
             included_blocks=included_blocks,
             dropped_blocks=dropped_blocks,
         )
+        if state.business_memory:
+            self._trace(
+                trace,
+                block="business_memory",
+                stage="after_state",
+                source_type="session_business_memory",
+                summary="读取已完成任务沉淀的结构化业务记忆；用于新任务理解指代，不作为 Router 当前任务提槽。",
+                content=dict(state.business_memory),
+                included_blocks=included_blocks,
+                dropped_blocks=dropped_blocks,
+            )
         self._trace(
             trace,
             block="intent_catalog",
-            stage="before_recognition",
+            stage="intent_react_start",
             source_type="single_intent_catalog",
-            summary="识别前只加载一个 intent.md 意图目录；目录内只有意图边界和 skill_ref，不加载 Skill 正文。",
+            summary="Intent ReAct 第一步只加载一个 intent.md；本步 action 是 select_intent / plan_multi_intent / no_action，不加载 Skill 正文。",
             files=self._intent_files(intent_index_intents),
             content=[
                 {
@@ -184,10 +198,10 @@ class ContextBuilder:
         if candidates:
             self._trace(
                 trace,
-                block="recognized_intents",
-                stage="after_recognition",
-                source_type="llm_recognizer_output",
-                summary="recognizer 只返回本轮选中的 intent_id、置信度和理由；不返回场景和业务字段。",
+                block="intent_react_output",
+                stage="intent_react_done",
+                source_type="llm_intent_react_output",
+                summary="Intent ReAct 第一步返回本轮选中的 intent_id、置信度和理由；不返回业务字段。",
                 content=[
                     {
                         "intent_id": candidate.intent.intent_id,
@@ -203,9 +217,9 @@ class ContextBuilder:
             self._trace(
                 trace,
                 block="skill_reference",
-                stage="after_recognition",
+                stage="after_intent_react",
                 source_type="intent_catalog_frontmatter",
-                summary=f"命中 {selected_intent.intent_id} 后，只读取同一 intent.md 中的 skill_ref；Skill 正文由 Agent 加载。",
+                summary=f"命中 {selected_intent.intent_id} 后读取 skill_ref；后续 ReAct 步骤按需加载 Skill 正文。",
                 files=self._intent_files([selected_intent]),
                 spec_path=f"frontmatter.intents[{selected_intent.intent_id}].skill",
                 content={
@@ -256,7 +270,7 @@ class ContextBuilder:
             self._trace(
                 trace,
                 block="retrieved_references",
-                stage="before_recognition",
+                stage="intent_react_start",
                 source_type="intent_reference_markdown",
                 summary="按 intent references 加载必要 markdown 片段，用于解释意图边界。",
                 files=reference_docs,

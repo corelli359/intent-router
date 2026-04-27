@@ -27,15 +27,21 @@ class IntentRecognizer(Protocol):
         limit: int = 3,
         push_context: dict[str, Any] | None = None,
     ) -> list[IntentCandidate]:
-        """Return intent specs directly selected by intent recognition."""
+        """Return intent specs selected by the first Intent ReAct step."""
 
 
 class IntentRecognizerError(RuntimeError):
-    """Raised when the spec-driven intent recognizer cannot complete."""
+    """Raised when the spec-driven Intent ReAct step cannot complete."""
 
 
 class LLMIntentRecognizer:
-    """OpenAI-compatible recognizer driven by the single markdown intent catalog."""
+    """OpenAI-compatible first-step Intent ReAct executor.
+
+    The historical class name is kept for API compatibility. Functionally this
+    is the first ReAct step: read intent.md, decide select_intent / plan /
+    no_action, and return structured intent ids. It does not execute Skill
+    steps until the runtime loads the selected skill.md.
+    """
 
     def __init__(
         self,
@@ -55,7 +61,7 @@ class LLMIntentRecognizer:
         push_context: dict[str, Any] | None = None,
     ) -> list[IntentCandidate]:
         if not self.settings.ready:
-            raise IntentRecognizerError("LLM recognizer is enabled but ROUTER_V4/ROUTER_LLM settings are incomplete")
+            raise IntentRecognizerError("Intent ReAct LLM is enabled but ROUTER_V4/ROUTER_LLM settings are incomplete")
         payload = self._call_llm(message=message, intents=intents, push_context=push_context or {})
         return self._selected_intents_from_payload(payload=payload, intents=intents)[:limit]
 
@@ -72,9 +78,11 @@ class LLMIntentRecognizer:
                 {
                     "role": "system",
                     "content": (
-                        "你是银行助手的意图识别器。必须只根据用户表达、助手推送上下文和给定 intent.md 意图目录进行判断。"
-                        "意图是否命中、是否多意图，都必须由 intent.md 的意图边界、正例、反例驱动。"
-                        "不要读取 skill_ref 指向的 Skill 正文，不要执行 Skill 步骤，不要提取业务字段。"
+                        "你是银行意图框架的 Intent ReAct Runtime 的第一步。"
+                        "本步 action 只能是 select_intent、plan_multi_intent 或 no_action。"
+                        "必须只根据用户表达、助手推送上下文和给定 intent.md 意图目录进行决策。"
+                        "意图是否命中、是否多意图，都必须由 intent.md 的意图边界、正例、反例和 skill_ref 驱动。"
+                        "本步只选择后续要加载的 Skill，不读取 skill_ref 指向的 Skill 正文，不执行 Skill 步骤，不提取业务字段。"
                         "不要使用外部知识补充未知意图；如果没有明确可执行的意图，selected_intent_id 返回 null。"
                         "助手主动推送时，用户表达可能是指代、承接或省略业务名称；你必须结合 push_context 中按 rank 排序的意图清单判断。"
                         "如果用户表达的是接受或继续办理某个推荐，但没有点名业务，选择最高 rank 的推送意图；"
@@ -92,12 +100,14 @@ class LLMIntentRecognizer:
                             "assistant_push_policy": _assistant_push_policy(push_context),
                             "intents": [_intent_payload(intent) for intent in intents],
                             "output_schema": {
+                                "react_action": "select_intent|plan_multi_intent|no_action",
                                 "selected_intent_id": "string|null",
                                 "selected_intent_ids": ["string"],
                                 "confidence": "0.0-1.0",
                                 "reason": "short Chinese reason",
                             },
                             "output_contract_notes": [
+                                "react_action 是本步 ReAct 决策动作；不要输出 skill 执行动作。",
                                 "selected_intent_ids 表示本轮需要同时执行的多个意图，不是备选项。",
                                 "不要输出 output_schema 之外的任何字段。",
                                 "助手主动推送时，只能在 push_context.intents 对应意图中选择；用户没有表达要执行时返回 null。",
@@ -125,19 +135,19 @@ class LLMIntentRecognizer:
                     json=request,
                 )
                 if response.is_error:
-                    raise IntentRecognizerError(f"LLM recognizer HTTP {response.status_code}: {response.text[:500]}")
+                    raise IntentRecognizerError(f"Intent ReAct LLM HTTP {response.status_code}: {response.text[:500]}")
                 payload = response.json()
             except IntentRecognizerError:
                 raise
             except Exception as exc:
-                raise IntentRecognizerError(f"LLM recognizer request failed: {exc}") from exc
+                raise IntentRecognizerError(f"Intent ReAct LLM request failed: {exc}") from exc
         finally:
             if self.client is None:
                 client.close()
         content = _completion_content(payload)
         parsed = _extract_json_object(content)
         if not isinstance(parsed, dict):
-            raise IntentRecognizerError("LLM recognizer response must be a JSON object")
+            raise IntentRecognizerError("Intent ReAct LLM response must be a JSON object")
         return parsed
 
     def _selected_intents_from_payload(self, *, payload: dict[str, Any], intents: list[IntentSpec]) -> list[IntentCandidate]:
@@ -225,14 +235,14 @@ def _chat_completions_url(base_url: str) -> str:
 
 def _completion_content(payload: Any) -> str:
     if not isinstance(payload, dict):
-        raise IntentRecognizerError("LLM recognizer response payload must be an object")
+        raise IntentRecognizerError("Intent ReAct LLM response payload must be an object")
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
-        raise IntentRecognizerError("LLM recognizer response does not contain choices")
+        raise IntentRecognizerError("Intent ReAct LLM response does not contain choices")
     first = choices[0] if isinstance(choices[0], dict) else {}
     message = first.get("message")
     if not isinstance(message, dict):
-        raise IntentRecognizerError("LLM recognizer response does not contain message content")
+        raise IntentRecognizerError("Intent ReAct LLM response does not contain message content")
     content = message.get("content")
     if isinstance(content, str):
         return content
@@ -248,7 +258,7 @@ def _extract_json_object(raw: str) -> Any:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
-        raise IntentRecognizerError(f"LLM recognizer did not return JSON: {raw[:200]}")
+        raise IntentRecognizerError(f"Intent ReAct LLM did not return JSON: {raw[:200]}")
     return json.loads(text[start : end + 1])
 
 

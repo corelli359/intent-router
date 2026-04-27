@@ -5,15 +5,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from app import TransferAgentRuntime, TransferAgentTurnRequest  # noqa: E402
+from app import (  # noqa: E402
+    TransferAgentLLMSettings,
+    TransferAgentRuntime,
+    TransferAgentTurnRequest,
+)
 
 
-class FakeTransferAgentRuntime(TransferAgentRuntime):
+class RouterTaskTestRuntime(TransferAgentRuntime):
     def __init__(self, task_payload: dict[str, Any]) -> None:
         super().__init__()
         self.task_payload = task_payload
@@ -57,8 +63,14 @@ def _run(runtime: TransferAgentRuntime, message: str) -> dict[str, Any]:
     return asyncio.run(runtime.handle_turn(_request(message)))
 
 
-def test_transfer_agent_extracts_slots_from_free_utterance_before_confirmation() -> None:
-    runtime = FakeTransferAgentRuntime(
+def _require_live_llm() -> None:
+    if not TransferAgentLLMSettings.from_env().ready:
+        pytest.skip("requires live Transfer Agent LLM configuration")
+
+
+def test_transfer_agent_applies_skill_llm_decision_before_confirmation() -> None:
+    _require_live_llm()
+    runtime = RouterTaskTestRuntime(
         {
             "task_id": "task-test",
             "scene_id": "transfer",
@@ -69,7 +81,6 @@ def test_transfer_agent_extracts_slots_from_free_utterance_before_confirmation()
 
     first = _run(runtime, "我要转账300给小红")
 
-    assert first["assistant_message"] == "请确认：向小红转账300元。确认办理吗？"
     assert first["agent_state"]["recipient"] == "小红"
     assert first["agent_state"]["amount"] == "300"
     assert first["agent_state"]["skill_step"] == "waiting_confirmation"
@@ -80,7 +91,8 @@ def test_transfer_agent_extracts_slots_from_free_utterance_before_confirmation()
 
 
 def test_transfer_agent_asks_all_missing_fields_then_accepts_free_reply() -> None:
-    runtime = FakeTransferAgentRuntime(
+    _require_live_llm()
+    runtime = RouterTaskTestRuntime(
         {
             "task_id": "task-test",
             "scene_id": "transfer",
@@ -92,17 +104,46 @@ def test_transfer_agent_asks_all_missing_fields_then_accepts_free_reply() -> Non
     first = _run(runtime, "我要转账")
     second = _run(runtime, "小红300")
 
-    assert first["assistant_message"] == "可以，请告诉我转给谁、转账金额是多少？"
     assert first["agent_state"]["recipient"] is None
     assert first["agent_state"]["amount"] is None
-    assert second["assistant_message"] == "请确认：向小红转账300元。确认办理吗？"
     assert second["agent_state"]["recipient"] == "小红"
     assert second["agent_state"]["amount"] == "300"
     assert runtime.agent_outputs == []
 
 
+def test_transfer_agent_uses_business_context_for_same_amount_reference() -> None:
+    _require_live_llm()
+    runtime = RouterTaskTestRuntime(
+        {
+            "task_id": "task-test",
+            "scene_id": "transfer",
+            "target_agent": "transfer-agent",
+            "routing_hints": {},
+            "business_context": {
+                "last_completed_for_same_scene": {
+                    "scene_id": "transfer",
+                    "type": "transfer_result",
+                    "status": "success",
+                    "data": {
+                        "recipient": "张三",
+                        "amount": "200",
+                        "currency": "CNY",
+                        "status": "success",
+                    },
+                }
+            },
+        }
+    )
+
+    output = _run(runtime, "给李四转一样的钱")
+
+    assert output["agent_state"]["recipient"] == "李四"
+    assert output["agent_state"]["amount"] == "200"
+    assert output["agent_state"]["amount_source"] == "business_memory"
+
+
 def test_transfer_agent_handover_uses_router_contract_for_wrong_task() -> None:
-    runtime = FakeTransferAgentRuntime(
+    runtime = RouterTaskTestRuntime(
         {
             "task_id": "task-test",
             "scene_id": "fund_query",

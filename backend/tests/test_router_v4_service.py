@@ -24,7 +24,7 @@ from router_v4_service.core.spec_registry import SpecRegistry  # noqa: E402
 from router_v4_service.core.stores import FileRoutingSessionStore, FileTranscriptStore  # noqa: E402
 
 
-class FakeIntentRecognizer:
+class ScriptedIntentReAct:
     def __init__(self, decisions: dict[str, object] | None = None) -> None:
         self.decisions = decisions or {}
 
@@ -47,12 +47,12 @@ class FakeIntentRecognizer:
                 intent_id = item
                 hints: dict[str, object] = {}
                 score = 90
-                reasons = ("fake_llm",)
+                reasons = ("scripted_intent_react",)
             elif isinstance(item, dict):
                 intent_id = str(item.get("intent_id") or item.get("intent_code") or item.get("scene_id") or "")
                 hints = dict(item.get("hints") or {})
                 score = int(item.get("score") or 90)
-                reasons = tuple(str(value) for value in item.get("reasons", ("fake_llm",)))
+                reasons = tuple(str(value) for value in item.get("reasons", ("scripted_intent_react",)))
             else:
                 continue
             intent = intent_by_id.get(intent_id)
@@ -70,7 +70,7 @@ class FakeIntentRecognizer:
 
 
 def _runtime(decisions: dict[str, object] | None = None, **kwargs: object) -> RouterV4Runtime:
-    return RouterV4Runtime(recognizer=FakeIntentRecognizer(decisions), **kwargs)
+    return RouterV4Runtime(recognizer=ScriptedIntentReAct(decisions), **kwargs)
 
 
 def _write_intent_catalog(
@@ -154,7 +154,7 @@ def test_runtime_dispatches_transfer_scene_without_router_business_slots() -> No
     assert "skill_reference" in output.prompt_report["included_blocks"]
     blocks = [item["block"] for item in output.prompt_report["load_trace"]]
     assert "intent_catalog" in blocks
-    assert "recognized_intents" in blocks
+    assert "intent_react_output" in blocks
     assert "skill_reference" in blocks
     assert "dispatch_contract" in blocks
     assert "skill_card" not in blocks
@@ -228,7 +228,7 @@ def test_runtime_llm_backend_surfaces_missing_llm_config() -> None:
     output = runtime.handle_turn(RouterV4Input(session_id="sess-llm-missing", message="我要转账"))
 
     assert output.status == RouterTurnStatus.FAILED
-    assert output.events[0]["type"] == "llm_recognition_failed"
+    assert output.events[0]["type"] == "intent_react_failed"
 
 
 def test_load_env_file_ignores_comments_without_shell_execution(tmp_path: Path, monkeypatch) -> None:
@@ -318,7 +318,7 @@ def test_runtime_dispatches_without_router_business_fields_even_if_contract_name
 +++
 [[agents]]
 agent_id = "transfer-agent"
-endpoint = "mock://transfer-agent"
+endpoint = "local://transfer-agent"
 accepted_scene_ids = ["transfer"]
 task_schema = "transfer.task.v1"
 event_schema = "transfer.event.v1"
@@ -351,7 +351,7 @@ event_schema = "transfer.event.v1"
 
 def test_runtime_can_persist_session_state_between_instances(tmp_path: Path) -> None:
     state_dir = tmp_path / "router-state"
-    recognizer = FakeIntentRecognizer(
+    recognizer = ScriptedIntentReAct(
         {"给张三转5000块": "transfer"}
     )
     first_runtime = RouterV4Runtime(
@@ -488,6 +488,43 @@ def test_agent_completed_output_is_preserved_for_assistant_generation() -> None:
     snapshot = runtime.session_snapshot("sess-agent-output")
     assert snapshot["session"]["assistant_result_status"] == "ready_for_assistant"
     assert snapshot["session"]["agent_outputs"][dispatched.task_id or ""]["data"][0]["amount"] == "1000.00"
+
+
+def test_completed_transfer_context_is_passed_to_next_transfer_task_without_router_slotting() -> None:
+    runtime = _runtime({"给张三转200": "transfer", "给李四转一样的钱": "transfer"})
+    first = runtime.handle_turn(RouterV4Input(session_id="sess-business-memory", message="给张三转200"))
+    runtime.handle_agent_output(
+        session_id="sess-business-memory",
+        task_id=first.task_id or "",
+        agent_payload={
+            "status": "completed",
+            "output": {
+                "data": [
+                    {
+                        "type": "transfer_result",
+                        "status": "success",
+                        "recipient": "张三",
+                        "amount": "200",
+                        "currency": "CNY",
+                        "audit_id": "ta_test",
+                    }
+                ]
+            },
+        },
+    )
+
+    second = runtime.handle_turn(RouterV4Input(session_id="sess-business-memory", message="给李四转一样的钱"))
+
+    assert second.status == RouterTurnStatus.DISPATCHED
+    dispatch_event = next(event for event in second.events if event["type"] == "agent_dispatched")
+    task_payload = dispatch_event["task_payload"]
+    assert task_payload["business_context"]["last_completed_for_same_scene"]["data"]["amount"] == "200"
+    assert task_payload["business_context"]["last_completed_for_same_scene"]["data"]["recipient"] == "张三"
+    assert "recipient" not in task_payload
+    assert "amount" not in task_payload
+    snapshot = runtime.session_snapshot("sess-business-memory")
+    assert snapshot["session"]["business_memory"]["last_completed_by_scene"]["transfer"]["data"]["amount"] == "200"
+    assert snapshot["tasks"][second.task_id or ""]["business_context"]["last_completed_for_same_scene"]["data"]["amount"] == "200"
 
 
 def test_agent_handover_protocol_dispatches_fallback_agent_once() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -15,8 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 DEFAULT_ROUTER_BASE_URL = "http://127.0.0.1:8024"
 SKILL_PATH = Path(__file__).resolve().parent / "skills" / "transfer.skill.md"
-CONFIRM_WORDS = {"确认", "确定", "是", "可以", "同意", "继续", "提交", "办理"}
-CANCEL_WORDS = {"取消", "算了", "不转了", "先不转", "停止", "退出"}
 
 
 class TransferAgentTurnRequest(BaseModel):
@@ -41,6 +41,7 @@ class TransferTaskMemory:
     recipient: str | None = None
     amount: str | None = None
     currency: str = "CNY"
+    amount_source: str | None = None
     skill_step: str = "start"
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -52,15 +53,185 @@ class TransferTaskMemory:
             "recipient": self.recipient,
             "amount": self.amount,
             "currency": self.currency,
+            "amount_source": self.amount_source,
             "skill_step": self.skill_step,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
 
 
+@dataclass(frozen=True, slots=True)
+class TransferAgentLLMSettings:
+    api_base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    timeout_seconds: float = 30.0
+    temperature: float = 0.0
+    headers: dict[str, str] = field(default_factory=dict)
+    structured_output_method: str = "json_mode"
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.api_base_url and self.model)
+
+    @classmethod
+    def from_env(cls) -> "TransferAgentLLMSettings":
+        return cls(
+            api_base_url=_env_first("TRANSFER_AGENT_LLM_API_BASE_URL", "ROUTER_V4_LLM_API_BASE_URL", "ROUTER_LLM_API_BASE_URL"),
+            api_key=_env_first("TRANSFER_AGENT_LLM_API_KEY", "ROUTER_V4_LLM_API_KEY", "ROUTER_LLM_API_KEY"),
+            model=_env_first("TRANSFER_AGENT_LLM_MODEL", "ROUTER_V4_LLM_MODEL", "ROUTER_LLM_RECOGNIZER_MODEL", "ROUTER_LLM_MODEL"),
+            timeout_seconds=_positive_float("TRANSFER_AGENT_LLM_TIMEOUT_SECONDS", _positive_float("ROUTER_V4_LLM_TIMEOUT_SECONDS", 30.0)),
+            temperature=_float_value("TRANSFER_AGENT_LLM_TEMPERATURE", _float_value("ROUTER_V4_LLM_TEMPERATURE", 0.0)),
+            headers=_json_headers("TRANSFER_AGENT_LLM_HEADERS_JSON") or _json_headers("ROUTER_V4_LLM_HEADERS_JSON"),
+            structured_output_method=_env_first(
+                "TRANSFER_AGENT_LLM_STRUCTURED_OUTPUT_METHOD",
+                "ROUTER_V4_LLM_STRUCTURED_OUTPUT_METHOD",
+            )
+            or "json_mode",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SkillDecision:
+    task_supported: bool
+    action: str
+    required_slots_complete: bool | None = None
+    confirmation_observed: bool | None = None
+    slots_patch: dict[str, Any] = field(default_factory=dict)
+    assistant_message: str = ""
+    reason: str = ""
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "SkillDecision":
+        slots_patch = payload.get("slots_patch")
+        return cls(
+            task_supported=payload.get("task_supported") is not False,
+            action=str(payload.get("action") or "ask_missing"),
+            required_slots_complete=payload.get("required_slots_complete")
+            if isinstance(payload.get("required_slots_complete"), bool)
+            else None,
+            confirmation_observed=payload.get("confirmation_observed")
+            if isinstance(payload.get("confirmation_observed"), bool)
+            else None,
+            slots_patch=dict(slots_patch) if isinstance(slots_patch, dict) else {},
+            assistant_message=str(payload.get("assistant_message") or ""),
+            reason=str(payload.get("reason") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_supported": self.task_supported,
+            "action": self.action,
+            "required_slots_complete": self.required_slots_complete,
+            "confirmation_observed": self.confirmation_observed,
+            "slots_patch": dict(self.slots_patch),
+            "assistant_message": self.assistant_message,
+            "reason": self.reason,
+        }
+
+
+class TransferSkillExecutor:
+    async def decide(
+        self,
+        *,
+        message: str,
+        memory: TransferTaskMemory,
+        skill_content: str,
+        task_payload: dict[str, Any],
+    ) -> SkillDecision:
+        raise NotImplementedError
+
+
+class LLMTransferSkillExecutor(TransferSkillExecutor):
+    def __init__(self, settings: TransferAgentLLMSettings | None = None) -> None:
+        self.settings = settings or TransferAgentLLMSettings.from_env()
+
+    async def decide(
+        self,
+        *,
+        message: str,
+        memory: TransferTaskMemory,
+        skill_content: str,
+        task_payload: dict[str, Any],
+    ) -> SkillDecision:
+        if not self.settings.ready:
+            raise RuntimeError("Transfer Agent LLM settings are incomplete")
+        request: dict[str, Any] = {
+            "model": self.settings.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是 transfer-agent 的 Skill 执行器。必须严格依据 transfer.skill.md、Router task snapshot、"
+                        "business_context、当前 task memory 和用户本轮输入推进业务状态。"
+                        "不得使用外部知识扩展业务规则，不得执行真实转账 API，只输出 JSON。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "user_message": message,
+                            "skill_markdown": skill_content,
+                            "task_payload": task_payload,
+                            "task_memory": memory.to_dict(),
+                            "output_schema": {
+                                "task_supported": "boolean",
+                                "action": "ask_missing|ask_confirmation|submit|cancel|handover",
+                                "required_slots_complete": "boolean|null",
+                                "confirmation_observed": "boolean|null",
+                                "slots_patch": {
+                                    "recipient": "string|null",
+                                    "amount": "string|null",
+                                    "currency": "string|null",
+                                    "amount_source": "user_message|business_memory|null",
+                                },
+                                "assistant_message": "string",
+                                "reason": "short Chinese reason",
+                            },
+                            "contract_notes": [
+                                "slots_patch 只写本轮可以确定或从 business_context 明确继承的字段。",
+                                "required_slots_complete 表示转账必填字段 recipient 和 amount 是否已经齐备。",
+                                "required_slots_complete=true 时不要 action=ask_missing，应 action=ask_confirmation 或 submit。",
+                                "required_slots_complete=false 时不要 action=ask_confirmation 或 submit。",
+                                "如果 task_memory.skill_step=waiting_confirmation 且用户本轮明确确认，confirmation_observed=true，action 必须是 submit。",
+                                "如果用户没有确认，confirmation_observed=false，不要 submit。",
+                                "用户引用上一笔金额时，从 business_context.last_completed_for_same_scene.data.amount 继承，并设置 amount_source=business_memory。",
+                                "收款人和金额完整后只能 action=ask_confirmation，除非 task_memory.skill_step 已经是 waiting_confirmation 且用户本轮明确确认。",
+                                "assistant_message 中提到的已确定收款人或金额必须同步写入 slots_patch；不要话术确认了字段但 slots_patch 留空。",
+                                "执行完成前必须经过确认；确认后才可以 action=submit。",
+                                "任务不属于转账时 action=handover 且 task_supported=false。",
+                            ],
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                },
+            ],
+            "temperature": self.settings.temperature,
+            "stream": False,
+        }
+        if self.settings.structured_output_method == "json_mode":
+            request["response_format"] = {"type": "json_object"}
+        async with httpx.AsyncClient(timeout=self.settings.timeout_seconds) as client:
+            response = await client.post(
+                _chat_completions_url(self.settings.api_base_url or ""),
+                headers=_headers(self.settings),
+                json=request,
+            )
+            if response.is_error:
+                raise RuntimeError(f"Transfer Agent LLM HTTP {response.status_code}: {response.text[:500]}")
+            payload = response.json()
+        parsed = _extract_json_object(_completion_content(payload))
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Transfer Agent LLM response must be a JSON object")
+        return SkillDecision.from_payload(parsed)
+
+
 class TransferAgentRuntime:
-    def __init__(self) -> None:
+    def __init__(self, skill_executor: TransferSkillExecutor | None = None) -> None:
         self._tasks: dict[tuple[str, str], TransferTaskMemory] = {}
+        self.skill_executor = skill_executor or LLMTransferSkillExecutor()
 
     async def handle_turn(self, request: TransferAgentTurnRequest) -> dict[str, Any]:
         events: list[dict[str, Any]] = []
@@ -89,6 +260,7 @@ class TransferAgentRuntime:
             request=request,
             memory=memory,
             skill_content=skill_content,
+            task_payload=task_payload,
             events=events,
         )
         memory.updated_at = time.time()
@@ -157,10 +329,28 @@ class TransferAgentRuntime:
         request: TransferAgentTurnRequest,
         memory: TransferTaskMemory,
         skill_content: str,
+        task_payload: dict[str, Any],
         events: list[dict[str, Any]],
     ) -> tuple[str, str, dict[str, Any] | None]:
         message = request.message.strip()
-        if _is_cancel(message):
+        decision = await self.skill_executor.decide(
+            message=message,
+            memory=memory,
+            skill_content=skill_content,
+            task_payload=task_payload,
+        )
+        events.append(_skill_decision_event(decision=decision, memory=memory))
+        if not decision.task_supported or decision.action == "handover":
+            router_update = await self._post_handover(request, task_payload, events)
+            return "这个任务不属于转账办理，我已转交兜底处理。", "handover", router_update
+
+        collected = self._apply_slots_patch(memory=memory, slots_patch=decision.slots_patch)
+        if collected:
+            events.append(_slots_event(collected, memory))
+
+        action = self._effective_action(decision=decision, memory=memory)
+
+        if action == "cancel":
             memory.skill_step = "cancelled"
             router_update = await self._post_agent_output(
                 request=request,
@@ -175,24 +365,18 @@ class TransferAgentRuntime:
             )
             return "已取消本次转账。", "cancelled", router_update
 
-        if memory.skill_step == "waiting_confirmation":
-            if not _is_confirm(message):
-                self._collect_message_slots(message=message, memory=memory, events=events)
-                if self._missing_fields(memory):
-                    memory.skill_step = "collecting_transfer_fields"
-                    return self._missing_message(memory), "running", None
-                if _extract_transfer_slots(message):
-                    return self._confirm_message(memory), "running", None
-                return "请回复“确认”继续办理，或回复“取消”结束本次转账。", "running", None
+        missing_fields = self._missing_fields(memory)
+        if action == "submit":
             if self._missing_fields(memory):
                 memory.skill_step = "collecting_transfer_fields"
-                return self._missing_message(memory), "running", None
+                return decision.assistant_message or self._missing_message(memory), "running", None
+            if memory.skill_step != "waiting_confirmation":
+                memory.skill_step = "waiting_confirmation"
+                return decision.assistant_message or self._confirm_message(memory), "running", None
             memory.skill_step = "completed"
             router_update = await self._submit_transfer(request=request, memory=memory, events=events)
             return self._success_message(memory), "completed", router_update
 
-        self._collect_message_slots(message=message, memory=memory, events=events)
-        missing_fields = self._missing_fields(memory)
         if missing_fields:
             memory.skill_step = "collecting_transfer_fields"
             events.append(
@@ -203,31 +387,41 @@ class TransferAgentRuntime:
                     skill_content,
                 )
             )
-            return self._missing_message(memory), "running", None
+            return decision.assistant_message or self._missing_message(memory), "running", None
 
         memory.skill_step = "waiting_confirmation"
         events.append(_lifecycle_event("等待确认", "收款人和金额齐备，必须先让用户确认。", memory, skill_content))
-        return self._confirm_message(memory), "running", None
+        return decision.assistant_message or self._confirm_message(memory), "running", None
 
-    def _collect_message_slots(
-        self,
-        *,
-        message: str,
-        memory: TransferTaskMemory,
-        events: list[dict[str, Any]],
-    ) -> None:
-        slots = _extract_transfer_slots(message)
+    def _effective_action(self, *, decision: SkillDecision, memory: TransferTaskMemory) -> str:
+        action = decision.action
+        if (
+            action == "ask_confirmation"
+            and decision.confirmation_observed is True
+            and memory.skill_step == "waiting_confirmation"
+        ):
+            return "submit"
+        if action == "submit" and decision.confirmation_observed is False:
+            return "ask_confirmation"
+        return action
+
+    def _apply_slots_patch(self, *, memory: TransferTaskMemory, slots_patch: dict[str, Any]) -> dict[str, str]:
         collected: dict[str, str] = {}
-        recipient = slots.get("recipient")
-        amount = slots.get("amount")
+        recipient = _normalize_text(slots_patch.get("recipient"))
+        amount = _normalize_text(slots_patch.get("amount"))
+        currency = _normalize_text(slots_patch.get("currency"))
+        amount_source = _normalize_text(slots_patch.get("amount_source"))
         if recipient and (memory.recipient is None or memory.skill_step == "waiting_confirmation"):
             memory.recipient = recipient
             collected["recipient"] = recipient
         if amount and (memory.amount is None or memory.skill_step == "waiting_confirmation"):
             memory.amount = amount
+            memory.amount_source = amount_source or "user_message"
             collected["amount"] = amount
-        if collected:
-            events.append(_slots_event(collected, memory))
+        if currency:
+            memory.currency = currency
+            collected["currency"] = currency
+        return collected
 
     def _missing_fields(self, memory: TransferTaskMemory) -> list[str]:
         missing: list[str] = []
@@ -278,7 +472,7 @@ class TransferAgentRuntime:
                 "service": "transfer-agent",
                 "phase": "execute",
                 "title": "转账业务 API 执行",
-                "summary": "已完成模拟风控、限额和 transfer.submit。",
+                "summary": "已完成 demo 级风控、限额和 transfer.submit adapter 调用。",
                 "output": output,
             }
         )
@@ -370,6 +564,7 @@ class TransferAgentRuntime:
     ) -> list[dict[str, Any]]:
         task_event = _first_event(events, "agent.router_task_loaded")
         skill_event = _first_event(events, "agent.skill_loaded")
+        decision_event = _first_event(events, "agent.skill_llm_decision")
         nodes = [
             {
                 "id": "agent-load-task",
@@ -378,7 +573,7 @@ class TransferAgentRuntime:
                 "summary": "转账 Agent 通过 Router task snapshot 获取 intent、scene、Skill 引用和 task_id。",
                 "status": "已加载",
                 "owner": "transfer-agent",
-                "details": ["这是执行 Agent 自己加载，不是 Router 内部模拟。"],
+                "details": ["这是执行 Agent 自己加载，不是 Router 内部执行。"],
                 "evidence": [task_event] if task_event else [],
                 "payload": task_event.get("output") if task_event else None,
             },
@@ -392,6 +587,17 @@ class TransferAgentRuntime:
                 "details": [f"文件：{SKILL_PATH}"],
                 "evidence": [skill_event] if skill_event else [],
                 "payload": skill_event.get("output") if skill_event else None,
+            },
+            {
+                "id": "agent-llm-skill-decision",
+                "type": "llm",
+                "title": "LLM 按 Skill 推进任务",
+                "summary": "LLM 消费 Skill、Router task snapshot、business_context 和 task memory，输出结构化执行决策。",
+                "status": "已决策" if decision_event else "未执行",
+                "owner": "transfer-agent",
+                "details": ["代码只校验结构化决策并落状态，不用本地规则提槽。"],
+                "evidence": [decision_event] if decision_event else [],
+                "payload": decision_event.get("output") if decision_event else None,
             },
             {
                 "id": "agent-current-step",
@@ -445,95 +651,11 @@ class TransferAgentRuntime:
         return task_payload.get("scene_id") == "transfer" and task_payload.get("target_agent") == "transfer-agent"
 
 
-def _normalize_amount(value: Any) -> str | None:
+def _normalize_text(value: Any) -> str | None:
     if value in (None, ""):
         return None
     text = str(value).strip()
     return text or None
-
-
-def _extract_amount(message: str) -> str | None:
-    translated = message.translate(str.maketrans("０１２３４５６７８９．，", "0123456789.,"))
-    current: list[str] = []
-    numbers: list[str] = []
-    for char in translated:
-        if char.isdigit() or (char == "." and current and "." not in current):
-            current.append(char)
-        elif current:
-            numbers.append("".join(current))
-            current = []
-    if current:
-        numbers.append("".join(current))
-    for number in numbers:
-        if any(char.isdigit() for char in number):
-            return number.rstrip(".")
-    return None
-
-
-def _extract_transfer_slots(message: str) -> dict[str, str]:
-    amount = _extract_amount(message)
-    recipient = _extract_recipient(message, amount)
-    slots: dict[str, str] = {}
-    if recipient:
-        slots["recipient"] = recipient
-    if amount:
-        slots["amount"] = amount
-    return slots
-
-
-def _extract_recipient(message: str, amount: str | None) -> str:
-    text = message.strip()
-    if amount:
-        text = text.replace(amount, "")
-    for token in (
-        "人民币",
-        "元",
-        "块钱",
-        "块",
-        "我要",
-        "我想",
-        "帮我",
-        "请帮我",
-        "请",
-        "转账给",
-        "转给",
-        "转账",
-        "汇款给",
-        "汇款",
-        "打款给",
-        "打款",
-        "打钱给",
-        "打钱",
-        "转",
-        "给",
-        "向",
-        "收款人是",
-        "收款人",
-        "是",
-    ):
-        text = text.replace(token, "")
-    for char in "，。！？、,.!? ：:;；\t\n\r":
-        text = text.replace(char, "")
-    if not text or _normalize_decision(text) in CONFIRM_WORDS or _normalize_decision(text) in CANCEL_WORDS:
-        return ""
-    if _extract_amount(text) == text:
-        return ""
-    return text[:32]
-
-
-def _normalize_decision(message: str) -> str:
-    text = message.strip()
-    for char in "，。！？、,.!? ":
-        text = text.replace(char, "")
-    return text
-
-
-def _is_confirm(message: str) -> bool:
-    return _normalize_decision(message) in CONFIRM_WORDS
-
-
-def _is_cancel(message: str) -> bool:
-    return _normalize_decision(message) in CANCEL_WORDS
 
 
 def _slots_event(slots: dict[str, str], memory: TransferTaskMemory) -> dict[str, Any]:
@@ -541,9 +663,20 @@ def _slots_event(slots: dict[str, str], memory: TransferTaskMemory) -> dict[str,
         "type": "agent.slots_collected",
         "service": "transfer-agent",
         "phase": "execute",
-        "title": "自由表达提取转账信息",
-        "summary": "Agent 从用户自然表达中一次性提取可获得的转账字段。",
+        "title": "LLM Skill 决策写入转账信息",
+        "summary": "Agent 将 LLM 基于 Skill 输出的 slots_patch 校验后写入 task memory。",
         "output": {"slots": dict(slots), "agent_state": memory.to_dict()},
+    }
+
+
+def _skill_decision_event(*, decision: SkillDecision, memory: TransferTaskMemory) -> dict[str, Any]:
+    return {
+        "type": "agent.skill_llm_decision",
+        "service": "transfer-agent",
+        "phase": "execute",
+        "title": "LLM 生成 Skill 执行决策",
+        "summary": decision.reason or f"action={decision.action}",
+        "output": {"decision": decision.to_dict(), "agent_state_before_apply": memory.to_dict()},
     }
 
 
@@ -565,6 +698,110 @@ def _first_event(events: list[dict[str, Any]], event_type: str) -> dict[str, Any
     return None
 
 
+def _completion_content(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        raise RuntimeError("Transfer Agent LLM response payload must be an object")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("Transfer Agent LLM response does not contain choices")
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError("Transfer Agent LLM response does not contain message content")
+    content = message.get("content")
+    return content if isinstance(content, str) else str(content or "")
+
+
+def _extract_json_object(raw: str) -> Any:
+    text = raw.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise RuntimeError(f"Transfer Agent LLM did not return JSON: {raw[:200]}")
+    return json.loads(text[start : end + 1])
+
+
+def _headers(settings: TransferAgentLLMSettings) -> dict[str, str]:
+    headers = {"content-type": "application/json", **settings.headers}
+    if settings.api_key:
+        headers.setdefault("Authorization", f"Bearer {settings.api_key}")
+    return headers
+
+
+def _chat_completions_url(base_url: str) -> str:
+    stripped = base_url.rstrip("/")
+    if stripped.endswith("/chat/completions"):
+        return stripped
+    return f"{stripped}/chat/completions"
+
+
+def _env_first(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name)
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
+def _positive_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _float_value(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _json_headers(name: str) -> dict[str, str]:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): str(value) for key, value in payload.items()}
+
+
+def _load_env_file(path: str | Path | None) -> None:
+    if path is None:
+        return
+    env_path = Path(path).expanduser()
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
+_load_env_file(os.environ.get("TRANSFER_AGENT_ENV_FILE") or os.environ.get("ROUTER_V4_ENV_FILE") or ".env.local")
 runtime = TransferAgentRuntime()
 
 app = FastAPI(

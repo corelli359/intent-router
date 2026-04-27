@@ -160,6 +160,7 @@ def _state_to_dict(state: RoutingSessionState) -> dict[str, Any]:
         "agent_task_ids": list(state.agent_task_ids),
         "handover_records": list(state.handover_records),
         "agent_outputs": dict(state.agent_outputs),
+        "business_memory": dict(state.business_memory),
         "assistant_result_status": state.assistant_result_status,
         "tasks": {task_id: task.to_dict() for task_id, task in state.tasks.items()},
         "graphs": {graph_id: graph.to_dict() for graph_id, graph in state.graphs.items()},
@@ -188,6 +189,7 @@ def _state_from_dict(payload: dict[str, Any]) -> RoutingSessionState:
         agent_task_ids=[str(value) for value in payload.get("agent_task_ids", [])],
         handover_records=[dict(value) for value in payload.get("handover_records", [])],
         agent_outputs=dict(payload.get("agent_outputs") or {}),
+        business_memory=dict(payload.get("business_memory") or {}),
         assistant_result_status=str(payload.get("assistant_result_status") or ""),
         tasks={
             str(task_id): _task_from_dict(dict(task_payload))
@@ -215,6 +217,8 @@ def _task_from_dict(payload: dict[str, Any]) -> RouterTaskState:
         resume_token=str(payload.get("resume_token") or ""),
         source=str(payload.get("source") or "user"),
         push_context=dict(payload.get("push_context") or {}),
+        business_context=dict(payload.get("business_context") or {}),
+        skill_memory=dict(payload.get("skill_memory") or {}),
         original_task_id=_optional_str(payload.get("original_task_id")),
         fallback_task_id=_optional_str(payload.get("fallback_task_id")),
         handover_used=bool(payload.get("handover_used", False)),

@@ -1,19 +1,18 @@
 # router-v4-service
 
-Standalone v4 intent routing service.
+Standalone v4 Intent ReAct service.
 
-This service is intentionally separate from the existing `router-service`. It owns only:
+This service is intentionally separate from the existing `router-service`. It owns:
 
-- independent intent recognition
-- single markdown intent catalog loading
-- skill reference dispatch
-- execution-agent task dispatch
-- router-level session and transcript tracking
+- Intent ReAct from the single markdown intent catalog
+- skill reference loading and Skill ReAct continuation
+- task / graph / session state tracking
+- business memory handoff through `business_context`
+- handover and fallback handling
 
-Intent specs are centralized in one markdown source: `default_specs/intent.md`. Router loads that file for recognition and dispatch metadata. Each intent entry includes its intent boundary, target agent, dispatch contract and `skill_ref`. Router does not read the referenced Skill body; execution agents load `skills/*.skill.md` in their own lifecycle. TOML frontmatter is only the machine-readable header inside the markdown document. There are no hand-maintained JSON scene specs.
+Intent specs are centralized in one markdown source: `default_specs/intent.md`. The runtime loads that file as the first ReAct spec and decides `select_intent`, `plan_multi_intent`, or `no_action`. Each intent entry includes its intent boundary, target agent, dispatch contract and `skill_ref`. After an intent is selected, the runtime progressively loads the referenced `skills/*.skill.md` and continues Skill ReAct. TOML frontmatter is only the machine-readable header inside the markdown document. There are no hand-maintained JSON scene specs.
 
-It does not perform business confirmation, risk checks, limits, idempotency, or direct business API calls. Those remain in scene execution agents.
-The Router runtime also does not perform regex/keyword matching, hardcoded push acceptance, heuristic slot extraction, or business-slot clarification. Recognition is produced by the LLM recognizer from `intent.md`. Business slot extraction belongs to the selected execution Agent and its Skill.
+The runtime does not perform regex/keyword matching, hardcoded push acceptance, heuristic slot extraction, or local business-slot rules. Intent selection is produced by the first LLM ReAct step from `intent.md`. Business slot extraction and tool/API decisions are produced by the selected Skill ReAct LLM decision from `skill.md`.
 
 Implemented v0.2 capabilities:
 
@@ -24,7 +23,8 @@ Implemented v0.2 capabilities:
 - fixed `ishandover=true` plus `output.data=[]` handover protocol
 - one-hop fallback dispatch to `fallback-agent`
 - task and graph snapshots
-- LLM-only recognizer path with no rules fallback in Router runtime
+- LLM-only Intent ReAct path with no rules fallback in runtime
+- Skill ReAct runtime for selected skill markdown
 
 Runtime switches:
 

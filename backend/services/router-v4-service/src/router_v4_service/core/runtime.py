@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
+import tomllib
 from typing import Any
 
 from router_v4_service.core.agent_client import AgentDispatchClient, AgentDispatchError
@@ -24,6 +26,7 @@ from router_v4_service.core.recognizer import (
     LLMIntentRecognizer,
 )
 from router_v4_service.core.spec_registry import SpecRegistry, SpecRegistryError
+from router_v4_service.core.skill_runtime import LLMSkillExecutor, SkillDecision, SkillExecutor
 from router_v4_service.core.stores import (
     FileRoutingSessionStore,
     FileTranscriptStore,
@@ -33,13 +36,16 @@ from router_v4_service.core.stores import (
     TranscriptRecord,
     TranscriptStore,
 )
+from router_v4_service.core.tool_runtime import LocalSkillToolExecutor, ToolExecutor
 
 
 class RouterV4Runtime:
-    """Spec-driven router runtime.
+    """Spec-driven Intent/Skill ReAct runtime.
 
-    This runtime owns routing, dispatch and tracking only. It does not execute
-    scene business workflows.
+    The runtime starts ReAct from the intent catalog, then progressively loads
+    the selected Skill. Business behavior is declared by Skill markdown and
+    emitted as structured LLM/tool decisions; Router code only validates and
+    tracks the generic lifecycle.
     """
 
     def __init__(
@@ -52,6 +58,8 @@ class RouterV4Runtime:
         transcript_store: TranscriptStore | None = None,
         context_builder: ContextBuilder | None = None,
         settings: RouterV4Settings | None = None,
+        skill_executor: SkillExecutor | None = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> None:
         self.settings = settings or RouterV4Settings.from_env()
         self.registry = registry or SpecRegistry(self.settings.spec_root)
@@ -70,6 +78,8 @@ class RouterV4Runtime:
         else:
             self.transcript_store = InMemoryTranscriptStore()
         self.context_builder = context_builder or ContextBuilder(self.settings.context_policy)
+        self.skill_executor = skill_executor or (LLMSkillExecutor(self.settings.llm) if self.settings.llm.ready else None)
+        self.tool_executor = tool_executor or LocalSkillToolExecutor()
 
     def handle_turn(self, request: RouterV4Input) -> RouterV4Output:
         state = self.session_store.get_or_create(request.session_id)
@@ -91,7 +101,9 @@ class RouterV4Runtime:
             },
         )
 
-        if state.agent_task_id and state.target_agent and state.dispatch_status in {"dispatched", "waiting_agent"}:
+        if state.agent_task_id and state.target_agent and state.dispatch_status in {"dispatched", "waiting_agent", "running"}:
+            if self.skill_executor is not None:
+                return self._continue_active_skill(state=state, request=request, turn_id=turn_id)
             return self._forward_to_active_agent(state=state, request=request, turn_id=turn_id)
 
         push_intent_ids = self._push_intent_ids(request)
@@ -112,15 +124,15 @@ class RouterV4Runtime:
             self._append(
                 state,
                 turn_id,
-                "llm_recognition_failed",
+                "intent_react_failed",
                 {"error": str(exc), "recognizer_backend": self.settings.recognizer_backend},
             )
             self.session_store.save(state)
             return RouterV4Output(
                 session_id=request.session_id,
                 status=RouterTurnStatus.FAILED,
-                response=f"LLM意图识别失败：{exc}",
-                events=({"type": "llm_recognition_failed", "error": str(exc)},),
+                response=f"Intent ReAct 执行失败：{exc}",
+                events=({"type": "intent_react_failed", "error": str(exc)},),
                 prompt_report=prompt_report,
             )
         if not candidates:
@@ -206,6 +218,7 @@ class RouterV4Runtime:
             status=TaskStatus.DISPATCHED,
             request=request,
             routing_hints=routing_hints,
+            business_context=dict(task_payload.get("business_context") or {}),
         )
         state.tasks[task_id] = task
         state.bind_dispatch(
@@ -218,7 +231,6 @@ class RouterV4Runtime:
             summary=f"{intent.name}已派发给 {agent.agent_id}",
         )
         state.assistant_result_status = self._assistant_status_for_task(task.status)
-        self.session_store.save(state)
         self._append(
             state,
             turn_id,
@@ -233,6 +245,35 @@ class RouterV4Runtime:
                 "task_payload": self._task_payload_preview(task_payload),
             },
         )
+        base_events = (
+            {
+                "type": "intent_selected",
+                "intent_id": intent.intent_id,
+                "scene_id": intent.scene_id,
+                "score": selected.score,
+                "reasons": list(selected.reasons),
+            },
+            {
+                "type": "agent_dispatched",
+                "target_agent": agent.agent_id,
+                "agent_task_id": dispatch.agent_task_id,
+                "task_id": task_id,
+                "scene_id": intent.scene_id,
+                "task_payload": self._task_payload_preview(task_payload),
+            },
+        )
+        if self.skill_executor is not None:
+            return self._run_skill_react_turn(
+                state=state,
+                request=request,
+                task=task,
+                intent=intent,
+                turn_id=turn_id,
+                status=RouterTurnStatus.DISPATCHED,
+                base_events=base_events,
+                prompt_report=prompt_report,
+            )
+        self.session_store.save(state)
         return RouterV4Output(
             session_id=request.session_id,
             status=RouterTurnStatus.DISPATCHED,
@@ -244,23 +285,7 @@ class RouterV4Runtime:
             routing_hints=routing_hints,
             tasks=(task.to_dict(),),
             assistant_result_status=state.assistant_result_status,
-            events=(
-                {
-                    "type": "intent_selected",
-                    "intent_id": intent.intent_id,
-                    "scene_id": intent.scene_id,
-                    "score": selected.score,
-                    "reasons": list(selected.reasons),
-                },
-                {
-                    "type": "agent_dispatched",
-                    "target_agent": agent.agent_id,
-                    "agent_task_id": dispatch.agent_task_id,
-                    "task_id": task_id,
-                    "scene_id": intent.scene_id,
-                    "task_payload": self._task_payload_preview(task_payload),
-                },
-            ),
+            events=base_events,
             prompt_report=prompt_report,
         )
 
@@ -312,6 +337,195 @@ class RouterV4Runtime:
             prompt_report=prompt_report,
         )
 
+    def _continue_active_skill(
+        self,
+        *,
+        state: RoutingSessionState,
+        request: RouterV4Input,
+        turn_id: str,
+    ) -> RouterV4Output:
+        task_id = state.active_task_ids[0] if state.active_task_ids else state.agent_task_id
+        task = state.tasks.get(str(task_id or ""))
+        if task is None:
+            self.session_store.save(state)
+            return RouterV4Output(
+                session_id=request.session_id,
+                status=RouterTurnStatus.FAILED,
+                response="active_task_not_found",
+                events=({"type": "task.not_found", "task_id": task_id},),
+            )
+        try:
+            intent = self.registry.intent(task.intent_id)
+        except SpecRegistryError as exc:
+            return RouterV4Output(
+                session_id=request.session_id,
+                status=RouterTurnStatus.FAILED,
+                response=str(exc),
+                task_id=task.task_id,
+                events=({"type": "intent_missing", "intent_id": task.intent_id},),
+            )
+        self._append(
+            state,
+            turn_id,
+            "skill_message_forwarded",
+            {"target_agent": state.target_agent, "task_id": task.task_id},
+        )
+        prompt_report = self._build_prompt_report(state=state, candidates=[], selected_intent=intent)
+        return self._run_skill_react_turn(
+            state=state,
+            request=request,
+            task=task,
+            intent=intent,
+            turn_id=turn_id,
+            status=RouterTurnStatus.FORWARDED,
+            base_events=(
+                {
+                    "type": "skill_message_forwarded",
+                    "target_agent": state.target_agent,
+                    "task_id": task.task_id,
+                },
+            ),
+            prompt_report=prompt_report,
+        )
+
+    def _run_skill_react_turn(
+        self,
+        *,
+        state: RoutingSessionState,
+        request: RouterV4Input,
+        task: RouterTaskState,
+        intent: IntentSpec,
+        turn_id: str,
+        status: RouterTurnStatus,
+        base_events: tuple[dict[str, Any], ...],
+        prompt_report: dict[str, Any],
+    ) -> RouterV4Output:
+        if self.skill_executor is None:
+            raise RuntimeError("skill_executor is not configured")
+        try:
+            skill_markdown, skill_path, skill_metadata = self._load_skill_markdown(intent)
+            decision = self.skill_executor.decide(
+                user_message=request.message,
+                skill_markdown=skill_markdown,
+                task_payload=self._skill_task_payload(task=task, intent=intent, current_message=request.message),
+                task_memory=dict(task.skill_memory),
+            )
+        except Exception as exc:
+            task.status = TaskStatus.FAILED
+            task.abnormal_agent_output = {"error": str(exc)}
+            state.dispatch_status = task.status.value
+            state.assistant_result_status = "agent_output_abnormal"
+            self._append(state, turn_id, "skill_react_failed", {"task_id": task.task_id, "error": str(exc)})
+            self.session_store.save(state)
+            return RouterV4Output(
+                session_id=request.session_id,
+                status=RouterTurnStatus.FAILED,
+                response=f"Skill ReAct 执行失败：{exc}",
+                scene_id=task.scene_id,
+                target_agent=task.target_agent,
+                agent_task_id=task.agent_task_id,
+                task_id=task.task_id,
+                tasks=(task.to_dict(),),
+                assistant_result_status=state.assistant_result_status,
+                events=(*base_events, {"type": "skill_react_failed", "task_id": task.task_id}),
+                prompt_report=prompt_report,
+            )
+
+        skill_loaded_event = {
+            "type": "skill_loaded",
+            "task_id": task.task_id,
+            "skill_id": intent.skill.get("skill_id"),
+            "path": skill_path,
+            "chars": len(skill_markdown),
+            "metadata": dict(skill_metadata),
+        }
+        decision_event = {
+            "type": "skill_react_decision",
+            "task_id": task.task_id,
+            "decision": decision.to_dict(),
+        }
+        self._append(state, turn_id, "skill_loaded", skill_loaded_event)
+        self._append(state, turn_id, "skill_react_decision", decision_event)
+
+        if not decision.task_supported or decision.action == "handover":
+            return self._handle_handover_output(
+                state=state,
+                task=task,
+                agent_payload={"ishandover": True, "output": {"data": []}, "reason": decision.reason},
+            )
+
+        self._apply_skill_slots(task=task, slots_patch=decision.slots_patch)
+        action = self._normalized_skill_action(
+            task=task,
+            decision=decision,
+            required_slots=_required_slots_from_skill_metadata(skill_metadata),
+        )
+        if action == "cancel":
+            task.status = TaskStatus.CANCELLED
+            task.agent_output = {"data": [], "reason": decision.reason or "user_cancelled"}
+            state.agent_outputs[task.task_id] = task.agent_output
+            state.dispatch_status = task.status.value
+            state.assistant_result_status = self._assistant_status_for_task(task.status)
+            self.session_store.save(state)
+            return RouterV4Output(
+                session_id=request.session_id,
+                status=RouterTurnStatus.TASK_UPDATED,
+                response=decision.assistant_message or "已取消本次任务。",
+                scene_id=task.scene_id,
+                target_agent=task.target_agent,
+                agent_task_id=task.agent_task_id,
+                task_id=task.task_id,
+                tasks=(task.to_dict(),),
+                agent_output=task.agent_output,
+                assistant_result_status=state.assistant_result_status,
+                events=(*base_events, skill_loaded_event, decision_event, {"type": "task.cancelled", "task_id": task.task_id}),
+                prompt_report=prompt_report,
+            )
+
+        if action == "submit":
+            task.status = TaskStatus.COMPLETED
+            task.skill_memory["skill_step"] = "completed"
+            task.agent_output = self._execute_skill_submit(task=task, decision=decision)
+            state.agent_outputs[task.task_id] = task.agent_output
+            self._remember_business_output(state=state, task=task)
+            state.dispatch_status = task.status.value
+            state.assistant_result_status = self._assistant_status_for_task(task.status)
+            self._refresh_graph_statuses(state)
+            self.session_store.save(state)
+            return RouterV4Output(
+                session_id=request.session_id,
+                status=RouterTurnStatus.TASK_UPDATED,
+                response=decision.assistant_message or "任务已完成。",
+                scene_id=task.scene_id,
+                target_agent=task.target_agent,
+                agent_task_id=task.agent_task_id,
+                task_id=task.task_id,
+                tasks=(task.to_dict(),),
+                agent_output=task.agent_output,
+                assistant_result_status=state.assistant_result_status,
+                events=(*base_events, skill_loaded_event, decision_event, {"type": "task.completed", "task_id": task.task_id}),
+                prompt_report=prompt_report,
+            )
+
+        task.status = TaskStatus.RUNNING
+        task.skill_memory["skill_step"] = "waiting_confirmation" if action == "ask_confirmation" else "collecting_fields"
+        state.dispatch_status = task.status.value
+        state.assistant_result_status = self._assistant_status_for_task(task.status)
+        self.session_store.save(state)
+        return RouterV4Output(
+            session_id=request.session_id,
+            status=status,
+            response=decision.assistant_message or "请继续补充信息。",
+            scene_id=task.scene_id,
+            target_agent=task.target_agent,
+            agent_task_id=task.agent_task_id,
+            task_id=task.task_id,
+            tasks=(task.to_dict(),),
+            assistant_result_status=state.assistant_result_status,
+            events=(*base_events, skill_loaded_event, decision_event, {"type": "task.running", "task_id": task.task_id}),
+            prompt_report=prompt_report,
+        )
+
     def _build_agent_task_payload(
         self,
         *,
@@ -330,9 +544,11 @@ class RouterV4Runtime:
             "push_context": dict(request.push_context),
             "routing_hints": dict(routing_hints),
             "skill_ref": dict(intent.skill),
+            "business_context": self._business_context_for_task(state=state, intent=intent),
             "context_refs": {
                 "user_profile_present": bool(request.user_profile),
                 "page_context_present": bool(request.page_context),
+                "business_memory_present": bool(state.business_memory),
             },
             "intent_catalog_hash": intent.spec_hash,
         }
@@ -347,6 +563,95 @@ class RouterV4Runtime:
             payload["previous_agent_task_id"] = state.agent_task_id
         return payload
 
+    def _skill_task_payload(self, *, task: RouterTaskState, intent: IntentSpec, current_message: str) -> dict[str, Any]:
+        payload = task.to_dict()
+        payload.update(
+            {
+                "router_session_id": task.task_id.split(":", 1)[0] if ":" in task.task_id else "",
+                "current_message": current_message,
+                "skill_ref": dict(intent.skill),
+                "business_context": dict(task.business_context),
+            }
+        )
+        return payload
+
+    def _load_skill_markdown(self, intent: IntentSpec) -> tuple[str, str, dict[str, Any]]:
+        skill_path = str(intent.skill.get("path") or "")
+        if not skill_path:
+            raise RuntimeError(f"intent {intent.intent_id} does not declare skill.path")
+        source_path = Path(intent.source_path)
+        base_dir = source_path.parent if intent.source_path else Path.cwd()
+        path = (base_dir / skill_path).resolve()
+        content = path.read_text(encoding="utf-8")
+        return content, str(path), _skill_markdown_metadata(content)
+
+    def _apply_skill_slots(self, *, task: RouterTaskState, slots_patch: dict[str, Any]) -> None:
+        if not isinstance(task.skill_memory, dict):
+            task.skill_memory = {}
+        slots = dict(task.skill_memory.get("slots") or {})
+        for key, value in slots_patch.items():
+            normalized = _optional_text(value)
+            if normalized is None:
+                continue
+            slots[str(key)] = normalized
+            task.skill_memory[str(key)] = normalized
+        task.skill_memory["slots"] = slots
+
+    def _normalized_skill_action(
+        self,
+        *,
+        task: RouterTaskState,
+        decision: SkillDecision,
+        required_slots: tuple[str, ...],
+    ) -> str:
+        action = decision.action.strip()
+        if action == "tool_call":
+            action = "submit"
+        required_complete = _required_slots_complete(task=task, required_slots=required_slots)
+        if action == "ask_missing" and required_complete is True:
+            return "ask_confirmation"
+        if action in {"ask_confirmation", "submit"} and required_complete is False:
+            return "ask_missing"
+        if action == "ask_missing" and decision.required_slots_complete is True:
+            return "ask_confirmation"
+        if action in {"ask_confirmation", "submit"} and decision.required_slots_complete is False:
+            return "ask_missing"
+        if (
+            action == "ask_confirmation"
+            and decision.confirmation_observed is True
+            and task.skill_memory.get("skill_step") == "waiting_confirmation"
+        ):
+            return "submit"
+        if action == "submit" and decision.confirmation_observed is False:
+            return "ask_confirmation"
+        if action == "submit" and task.skill_memory.get("skill_step") != "waiting_confirmation":
+            return "ask_confirmation"
+        if action not in {"ask_missing", "ask_confirmation", "submit", "cancel", "handover"}:
+            return "ask_missing"
+        return action
+
+    def _execute_skill_submit(self, *, task: RouterTaskState, decision: SkillDecision) -> dict[str, Any]:
+        tool_call = dict(decision.tool_call)
+        if not tool_call:
+            tool_call = {
+                "name": f"{task.scene_id}.submit",
+                "arguments": dict(task.skill_memory.get("slots") or {}),
+            }
+        result = self.tool_executor.execute(
+            tool_call,
+            task_context={
+                "task_id": task.task_id,
+                "intent_id": task.intent_id,
+                "scene_id": task.scene_id,
+                "target_agent": task.target_agent,
+                "skill_memory": dict(task.skill_memory),
+                "business_context": dict(task.business_context),
+            },
+        )
+        output = result.to_agent_output(agent_id=task.target_agent, skill_id=task.intent_id)
+        output["decision"] = decision.to_dict()
+        return output
+
     def _task_payload_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "router_session_id": payload.get("router_session_id"),
@@ -356,6 +661,7 @@ class RouterV4Runtime:
             "raw_message": payload.get("raw_message"),
             "routing_hints": dict(payload.get("routing_hints") or {}),
             "skill_ref": dict(payload.get("skill_ref") or {}),
+            "business_context": dict(payload.get("business_context") or {}),
             "context_refs": dict(payload.get("context_refs") or {}),
             "intent_catalog_hash": payload.get("intent_catalog_hash"),
         }
@@ -385,6 +691,7 @@ class RouterV4Runtime:
                 "agent_task_ids": list(state.agent_task_ids),
                 "handover_records": list(state.handover_records),
                 "agent_outputs": dict(state.agent_outputs),
+                "business_memory": dict(state.business_memory),
                 "assistant_result_status": state.assistant_result_status,
             },
             "tasks": {task_id: task.to_dict() for task_id, task in state.tasks.items()},
@@ -467,6 +774,7 @@ class RouterV4Runtime:
         output = agent_payload.get("output")
         task.agent_output = dict(output) if isinstance(output, dict) else {"raw": output}
         state.agent_outputs[task.task_id] = task.agent_output
+        self._remember_business_output(state=state, task=task)
         state.assistant_result_status = self._assistant_status_for_task(task.status)
         self._refresh_graph_statuses(state)
         if state.agent_task_id == task.agent_task_id:
@@ -503,6 +811,60 @@ class RouterV4Runtime:
                 },
             ),
         )
+
+    def _business_context_for_task(self, *, state: RoutingSessionState, intent: IntentSpec) -> dict[str, Any]:
+        if not state.business_memory:
+            return {}
+        recent_items = [
+            dict(item)
+            for item in state.business_memory.get("recent_completed_tasks", [])
+            if isinstance(item, dict)
+        ][-5:]
+        context: dict[str, Any] = {}
+        if recent_items:
+            context["recent_completed_tasks"] = recent_items
+        last_by_scene = state.business_memory.get("last_completed_by_scene")
+        if isinstance(last_by_scene, dict):
+            context["last_completed_by_scene"] = {
+                str(scene_id): dict(record)
+                for scene_id, record in last_by_scene.items()
+                if isinstance(record, dict)
+            }
+            same_scene = last_by_scene.get(intent.scene_id)
+            if isinstance(same_scene, dict):
+                context["last_completed_for_same_scene"] = dict(same_scene)
+        return context
+
+    def _remember_business_output(self, *, state: RoutingSessionState, task: RouterTaskState) -> None:
+        if task.status != TaskStatus.COMPLETED or not isinstance(task.agent_output, dict):
+            return
+        data = task.agent_output.get("data")
+        if not isinstance(data, list):
+            return
+        records: list[dict[str, Any]] = [
+            dict(item)
+            for item in state.business_memory.get("recent_completed_tasks", [])
+            if isinstance(item, dict)
+        ]
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            compact_data = _compact_business_data(item)
+            record = {
+                "task_id": task.task_id,
+                "intent_id": task.intent_id,
+                "scene_id": task.scene_id,
+                "target_agent": task.target_agent,
+                "type": item.get("type"),
+                "status": item.get("status"),
+                "data": compact_data,
+            }
+            records.append(record)
+            last_by_scene = dict(state.business_memory.get("last_completed_by_scene") or {})
+            last_by_scene[task.scene_id] = record
+            state.business_memory["last_completed_by_scene"] = last_by_scene
+        if records:
+            state.business_memory["recent_completed_tasks"] = records[-10:]
 
     def _handle_handover_output(
         self,
@@ -715,6 +1077,7 @@ class RouterV4Runtime:
                 status=TaskStatus.DISPATCHED,
                 request=request,
                 routing_hints=routing_hints,
+                business_context=dict(payload.get("business_context") or {}),
             )
             state.tasks[task.task_id] = task
             tasks.append(task)
@@ -825,6 +1188,7 @@ class RouterV4Runtime:
         status: TaskStatus,
         request: RouterV4Input,
         routing_hints: dict[str, Any],
+        business_context: dict[str, Any] | None = None,
     ) -> RouterTaskState:
         return RouterTaskState(
             task_id=task_id,
@@ -840,6 +1204,7 @@ class RouterV4Runtime:
             resume_token=self._resume_token(task_id),
             source=request.source,
             push_context=dict(request.push_context),
+            business_context=dict(business_context or {}),
         )
 
     def _stream_url(self, task_id: str) -> str:
@@ -871,7 +1236,9 @@ class RouterV4Runtime:
     def _assistant_status_for_task(self, status: TaskStatus) -> str:
         if status == TaskStatus.COMPLETED:
             return "ready_for_assistant"
-        if status in {TaskStatus.RUNNING, TaskStatus.DISPATCHED, TaskStatus.FALLBACK_DISPATCHED}:
+        if status == TaskStatus.RUNNING:
+            return "waiting_user"
+        if status in {TaskStatus.DISPATCHED, TaskStatus.FALLBACK_DISPATCHED}:
             return "waiting_agent"
         if status == TaskStatus.HANDOVER_REQUESTED:
             return "handover_requested"
@@ -942,3 +1309,60 @@ def _optional_action_required(output: dict[str, Any] | None) -> dict[str, Any] |
     if isinstance(action_required, dict):
         return dict(action_required)
     return None
+
+
+def _skill_markdown_metadata(content: str) -> dict[str, Any]:
+    text = content.lstrip()
+    if not text.startswith("+++\n"):
+        return {}
+    end = text.find("\n+++", 4)
+    if end == -1:
+        return {}
+    raw = text[4:end].strip()
+    if not raw:
+        return {}
+    try:
+        payload = tomllib.loads(raw)
+    except tomllib.TOMLDecodeError:
+        return {}
+    return dict(payload)
+
+
+def _required_slots_from_skill_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
+    raw = metadata.get("required_slots")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(item).strip() for item in raw if str(item).strip())
+
+
+def _required_slots_complete(*, task: RouterTaskState, required_slots: tuple[str, ...]) -> bool | None:
+    if not required_slots:
+        return None
+    slots = task.skill_memory.get("slots")
+    slot_values = dict(slots) if isinstance(slots, dict) else {}
+    for slot in required_slots:
+        if _optional_text(task.skill_memory.get(slot) or slot_values.get(slot)) is None:
+            return False
+    return True
+
+
+def _optional_text(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _compact_business_data(item: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = (
+        "type",
+        "status",
+        "recipient",
+        "amount",
+        "currency",
+        "audit_id",
+        "account_scope",
+        "product_id",
+        "product_name",
+    )
+    return {key: item.get(key) for key in allowed_keys if key in item}
