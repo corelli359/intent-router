@@ -194,6 +194,24 @@ button:disabled {
   background: #fff1f0;
 }
 
+.bubble.streaming p::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  margin-left: 3px;
+  transform: translateY(2px);
+  border-radius: 2px;
+  background: currentColor;
+  animation: caret-blink 0.9s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .bubble span {
   display: block;
   margin-bottom: 6px;

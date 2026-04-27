@@ -51,6 +51,16 @@ def _run(runtime: AssistantRuntime, message: str) -> dict[str, Any]:
     return asyncio.run(runtime.handle_turn(_request(message)))
 
 
+def _stream(runtime: AssistantRuntime, message: str) -> str:
+    async def collect() -> str:
+        chunks: list[str] = []
+        async for chunk in runtime.stream_turn(_request(message)):
+            chunks.append(chunk)
+        return "".join(chunks)
+
+    return asyncio.run(collect())
+
+
 def test_assistant_is_front_door_and_generates_transfer_result_text() -> None:
     runtime = FakeAssistantRuntime(
         router_outputs=[
@@ -114,3 +124,28 @@ def test_assistant_calls_router_only_for_non_transfer_scene() -> None:
     assert runtime.router_calls == ["查一下基金"]
     assert runtime.agent_calls == []
     assert output["router_output"]["target_agent"] == "fund-agent"
+
+
+def test_assistant_stream_turn_emits_sse_message_deltas_and_final_payload() -> None:
+    runtime = FakeAssistantRuntime(
+        router_outputs=[
+            {
+                "status": "dispatched",
+                "scene_id": "transfer",
+                "target_agent": "transfer-agent",
+                "task_id": "task-a",
+                "response": "请确认",
+                "events": [{"type": "skill_react_decision"}],
+            }
+        ],
+        agent_outputs=[],
+    )
+
+    body = _stream(runtime, "给张三转200")
+
+    assert "event: assistant.status" in body
+    assert "event: assistant.message_delta" in body
+    assert '"delta":"请"' in body
+    assert '"delta":"确"' in body
+    assert '"delta":"认"' in body
+    assert "event: assistant.final" in body

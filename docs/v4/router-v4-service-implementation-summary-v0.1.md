@@ -80,6 +80,22 @@ skill_react         -> skill_loaded / skill_react_decision
 
 这里的关键点是：从 `intent.md` 开始已经是 ReAct。`business_memory` 是已完成任务的结构化结果，不是第一步对当前输入的提槽；`skill_reference` 是后续 Skill ReAct 的入口。只有命中意图后才按需加载 Skill 正文。
 
+## 流式展示
+
+当前已接入的是助手到前端的 SSE：
+
+```text
+POST /api/assistant/turn/stream
+-> assistant.status          # 收到输入、准备调用 Router
+-> assistant.status          # Router 返回结构化状态
+-> assistant.message_start
+-> assistant.message_delta   # 助手最终话术逐字输出
+-> assistant.message_end
+-> assistant.final           # 完整结构化结果
+```
+
+前端 `services/router-v4-observer-ui/app.js` 使用 fetch 读取 `text/event-stream`，把 `assistant.message_delta` 追加到同一个助手气泡，因此能看到打字机效果。这里流式的是用户可见助手输出；Intent/Skill LLM 结构化决策仍按完整 JSON 返回，避免边生成边解析半截 JSON。
+
 ## 跨任务上下文
 
 当前已落地的最小闭环：
@@ -117,10 +133,11 @@ node --check services/router-v4-observer-ui/app.js
 - Router task payload 保留 `intent_id`、`scene_id`、`skill_ref`、`intent_catalog_hash`。
 - Router session 新增 `business_memory`，task payload 新增 `business_context`。
 - `transfer.skill.md` 新增 `required_slots=["recipient","amount"]` 等 frontmatter，runtime 用它校验 LLM action 是否与槽位完整性一致。
+- 助手新增 `/api/assistant/turn/stream`，观察前端改为消费 SSE 并逐字渲染助手气泡。
 - 默认 Skill 文档改为中文可读的可执行规范结构：元数据、执行边界、输入、内部状态、执行步骤、槽位策略、上下文引用策略、LLM 决策输出、误派处理、输出契约。
 
 ## 当前限制
 
 - v4 仍是 demo 级文件态 / 内存态存储，生产需替换 Redis / SQL，并为 `business_memory` 增加 TTL、归档和隐私治理。
-- SSE 目前只保留 task 级 `stream_url` / `resume_token` 和 graph/task 状态，尚未接真实长连接消费。
+- 已接助手到前端的 SSE 打字机流；Router task 级 `stream_url` / `resume_token` 仍是预留，后续再接 task progress stream / resume。
 - 转账 tool adapter 仍是 demo 级本地适配器，后续应替换为真实业务 API / RPC adapter。

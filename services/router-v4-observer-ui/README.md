@@ -41,5 +41,5 @@ cd services/transfer-agent-demo
 python -m uvicorn app:app --host 127.0.0.1 --port 8031
 ```
 
-当前前端只调用真实 `/api/assistant/turn`。助手服务端再调用 Router `/api/router/v4/message` 和独立转账 Agent `/api/transfer-agent/turn`，不会调用 Router 内置模拟接口。
+当前前端调用真实 `/api/assistant/turn/stream`，用 fetch 读取 `text/event-stream` 并逐字追加助手气泡，形成打字机效果。助手服务端再调用 Router `/api/router/v4/message` 和独立转账 Agent `/api/transfer-agent/turn`，不会调用 Router 内置模拟接口。
 Router V4 默认走 LLM 识别；`.env.local` 需要提供 OpenAI-compatible LLM 配置。

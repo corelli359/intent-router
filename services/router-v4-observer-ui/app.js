@@ -25,8 +25,9 @@ const phaseLabels = {
 
 const stageLabels = {
   turn_start: "本轮开始",
-  before_recognition: "识别前",
-  after_recognition: "识别后",
+  intent_react_start: "Intent ReAct 开始",
+  intent_react_done: "Intent ReAct 完成",
+  after_intent_react: "Intent ReAct 后",
   after_intent_mapped: "意图映射后",
   after_scene_selected: "场景选定后",
   before_dispatch: "派发前",
@@ -44,9 +45,11 @@ const eventLabels = {
   context_progressive_built: "构建渐进式上下文",
   context_block_loaded: "加载上下文块",
   intent_selected: "LLM 意图识别完成",
+  intent_react_failed: "Intent ReAct 失败",
   agent_dispatched: "派发执行任务",
+  skill_loaded: "加载 Skill",
+  skill_react_decision: "Skill ReAct 决策",
   scene_unrecognized: "未识别到场景",
-  llm_recognition_failed: "LLM 意图识别失败",
   agent_dispatch_failed: "执行任务派发失败",
   assistant_receives_structured_state: "助手收到结构化状态"
 };
@@ -210,6 +213,58 @@ function requestJson(path, options, baseUrl = ASSISTANT_API_BASE) {
   });
 }
 
+async function requestSse(path, options, handlers = {}, baseUrl = ASSISTANT_API_BASE) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      ...(options && options.headers ? options.headers : {})
+    }
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}${text ? `：${text}` : ""}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let frameEnd = buffer.indexOf("\n\n");
+    while (frameEnd >= 0) {
+      const frame = buffer.slice(0, frameEnd);
+      buffer = buffer.slice(frameEnd + 2);
+      const parsed = parseSseFrame(frame);
+      if (parsed) handlers.onEvent?.(parsed.event, parsed.data);
+      frameEnd = buffer.indexOf("\n\n");
+    }
+  }
+  const tail = buffer.trim();
+  if (tail) {
+    const parsed = parseSseFrame(tail);
+    if (parsed) handlers.onEvent?.(parsed.event, parsed.data);
+  }
+}
+
+function parseSseFrame(frame) {
+  let event = "message";
+  const dataLines = [];
+  frame.split(/\r?\n/).forEach((line) => {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  });
+  if (!dataLines.length) return null;
+  const raw = dataLines.join("\n");
+  try {
+    return { event, data: JSON.parse(raw) };
+  } catch (_error) {
+    return { event, data: raw };
+  }
+}
+
 function setBusy(isBusy) {
   elements.sendButton.disabled = isBusy;
   elements.runStatus.textContent = isBusy ? "处理中" : state.run?.status === "failed" ? "失败" : state.run ? "已处理" : "待发送";
@@ -223,6 +278,7 @@ function appendBubble(kind, label, text) {
   node.querySelector("p").textContent = text;
   elements.chatLog.appendChild(node);
   elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
+  return node;
 }
 
 function resetChat(message) {
@@ -283,7 +339,7 @@ function dispatchEvent(output) {
 }
 
 function sceneSummary(output) {
-  const recognizedTrace = findTrace("recognized_intents", output);
+  const recognizedTrace = findTrace("intent_react_output", output);
   const recognized = Array.isArray(recognizedTrace?.content) ? recognizedTrace.content[0] : null;
   const selected = selectedIntentEvent(output);
   return {
@@ -386,7 +442,7 @@ function buildDerivedFlow(output) {
   const intentTrace = findTrace("intent_catalog", output);
   const skillReferenceTrace = findTrace("skill_reference", output);
   const referenceTrace = findTrace("retrieved_references", output);
-  const recognizedTrace = findTrace("recognized_intents", output);
+  const recognizedTrace = findTrace("intent_react_output", output);
   const stateTrace = findTrace("routing_state", output);
   const skillRef = dispatch?.task_payload?.skill_ref || {};
   const tasks = asArray(output.tasks);
@@ -920,16 +976,51 @@ async function startRun() {
   state.turnIndex += 1;
   setBusy(true);
   appendBubble("user", "用户", message);
+  const assistantBubble = appendBubble("assistant streaming", "助手", "");
+  const assistantTextNode = assistantBubble.querySelector("p");
   elements.messageInput.value = "";
 
   try {
-    const assistantTurn = await requestJson("/api/assistant/turn", {
+    let assistantTurn = null;
+    let streamedText = "";
+    await requestSse("/api/assistant/turn/stream", {
       method: "POST",
       body: JSON.stringify(buildAssistantRequest({ sessionId, message }))
+    }, {
+      onEvent(event, payload) {
+        if (event === "assistant.status") {
+          elements.runStatus.textContent = payload?.message || "处理中";
+          return;
+        }
+        if (event === "assistant.message_start") {
+          assistantTextNode.textContent = "";
+          streamedText = "";
+          return;
+        }
+        if (event === "assistant.message_delta") {
+          streamedText += payload?.delta || "";
+          assistantTextNode.textContent = streamedText;
+          elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
+          return;
+        }
+        if (event === "assistant.message_end") {
+          assistantTextNode.textContent = payload?.assistant_message || streamedText;
+          return;
+        }
+        if (event === "assistant.final") {
+          assistantTurn = payload;
+        }
+        if (event === "assistant.error") {
+          throw new Error(payload?.error || payload?.message || "流式请求失败");
+        }
+      }
     });
+    if (!assistantTurn) throw new Error("流式接口没有返回最终结果");
     let displayOutput = assistantTurn.output || assistantTurn.router_output || {};
     rememberTask(displayOutput);
     let assistantMessage = assistantTurn.assistant_message || assistantText(displayOutput);
+    if (!assistantTextNode.textContent) assistantTextNode.textContent = assistantMessage;
+    assistantBubble.classList.remove("streaming");
     displayOutput = { ...displayOutput, observer_message: message };
     addFlowForOutput(displayOutput, state.turnIndex, "router");
     if (assistantTurn.agent_output) addAgentFlow(assistantTurn.agent_output, state.turnIndex);
@@ -948,12 +1039,13 @@ async function startRun() {
     state.activeTab = "mechanism";
     renderAll();
     if (displayOutput.status === "failed") {
-      appendBubble("assistant error", "助手", assistantMessage);
-    } else {
-      appendBubble("assistant", "助手", assistantMessage);
+      assistantBubble.classList.add("error");
+      assistantTextNode.textContent = assistantMessage;
     }
   } catch (error) {
-    appendBubble("assistant error", "助手", "请求失败了，请稍后再试。");
+    assistantBubble.classList.remove("streaming");
+    assistantBubble.classList.add("error");
+    assistantTextNode.textContent = "请求失败了，请稍后再试。";
     console.error(error);
     state.run = { status: "failed", summary: error instanceof Error ? error.message : "请求失败" };
   } finally {

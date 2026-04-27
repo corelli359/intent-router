@@ -5,8 +5,9 @@
 边界：
 
 - 助手服务端负责会话入口、页面上下文、主动推送上下文、调用编排和最终用户可见话术。
-- Router 只负责 spec-driven 意图识别、任务派发、追踪和 handover。
-- 执行 Agent 只负责业务补槽、确认、风控、限额、业务 API 和结构化结果。
+- Router 从 `intent.md` 开始执行 Intent ReAct，命中后按 `skill_ref` 进入 Skill ReAct。
+- Skill / tool 负责业务补槽、确认、风控、限额、业务 API 和结构化结果。
+- `/api/assistant/turn/stream` 返回 `text/event-stream`，用于前端打字机式展示助手最终话术。
 
 启动：
 
@@ -14,8 +15,15 @@
 python -m uvicorn app:app --host 127.0.0.1 --port 8040
 ```
 
+流式验证：
+
+```bash
+curl -N -X POST http://127.0.0.1:8040/api/assistant/turn/stream \
+  -H 'content-type: application/json' \
+  -d '{"sessionId":"sess-stream-demo","message":"给张三转200"}'
+```
+
 依赖：
 
 - Router V4: `http://127.0.0.1:8024`
 - Transfer Agent: `http://127.0.0.1:8031`
-

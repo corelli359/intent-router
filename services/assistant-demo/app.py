@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -7,7 +9,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import ORJSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -121,6 +123,56 @@ class AssistantRuntime:
             "output": visible_output,
             "events": events,
         }
+
+    async def stream_turn(self, request: AssistantTurnRequest):
+        started_at = time.time()
+        yield _sse(
+            "assistant.status",
+            {
+                "phase": "received",
+                "message": "助手已收到用户输入",
+                "session_id": request.session_id,
+                "user_message": request.message,
+            },
+        )
+        await asyncio.sleep(0)
+        yield _sse(
+            "assistant.status",
+            {
+                "phase": "router_request",
+                "message": "助手正在调用 Intent ReAct 服务",
+                "router_base_url": request.router_base_url,
+            },
+        )
+        try:
+            result = await self.handle_turn(request)
+        except Exception as exc:
+            yield _sse(
+                "assistant.error",
+                {
+                    "phase": "failed",
+                    "message": "请求失败了，请稍后再试。",
+                    "error": str(exc),
+                },
+            )
+            return
+
+        yield _sse(
+            "assistant.status",
+            {
+                "phase": "router_response",
+                "message": "意图框架已返回结构化状态",
+                "status": result.get("status"),
+                "elapsed_ms": int((time.time() - started_at) * 1000),
+            },
+        )
+        text = str(result.get("assistant_message") or "")
+        yield _sse("assistant.message_start", {"message_length": len(text)})
+        for char in text:
+            yield _sse("assistant.message_delta", {"delta": char})
+            await asyncio.sleep(0.018)
+        yield _sse("assistant.message_end", {"assistant_message": text})
+        yield _sse("assistant.final", result)
 
     def _state(self, session_id: str) -> AssistantSessionState:
         if session_id not in self._sessions:
@@ -354,6 +406,10 @@ def _router_handled_by_skill_runtime(router_output: dict[str, Any]) -> bool:
     )
 
 
+def _sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+
+
 runtime = AssistantRuntime()
 
 app = FastAPI(
@@ -382,3 +438,15 @@ async def health() -> dict[str, str]:
 @app.post("/api/assistant/turn", response_model=None)
 async def post_turn(request: AssistantTurnRequest) -> dict[str, Any]:
     return await runtime.handle_turn(request)
+
+
+@app.post("/api/assistant/turn/stream", response_model=None)
+async def post_turn_stream(request: AssistantTurnRequest) -> StreamingResponse:
+    return StreamingResponse(
+        runtime.stream_turn(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
