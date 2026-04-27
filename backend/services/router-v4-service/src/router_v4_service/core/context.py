@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from router_v4_service.core.recognizer import IntentCandidate
-from router_v4_service.core.models import ContextPolicy, RoutingSessionState, SceneSpec
+from router_v4_service.core.models import ContextPolicy, IntentSpec, RoutingSessionState, SceneSpec
 from router_v4_service.core.stores import TranscriptRecord
 
 
@@ -27,27 +27,24 @@ class ContextBuilder:
         candidates: list[IntentCandidate],
         selected_scene: SceneSpec | None,
         transcripts: list[TranscriptRecord],
-        scene_index_scenes: list[SceneSpec] | None = None,
+        intent_index_intents: list[IntentSpec] | None = None,
     ) -> dict[str, Any]:
         recent_records = transcripts[-self.policy.recent_turn_limit :]
-        references = self._references(candidates=candidates, selected_scene=selected_scene)
-        scene_index = scene_index_scenes or ([selected_scene] if selected_scene is not None else [candidate.scene for candidate in candidates])
+        references = self._references(candidates=candidates)
+        intent_index = intent_index_intents or [candidate.intent for candidate in candidates]
         blocks: list[dict[str, Any]] = []
         self._add_block(blocks, "router_boundary", 240, required=True, priority=0)
         self._add_block(blocks, "routing_state", 180 + len(state.summary), required=True, priority=0)
-        self._add_block(blocks, "scene_markdown_index", 260 + sum(len(self._excerpt(scene.spec_markdown)) for scene in scene_index), required=True, priority=1)
+        self._add_block(blocks, "intent_markdown_index", 260 + sum(len(self._excerpt(intent.spec_markdown)) for intent in intent_index), required=True, priority=1)
         if candidates:
             self._add_block(
                 blocks,
-                "recognized_scenes",
-                120 + sum(len(candidate.scene.description) for candidate in candidates),
+                "recognized_intents",
+                120 + sum(len(candidate.intent.description) for candidate in candidates),
                 priority=2,
             )
         if selected_scene is not None:
-            self._add_block(blocks, "routing_spec", 180 + len(selected_scene.description), priority=2)
-            self._add_block(blocks, "agent_field_policy", 120 + len(selected_scene.skill_fields) * 80, priority=2)
-            if selected_scene.skill:
-                self._add_block(blocks, "skill_card", 160 + len(str(selected_scene.skill)), priority=2)
+            self._add_block(blocks, "scene_contract", 180 + len(selected_scene.description), priority=2)
             self._add_block(blocks, "dispatch_contract", 160, priority=2)
         if recent_records:
             self._add_block(
@@ -76,9 +73,9 @@ class ContextBuilder:
                 included_blocks={block["name"] for block in included},
                 dropped_blocks={block["name"] for block in dropped},
                 references=references,
-                scene_index_scenes=scene_index,
+                intent_index_intents=intent_index,
             ),
-            "recognized_scene_ids": [candidate.scene.scene_id for candidate in candidates],
+            "recognized_intent_ids": [candidate.intent.intent_id for candidate in candidates],
             "selected_scene_id": selected_scene.scene_id if selected_scene else None,
             "active_scene_id": state.active_scene_id,
             "pending_scene_id": state.pending_scene_id,
@@ -94,11 +91,9 @@ class ContextBuilder:
                     for block in (
                         "router_boundary",
                         "routing_state",
-                        "scene_markdown_index",
-                        "recognized_scenes" if candidates else "",
-                        "routing_spec" if selected_scene is not None else "",
-                        "agent_field_policy" if selected_scene is not None else "",
-                        "skill_card" if selected_scene is not None and selected_scene.skill else "",
+                        "intent_markdown_index",
+                        "recognized_intents" if candidates else "",
+                        "scene_contract" if selected_scene is not None else "",
                         "dispatch_contract" if selected_scene is not None else "",
                         "retrieved_references" if references else "",
                     )
@@ -112,14 +107,10 @@ class ContextBuilder:
         self,
         *,
         candidates: list[IntentCandidate],
-        selected_scene: SceneSpec | None,
     ) -> list[str]:
         refs: list[str] = []
-        scenes = [selected_scene] if selected_scene is not None else [candidate.scene for candidate in candidates]
-        for scene in scenes:
-            if scene is None:
-                continue
-            for ref in scene.references:
+        for candidate in candidates:
+            for ref in candidate.intent.references:
                 if ref not in refs:
                     refs.append(ref)
                 if len(refs) >= self.policy.retrieved_reference_limit:
@@ -136,7 +127,7 @@ class ContextBuilder:
         included_blocks: set[str],
         dropped_blocks: set[str],
         references: list[str],
-        scene_index_scenes: list[SceneSpec],
+        intent_index_intents: list[IntentSpec],
     ) -> list[dict[str, Any]]:
         trace: list[dict[str, Any]] = []
         self._trace(
@@ -172,21 +163,19 @@ class ContextBuilder:
         )
         self._trace(
             trace,
-            block="scene_markdown_index",
+            block="intent_markdown_index",
             stage="before_recognition",
-            source_type="scene_markdown_specs",
-            summary="识别前加载场景 markdown spec 摘要给 recognizer；markdown 是场景源。",
-            files=self._scene_files(scene_index_scenes),
+            source_type="intent_markdown_specs",
+            summary="识别前只加载独立 intent markdown spec 摘要给 recognizer；不加载场景、Skill 或业务字段。",
+            files=self._intent_files(intent_index_intents),
             content=[
                 {
-                    "scene_id": scene.scene_id,
-                    "name": scene.name,
-                    "target_agent": scene.target_agent,
-                    "skill_id": scene.skill.get("skill_id"),
-                    "markdown_excerpt": self._excerpt(scene.spec_markdown),
-                    "spec_hash": scene.spec_hash,
+                    "intent_id": intent.intent_id,
+                    "name": intent.name,
+                    "markdown_excerpt": self._excerpt(intent.spec_markdown),
+                    "spec_hash": intent.spec_hash,
                 }
-                for scene in scene_index_scenes
+                for intent in intent_index_intents
             ],
             included_blocks=included_blocks,
             dropped_blocks=dropped_blocks,
@@ -194,13 +183,13 @@ class ContextBuilder:
         if candidates:
             self._trace(
                 trace,
-                block="recognized_scenes",
+                block="recognized_intents",
                 stage="after_recognition",
                 source_type="llm_recognizer_output",
-                summary="recognizer 直接返回本轮选中的意图场景、置信度和理由；业务提槽由执行 Agent/Skill 负责。",
+                summary="recognizer 只返回本轮选中的 intent_id、置信度和理由；不返回场景和业务字段。",
                 content=[
                     {
-                        "scene_id": candidate.scene.scene_id,
+                        "intent_id": candidate.intent.intent_id,
                         "score": candidate.score,
                         "reasons": list(candidate.reasons),
                     }
@@ -212,10 +201,10 @@ class ContextBuilder:
         if selected_scene is not None:
             self._trace(
                 trace,
-                block="routing_spec",
-                stage="after_scene_selected",
-                source_type="scene_markdown_spec",
-                summary=f"选中 {selected_scene.scene_id} 后加载该场景 markdown routing spec。",
+                block="scene_contract",
+                stage="after_intent_mapped",
+                source_type="scene_markdown_contract",
+                summary=f"intent 映射到 {selected_scene.scene_id} 后，Router 只加载场景派发契约。",
                 files=self._scene_files([selected_scene]),
                 content={
                     "scene_id": selected_scene.scene_id,
@@ -230,46 +219,10 @@ class ContextBuilder:
             )
             self._trace(
                 trace,
-                block="agent_field_policy",
-                stage="after_scene_selected",
-                source_type="scene_markdown_frontmatter",
-                summary="从 markdown frontmatter 加载场景字段边界；Router 不提槽、不追问，业务字段由 Agent/Skill 负责。",
-                files=self._scene_files([selected_scene]),
-                spec_path="frontmatter.skill_fields",
-                content=[
-                    {
-                        "name": slot.name,
-                        "source": slot.source,
-                        "handoff": slot.handoff,
-                        "required_for_dispatch": slot.required_for_dispatch,
-                        "extraction": dict(slot.extraction),
-                    }
-                    for slot in selected_scene.skill_fields
-                ],
-                included_blocks=included_blocks,
-                dropped_blocks=dropped_blocks,
-            )
-            skill_doc = self._skill_doc(selected_scene)
-            self._trace(
-                trace,
-                block="skill_card",
-                stage="after_scene_selected",
-                source_type="scene_skill_metadata",
-                summary="加载场景绑定的 Skill 信息。Router 只用于识别和派发上下文，真正执行由 Agent 完成。",
-                files=[skill_doc] if skill_doc else [],
-                content={
-                    "skill": dict(selected_scene.skill),
-                    "markdown_excerpt": skill_doc.get("excerpt") if skill_doc else None,
-                },
-                included_blocks=included_blocks,
-                dropped_blocks=dropped_blocks,
-            )
-            self._trace(
-                trace,
                 block="dispatch_contract",
                 stage="before_dispatch",
                 source_type="scene_markdown_frontmatter",
-                summary="从 markdown frontmatter 加载派发契约，构造 Agent task payload。",
+                summary="从场景 markdown frontmatter 加载派发契约，构造 Agent task payload。",
                 files=self._scene_files([selected_scene]),
                 spec_path="frontmatter.dispatch_contract",
                 content={
@@ -298,14 +251,14 @@ class ContextBuilder:
                 included_blocks=included_blocks,
                 dropped_blocks=dropped_blocks,
             )
-        reference_docs = self._reference_docs(selected_scene=selected_scene, candidates=candidates, references=references)
+        reference_docs = self._reference_docs(candidates=candidates, references=references)
         if reference_docs:
             self._trace(
                 trace,
                 block="retrieved_references",
-                stage="after_scene_selected",
-                source_type="reference_markdown",
-                summary="按场景 references 加载必要 markdown 片段，用于解释 routing spec 和 Skill 触发。",
+                stage="before_recognition",
+                source_type="intent_reference_markdown",
+                summary="按 intent references 加载必要 markdown 片段，用于解释意图边界。",
                 files=reference_docs,
                 content=[
                     {
@@ -357,7 +310,7 @@ class ContextBuilder:
             files.append(
                 {
                     "path": scene.source_path,
-                    "kind": "scene_markdown_spec",
+                    "kind": "scene_markdown_contract",
                     "exists": Path(scene.source_path).exists(),
                     "scene_id": scene.scene_id,
                     "hash": scene.spec_hash,
@@ -365,35 +318,43 @@ class ContextBuilder:
             )
         return files
 
-    def _skill_doc(self, scene: SceneSpec) -> dict[str, Any] | None:
-        raw_path = scene.skill.get("path") if isinstance(scene.skill, dict) else None
-        if not isinstance(raw_path, str) or not raw_path.strip():
-            return None
-        path = self._resolve_related_path(scene=scene, relative_path=raw_path)
-        return self._markdown_file(path=path, kind="skill_markdown", logical_path=raw_path)
+    def _intent_files(self, intents: list[IntentSpec]) -> list[dict[str, Any]]:
+        files: list[dict[str, Any]] = []
+        for intent in intents:
+            if not intent.source_path:
+                continue
+            files.append(
+                {
+                    "path": intent.source_path,
+                    "kind": "intent_markdown_spec",
+                    "exists": Path(intent.source_path).exists(),
+                    "intent_id": intent.intent_id,
+                    "hash": intent.spec_hash,
+                }
+            )
+        return files
 
     def _reference_docs(
         self,
         *,
-        selected_scene: SceneSpec | None,
         candidates: list[IntentCandidate],
         references: list[str],
     ) -> list[dict[str, Any]]:
-        scenes = [selected_scene] if selected_scene is not None else [candidate.scene for candidate in candidates]
+        intents = [candidate.intent for candidate in candidates]
         docs: list[dict[str, Any]] = []
         for ref in references:
-            for scene in scenes:
-                if scene is None:
+            for intent in intents:
+                if intent is None:
                     continue
-                path = self._resolve_related_path(scene=scene, relative_path=ref)
-                docs.append(self._markdown_file(path=path, kind="reference_markdown", logical_path=ref))
+                path = self._resolve_related_path(source_path=intent.source_path, relative_path=ref)
+                docs.append(self._markdown_file(path=path, kind="intent_reference_markdown", logical_path=ref))
                 break
         return docs
 
-    def _resolve_related_path(self, *, scene: SceneSpec, relative_path: str) -> Path:
-        if not scene.source_path:
+    def _resolve_related_path(self, *, source_path: str, relative_path: str) -> Path:
+        if not source_path:
             return Path(relative_path)
-        spec_root = Path(scene.source_path).parent.parent
+        spec_root = Path(source_path).parent.parent
         return (spec_root / relative_path).resolve()
 
     def _markdown_file(self, *, path: Path, kind: str, logical_path: str) -> dict[str, Any]:

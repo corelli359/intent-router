@@ -94,12 +94,12 @@ class RouterV4Runtime:
         if state.agent_task_id and state.target_agent and state.dispatch_status in {"dispatched", "waiting_agent"}:
             return self._forward_to_active_agent(state=state, request=request, turn_id=turn_id)
 
-        push_scene_ids = self._push_scene_ids(request)
-        scenes = self._candidate_scenes(push_scene_ids)
+        push_intent_ids = self._push_intent_ids(request)
+        intents = self._candidate_intents(push_intent_ids)
         try:
-            candidates = self.recognizer.shortlist(
+            candidates = self.recognizer.recognize(
                 request.message,
-                scenes,
+                intents,
                 push_context=dict(request.push_context),
             )
         except IntentRecognizerError as exc:
@@ -107,7 +107,7 @@ class RouterV4Runtime:
                 state=state,
                 candidates=[],
                 selected_scene=None,
-                scene_index_scenes=scenes,
+                intent_index_intents=intents,
             )
             self._append(
                 state,
@@ -130,15 +130,15 @@ class RouterV4Runtime:
                 state=state,
                 candidates=[],
                 selected_scene=None,
-                scene_index_scenes=scenes,
+                intent_index_intents=intents,
             )
-            self._append(state, turn_id, "scene_unrecognized", {"message": request.message})
+            self._append(state, turn_id, "intent_unrecognized", {"message": request.message})
             self.session_store.save(state)
             return RouterV4Output(
                 session_id=request.session_id,
                 status=RouterTurnStatus.CLARIFICATION_REQUIRED,
                 response="我还没有识别出具体业务场景，请换个说法或补充要办理的业务。",
-                events=({"type": "scene_unrecognized"},),
+                events=({"type": "intent_unrecognized"},),
                 prompt_report=prompt_report,
             )
 
@@ -148,15 +148,33 @@ class RouterV4Runtime:
                 request=request,
                 candidates=candidates,
                 turn_id=turn_id,
+                intent_index_intents=intents,
             )
 
         selected = candidates[0]
-        scene = selected.scene
+        try:
+            scene = self.registry.scene_for_intent(selected.intent.intent_id)
+        except SpecRegistryError as exc:
+            prompt_report = self._build_prompt_report(
+                state=state,
+                candidates=candidates,
+                selected_scene=None,
+                intent_index_intents=intents,
+            )
+            self._append(state, turn_id, "intent_route_missing", {"intent_id": selected.intent.intent_id})
+            self.session_store.save(state)
+            return RouterV4Output(
+                session_id=request.session_id,
+                status=RouterTurnStatus.FAILED,
+                response=str(exc),
+                events=({"type": "intent_route_missing", "intent_id": selected.intent.intent_id},),
+                prompt_report=prompt_report,
+            )
         prompt_report = self._build_prompt_report(
             state=state,
             candidates=candidates,
             selected_scene=scene,
-            scene_index_scenes=scenes,
+            intent_index_intents=intents,
         )
         try:
             agent = self.registry.agent(scene.target_agent)
@@ -178,6 +196,7 @@ class RouterV4Runtime:
             request=request,
             state=state,
             scene=scene,
+            intent_id=selected.intent.intent_id,
             routing_hints=routing_hints,
         )
         try:
@@ -199,6 +218,7 @@ class RouterV4Runtime:
         task_id = dispatch.agent_task_id
         task = self._make_task(
             task_id=task_id,
+            intent_id=selected.intent.intent_id,
             scene=scene,
             target_agent=agent.agent_id,
             agent_task_id=dispatch.agent_task_id,
@@ -209,6 +229,7 @@ class RouterV4Runtime:
         state.tasks[task_id] = task
         state.bind_dispatch(
             task_id=task_id,
+            intent_id=selected.intent.intent_id,
             scene_id=scene.scene_id,
             target_agent=agent.agent_id,
             agent_task_id=dispatch.agent_task_id,
@@ -223,11 +244,11 @@ class RouterV4Runtime:
             "agent_dispatched",
             {
                 "scene_id": scene.scene_id,
+                "intent_id": selected.intent.intent_id,
                 "target_agent": agent.agent_id,
                 "agent_task_id": dispatch.agent_task_id,
                 "task_id": task_id,
                 "routing_hints": routing_hints,
-                "skill": dict(scene.skill),
                 "task_payload": self._task_payload_preview(task_payload),
             },
         )
@@ -244,7 +265,8 @@ class RouterV4Runtime:
             assistant_result_status=state.assistant_result_status,
             events=(
                 {
-                    "type": "scene_selected",
+                    "type": "intent_selected",
+                    "intent_id": selected.intent.intent_id,
                     "scene_id": scene.scene_id,
                     "score": selected.score,
                     "reasons": list(selected.reasons),
@@ -255,7 +277,6 @@ class RouterV4Runtime:
                     "agent_task_id": dispatch.agent_task_id,
                     "task_id": task_id,
                     "scene_id": scene.scene_id,
-                    "skill": dict(scene.skill),
                     "task_payload": self._task_payload_preview(task_payload),
                 },
             ),
@@ -316,17 +337,19 @@ class RouterV4Runtime:
         request: RouterV4Input,
         state: RoutingSessionState,
         scene: SceneSpec,
+        intent_id: str,
         routing_hints: dict[str, Any],
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "router_session_id": request.session_id,
+            "intent_id": intent_id,
             "scene_id": scene.scene_id,
             "task_type": scene.dispatch_contract.task_type,
             "raw_message": request.message,
             "source": request.source,
             "push_context": dict(request.push_context),
             "routing_hints": dict(routing_hints),
-            "skill": dict(scene.skill),
+            "skill_ref": dict(scene.skill),
             "context_refs": {
                 "user_profile_present": bool(request.user_profile),
                 "page_context_present": bool(request.page_context),
@@ -347,11 +370,12 @@ class RouterV4Runtime:
     def _task_payload_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "router_session_id": payload.get("router_session_id"),
+            "intent_id": payload.get("intent_id"),
             "scene_id": payload.get("scene_id"),
             "task_type": payload.get("task_type"),
             "raw_message": payload.get("raw_message"),
             "routing_hints": dict(payload.get("routing_hints") or {}),
-            "skill": dict(payload.get("skill") or {}),
+            "skill_ref": dict(payload.get("skill_ref") or {}),
             "context_refs": dict(payload.get("context_refs") or {}),
             "scene_spec_hash": payload.get("scene_spec_hash"),
         }
@@ -375,6 +399,7 @@ class RouterV4Runtime:
                 "source": state.source,
                 "push_context": dict(state.push_context),
                 "raw_messages": list(state.raw_messages),
+                "selected_intent_ids": list(state.selected_intent_ids),
                 "selected_scene_ids": list(state.selected_scene_ids),
                 "target_agents": list(state.target_agents),
                 "agent_task_ids": list(state.agent_task_ids),
@@ -556,6 +581,7 @@ class RouterV4Runtime:
             "handover_reason": dict(agent_payload),
             "routing_hints": dict(task.routing_hints),
             "push_context": dict(task.push_context),
+            "intent_id": "fallback",
             "scene_id": "fallback",
             "task_type": "fallback",
             "scene_spec_hash": task.scene_spec_hash,
@@ -585,6 +611,7 @@ class RouterV4Runtime:
         fallback_task_id = dispatch.agent_task_id
         fallback_task = RouterTaskState(
             task_id=fallback_task_id,
+            intent_id="fallback",
             scene_id="fallback",
             target_agent=fallback_agent.agent_id,
             agent_task_id=dispatch.agent_task_id,
@@ -676,12 +703,17 @@ class RouterV4Runtime:
         request: RouterV4Input,
         candidates: list[IntentCandidate],
         turn_id: str,
+        intent_index_intents: list[Any] | None = None,
     ) -> RouterV4Output:
         graph_id = "graph_" + uuid.uuid4().hex[:12]
         tasks: list[RouterTaskState] = []
         events: list[dict[str, Any]] = [{"type": "plan.created", "graph_id": graph_id}]
         for candidate in candidates:
-            scene = candidate.scene
+            try:
+                scene = self.registry.scene_for_intent(candidate.intent.intent_id)
+            except SpecRegistryError as exc:
+                events.append({"type": "task.plan_failed", "intent_id": candidate.intent.intent_id, "error": str(exc)})
+                continue
             try:
                 agent = self.registry.agent(scene.target_agent)
             except SpecRegistryError as exc:
@@ -692,6 +724,7 @@ class RouterV4Runtime:
                 request=request,
                 state=state,
                 scene=scene,
+                intent_id=candidate.intent.intent_id,
                 routing_hints=routing_hints,
             )
             try:
@@ -701,6 +734,7 @@ class RouterV4Runtime:
                 continue
             task = self._make_task(
                 task_id=dispatch.agent_task_id,
+                intent_id=candidate.intent.intent_id,
                 scene=scene,
                 target_agent=agent.agent_id,
                 agent_task_id=dispatch.agent_task_id,
@@ -710,6 +744,7 @@ class RouterV4Runtime:
             )
             state.tasks[task.task_id] = task
             tasks.append(task)
+            state.selected_intent_ids = self._append_unique(state.selected_intent_ids, candidate.intent.intent_id)
             state.selected_scene_ids = self._append_unique(state.selected_scene_ids, scene.scene_id)
             state.target_agents = self._append_unique(state.target_agents, agent.agent_id)
             state.agent_task_ids = self._append_unique(state.agent_task_ids, dispatch.agent_task_id)
@@ -717,11 +752,11 @@ class RouterV4Runtime:
                 {
                     "type": "task.dispatched",
                     "task_id": task.task_id,
+                    "intent_id": candidate.intent.intent_id,
                     "scene_id": scene.scene_id,
                     "target_agent": agent.agent_id,
                     "score": candidate.score,
                     "reasons": list(candidate.reasons),
-                    "skill": dict(scene.skill),
                     "task_payload": self._task_payload_preview(payload),
                 }
             )
@@ -769,21 +804,26 @@ class RouterV4Runtime:
             tasks=tuple(task.to_dict() for task in tasks),
             assistant_result_status=state.assistant_result_status,
             events=tuple(events),
-            prompt_report=self._build_prompt_report(state=state, candidates=candidates, selected_scene=None),
+            prompt_report=self._build_prompt_report(
+                state=state,
+                candidates=candidates,
+                selected_scene=None,
+                intent_index_intents=intent_index_intents,
+            ),
         )
 
-    def _candidate_scenes(self, push_scene_ids: list[str]) -> list[SceneSpec]:
-        if not push_scene_ids:
-            return self.registry.scene_index()
-        scenes: list[SceneSpec] = []
-        for scene_id in push_scene_ids:
+    def _candidate_intents(self, push_intent_ids: list[str]) -> list[Any]:
+        if not push_intent_ids:
+            return self.registry.intent_index()
+        intents: list[Any] = []
+        for intent_id in push_intent_ids:
             try:
-                scenes.append(self.registry.scene(scene_id))
+                intents.append(self.registry.intent(intent_id))
             except SpecRegistryError:
                 continue
-        return scenes or self.registry.scene_index()
+        return intents or self.registry.intent_index()
 
-    def _push_scene_ids(self, request: RouterV4Input) -> list[str]:
+    def _push_intent_ids(self, request: RouterV4Input) -> list[str]:
         raw_items = request.push_context.get("intents") if isinstance(request.push_context, dict) else None
         if not isinstance(raw_items, list):
             return []
@@ -791,12 +831,12 @@ class RouterV4Runtime:
         for index, item in enumerate(raw_items):
             if not isinstance(item, dict):
                 continue
-            scene_id = item.get("scene_id") or item.get("intent_code")
-            if not isinstance(scene_id, str) or not scene_id.strip():
+            intent_id = item.get("intent_id") or item.get("intent_code") or item.get("scene_id")
+            if not isinstance(intent_id, str) or not intent_id.strip():
                 continue
             rank = item.get("rank")
-            ranked.append((rank if isinstance(rank, int) else index + 1, scene_id.strip()))
-        return [scene_id for _, scene_id in sorted(ranked, key=lambda value: value[0])]
+            ranked.append((rank if isinstance(rank, int) else index + 1, intent_id.strip()))
+        return [intent_id for _, intent_id in sorted(ranked, key=lambda value: value[0])]
 
     def _is_push_request(self, request: RouterV4Input) -> bool:
         return request.source == "assistant_push" or bool(request.push_context)
@@ -805,6 +845,7 @@ class RouterV4Runtime:
         self,
         *,
         task_id: str,
+        intent_id: str,
         scene: SceneSpec,
         target_agent: str,
         agent_task_id: str,
@@ -814,6 +855,7 @@ class RouterV4Runtime:
     ) -> RouterTaskState:
         return RouterTaskState(
             task_id=task_id,
+            intent_id=intent_id,
             scene_id=scene.scene_id,
             target_agent=target_agent,
             agent_task_id=agent_task_id,
@@ -890,14 +932,14 @@ class RouterV4Runtime:
         state: RoutingSessionState,
         candidates: list[IntentCandidate],
         selected_scene: SceneSpec | None,
-        scene_index_scenes: list[SceneSpec] | None = None,
+        intent_index_intents: list[Any] | None = None,
     ) -> dict[str, Any]:
         return self.context_builder.build_report(
             state=state,
             candidates=candidates,
             selected_scene=selected_scene,
             transcripts=self.transcript_store.list_for_session(state.session_id),
-            scene_index_scenes=scene_index_scenes,
+            intent_index_intents=intent_index_intents,
         )
 
     def _append(

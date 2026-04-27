@@ -4,9 +4,9 @@ owner: fund-agent
 scene_id: fund_query
 task_type: fund_query
 
-## Router 使用边界
+## Router 交互边界
 
-Router 只把这张卡片当成场景提供的 Skill 元数据，用于意图识别、上下文构建和任务派发。
+Router 不读取本 Skill 正文做意图识别，也不使用本 Skill 做上下文构建。Router 只在场景契约中传递 `skill_ref`，由 fund-agent 在执行阶段加载本 Skill。
 Router 不做基金推荐、不做购买确认、不做适当性校验，也不调用基金业务 API。
 
 ## 执行 Agent 职责

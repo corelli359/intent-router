@@ -45,24 +45,26 @@ class GraphStatus(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class TriggerSpec:
-    """Scene trigger metadata owned by the scene team."""
+class IntentSpec:
+    """Intent-layer markdown spec used only for recognition."""
 
-    examples: tuple[str, ...] = ()
-    negative_examples: tuple[str, ...] = ()
-    keywords: tuple[str, ...] = ()
-    negative_keywords: tuple[str, ...] = ()
+    intent_id: str
+    name: str
+    version: str
+    description: str
+    references: tuple[str, ...]
+    spec_hash: str
+    spec_markdown: str
+    source_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
-class SkillFieldSpec:
-    """A business field declared by the scene Skill and owned by the execution Agent."""
+class IntentRoute:
+    """Router-owned mapping from a recognized intent to an execution scene."""
 
-    name: str
-    source: str
-    required_for_dispatch: bool = False
-    handoff: bool = True
-    extraction: dict[str, Any] = field(default_factory=dict)
+    intent_id: str
+    scene_id: str
+    description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +77,7 @@ class DispatchContract:
 
 @dataclass(frozen=True, slots=True)
 class SceneSpec:
-    """Router-side view compiled from a markdown scene spec."""
+    """Execution-scene contract used after intent recognition."""
 
     scene_id: str
     name: str
@@ -83,8 +85,6 @@ class SceneSpec:
     description: str
     target_agent: str
     skill: dict[str, Any]
-    triggers: TriggerSpec
-    skill_fields: tuple[SkillFieldSpec, ...]
     dispatch_contract: DispatchContract
     references: tuple[str, ...]
     spec_hash: str
@@ -113,6 +113,7 @@ class RouterTaskState:
     """
 
     task_id: str
+    intent_id: str
     scene_id: str
     target_agent: str
     agent_task_id: str
@@ -133,6 +134,7 @@ class RouterTaskState:
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "intent_id": self.intent_id,
             "scene_id": self.scene_id,
             "target_agent": self.target_agent,
             "agent_task_id": self.agent_task_id,
@@ -194,6 +196,7 @@ class RoutingSessionState:
     source: str = "user"
     push_context: dict[str, Any] = field(default_factory=dict)
     raw_messages: list[str] = field(default_factory=list)
+    selected_intent_ids: list[str] = field(default_factory=list)
     selected_scene_ids: list[str] = field(default_factory=list)
     target_agents: list[str] = field(default_factory=list)
     agent_task_ids: list[str] = field(default_factory=list)
@@ -207,6 +210,7 @@ class RoutingSessionState:
         self,
         *,
         task_id: str,
+        intent_id: str,
         scene_id: str,
         target_agent: str,
         agent_task_id: str,
@@ -221,6 +225,7 @@ class RoutingSessionState:
         self.routing_hints = dict(routing_hints)
         self.summary = summary
         self.active_task_ids = [task_id]
+        self.selected_intent_ids = _append_unique(self.selected_intent_ids, intent_id)
         self.selected_scene_ids = _append_unique(self.selected_scene_ids, scene_id)
         self.target_agents = _append_unique(self.target_agents, target_agent)
         self.agent_task_ids = _append_unique(self.agent_task_ids, agent_task_id)

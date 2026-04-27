@@ -8,9 +8,9 @@ from typing import Any
 from router_v4_service.core.models import (
     AgentDefinition,
     DispatchContract,
+    IntentRoute,
+    IntentSpec,
     SceneSpec,
-    SkillFieldSpec,
-    TriggerSpec,
 )
 
 
@@ -22,12 +22,35 @@ class SpecRegistryError(RuntimeError):
 
 
 class SpecRegistry:
-    """Loads markdown scene specs and execution-agent registry entries."""
+    """Loads independent intent specs, scene contracts and agent registry entries."""
 
     def __init__(self, spec_root: str | Path | None = None) -> None:
         self.spec_root = Path(spec_root).expanduser().resolve() if spec_root else DEFAULT_SPEC_ROOT.resolve()
+        self._intents: dict[str, IntentSpec] | None = None
+        self._routes: dict[str, IntentRoute] | None = None
         self._scenes: dict[str, SceneSpec] | None = None
         self._agents: dict[str, AgentDefinition] | None = None
+
+    def intent_index(self) -> list[IntentSpec]:
+        return sorted(self._load_intents().values(), key=lambda item: item.intent_id)
+
+    def intent(self, intent_id: str) -> IntentSpec:
+        intents = self._load_intents()
+        try:
+            return intents[intent_id]
+        except KeyError as exc:
+            raise SpecRegistryError(f"unknown intent: {intent_id}") from exc
+
+    def route_for_intent(self, intent_id: str) -> IntentRoute:
+        routes = self._load_routes()
+        try:
+            return routes[intent_id]
+        except KeyError as exc:
+            raise SpecRegistryError(f"unknown intent route: {intent_id}") from exc
+
+    def scene_for_intent(self, intent_id: str) -> SceneSpec:
+        route = self.route_for_intent(intent_id)
+        return self.scene(route.scene_id)
 
     def scene_index(self) -> list[SceneSpec]:
         return sorted(self._load_scenes().values(), key=lambda item: item.scene_id)
@@ -49,12 +72,50 @@ class SpecRegistry:
     def agent_index(self) -> list[AgentDefinition]:
         return sorted(self._load_agents().values(), key=lambda item: item.agent_id)
 
+    def _load_intents(self) -> dict[str, IntentSpec]:
+        if self._intents is not None:
+            return self._intents
+        intents_dir = self.spec_root / "intents"
+        intents: dict[str, IntentSpec] = {}
+        for path in sorted(intents_dir.glob("*.intent.md")):
+            raw = path.read_text(encoding="utf-8")
+            frontmatter, markdown = _load_markdown_spec(raw, path)
+            intent = _parse_intent_spec(frontmatter, spec_markdown=markdown, spec_hash=_hash_text(raw), source=path)
+            if intent.intent_id in intents:
+                raise SpecRegistryError(f"duplicate intent_id: {intent.intent_id}")
+            intents[intent.intent_id] = intent
+        self._intents = intents
+        return intents
+
+    def _load_routes(self) -> dict[str, IntentRoute]:
+        if self._routes is not None:
+            return self._routes
+        path = self.spec_root / "routes" / "intent-routes.md"
+        payload, _markdown = _load_markdown_spec(path.read_text(encoding="utf-8"), path)
+        raw_routes = payload.get("routes")
+        if not isinstance(raw_routes, list):
+            raise SpecRegistryError("intent routes markdown frontmatter must contain a routes array")
+        routes: dict[str, IntentRoute] = {}
+        for item in raw_routes:
+            if not isinstance(item, dict):
+                raise SpecRegistryError("intent route entries must be objects")
+            route = IntentRoute(
+                intent_id=_required_str(item, "intent_id"),
+                scene_id=_required_str(item, "scene_id"),
+                description=str(item.get("description") or ""),
+            )
+            if route.intent_id in routes:
+                raise SpecRegistryError(f"duplicate intent route: {route.intent_id}")
+            routes[route.intent_id] = route
+        self._routes = routes
+        return routes
+
     def _load_scenes(self) -> dict[str, SceneSpec]:
         if self._scenes is not None:
             return self._scenes
         scenes_dir = self.spec_root / "scenes"
         scenes: dict[str, SceneSpec] = {}
-        for path in sorted(scenes_dir.glob("*.routing.md")):
+        for path in sorted(scenes_dir.glob("*.scene.md")):
             raw = path.read_text(encoding="utf-8")
             frontmatter, markdown = _load_markdown_spec(raw, path)
             scene = _parse_scene_spec(frontmatter, spec_markdown=markdown, spec_hash=_hash_text(raw), source=path)
@@ -109,16 +170,23 @@ def _load_markdown_spec(raw: str, path: Path) -> tuple[dict[str, Any], str]:
     return payload, text[body_start:].strip()
 
 
+def _parse_intent_spec(payload: dict[str, Any], *, spec_markdown: str, spec_hash: str, source: Path) -> IntentSpec:
+    return IntentSpec(
+        intent_id=_required_str(payload, "intent_id"),
+        name=_required_str(payload, "name"),
+        version=str(payload.get("version") or "0.0.0"),
+        description=str(payload.get("description") or ""),
+        references=tuple(str(value) for value in payload.get("references", [])),
+        spec_hash=spec_hash,
+        spec_markdown=spec_markdown,
+        source_path=str(source),
+    )
+
+
 def _parse_scene_spec(payload: dict[str, Any], *, spec_markdown: str, spec_hash: str, source: Path) -> SceneSpec:
-    triggers = payload.get("triggers")
-    if not isinstance(triggers, dict):
-        raise SpecRegistryError(f"scene triggers must be an object: {source}")
     dispatch = payload.get("dispatch_contract")
     if not isinstance(dispatch, dict):
         raise SpecRegistryError(f"dispatch_contract must be an object: {source}")
-    skill_fields_payload = payload.get("skill_fields", [])
-    if not isinstance(skill_fields_payload, list):
-        raise SpecRegistryError(f"skill_fields must be an array: {source}")
     return SceneSpec(
         scene_id=_required_str(payload, "scene_id"),
         name=_required_str(payload, "name"),
@@ -126,13 +194,6 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_markdown: str, spec_hash:
         description=str(payload.get("description") or ""),
         target_agent=_required_str(payload, "target_agent"),
         skill=dict(payload.get("skill") or {}),
-        triggers=TriggerSpec(
-            examples=tuple(str(value) for value in triggers.get("examples", [])),
-            negative_examples=tuple(str(value) for value in triggers.get("negative_examples", [])),
-            keywords=tuple(str(value) for value in triggers.get("keywords", [])),
-            negative_keywords=tuple(str(value) for value in triggers.get("negative_keywords", [])),
-        ),
-        skill_fields=tuple(_parse_skill_field(value, source) for value in skill_fields_payload),
         dispatch_contract=DispatchContract(
             task_type=_required_str(dispatch, "task_type"),
             handoff_fields=tuple(str(value) for value in dispatch.get("handoff_fields", [])),
@@ -141,18 +202,6 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_markdown: str, spec_hash:
         spec_hash=spec_hash,
         spec_markdown=spec_markdown,
         source_path=str(source),
-    )
-
-
-def _parse_skill_field(payload: object, source: Path) -> SkillFieldSpec:
-    if not isinstance(payload, dict):
-        raise SpecRegistryError(f"skill field must be an object: {source}")
-    return SkillFieldSpec(
-        name=_required_str(payload, "name"),
-        source=str(payload.get("source") or "user_utterance"),
-        required_for_dispatch=bool(payload.get("required_for_dispatch", False)),
-        handoff=bool(payload.get("handoff", True)),
-        extraction=dict(payload.get("extraction") or {}),
     )
 
 

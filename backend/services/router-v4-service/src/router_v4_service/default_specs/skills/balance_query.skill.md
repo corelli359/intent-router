@@ -4,9 +4,9 @@ owner: balance-agent
 scene_id: balance_query
 task_type: balance_query
 
-## Router 使用边界
+## Router 交互边界
 
-Router 只把这张卡片当成场景提供的 Skill 元数据，用于意图识别、上下文构建和任务派发。
+Router 不读取本 Skill 正文做意图识别，也不使用本 Skill 做上下文构建。Router 只在场景契约中传递 `skill_ref`，由 balance-agent 在执行阶段加载本 Skill。
 Router 不直接访问账户系统，也不生成最终的余额展示文案。
 
 ## 执行 Agent 职责

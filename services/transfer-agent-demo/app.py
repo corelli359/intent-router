@@ -123,7 +123,7 @@ class TransferAgentRuntime:
                 "service": "transfer-agent",
                 "phase": "load",
                 "title": "读取 Router 任务快照",
-                "summary": "Agent 通过 HTTP 读取 Router 派发任务、原始表达和 Skill 元数据。",
+                "summary": "Agent 通过 HTTP 读取 Router 派发任务、原始表达和 Skill 引用。",
                 "artifact": {"url": url},
                 "output": payload,
             }
@@ -375,7 +375,7 @@ class TransferAgentRuntime:
                 "id": "agent-load-task",
                 "type": "agent",
                 "title": "Agent 读取 Router 任务",
-                "summary": "转账 Agent 通过 Router task snapshot 获取 scene、Skill 元数据和 task_id。",
+                "summary": "转账 Agent 通过 Router task snapshot 获取 intent、scene、Skill 引用和 task_id。",
                 "status": "已加载",
                 "owner": "transfer-agent",
                 "details": ["这是执行 Agent 自己加载，不是 Router 内部模拟。"],

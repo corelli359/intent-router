@@ -28,39 +28,39 @@ class FakeIntentRecognizer:
     def __init__(self, decisions: dict[str, object] | None = None) -> None:
         self.decisions = decisions or {}
 
-    def shortlist(
+    def recognize(
         self,
         message: str,
-        scenes: list[object],
+        intents: list[object],
         *,
         limit: int = 3,
         push_context: dict[str, object] | None = None,
     ) -> list[IntentCandidate]:
         raw = self.decisions.get(message, self.decisions.get("*", []))
         items = raw if isinstance(raw, list) else [raw]
-        scene_by_id = {getattr(scene, "scene_id"): scene for scene in scenes}
+        intent_by_id = {getattr(intent, "intent_id"): intent for intent in intents}
         candidates: list[IntentCandidate] = []
         for item in items:
             if item in (None, "", []):
                 continue
             if isinstance(item, str):
-                scene_id = item
+                intent_id = item
                 hints: dict[str, object] = {}
                 score = 90
                 reasons = ("fake_llm",)
             elif isinstance(item, dict):
-                scene_id = str(item.get("scene_id") or "")
+                intent_id = str(item.get("intent_id") or item.get("intent_code") or item.get("scene_id") or "")
                 hints = dict(item.get("hints") or {})
                 score = int(item.get("score") or 90)
                 reasons = tuple(str(value) for value in item.get("reasons", ("fake_llm",)))
             else:
                 continue
-            scene = scene_by_id.get(scene_id)
-            if scene is None:
+            intent = intent_by_id.get(intent_id)
+            if intent is None:
                 continue
             candidates.append(
                 IntentCandidate(
-                    scene=scene,
+                    intent=intent,
                     score=score,
                     reasons=reasons,
                     routing_hints=hints,
@@ -73,13 +73,48 @@ def _runtime(decisions: dict[str, object] | None = None, **kwargs: object) -> Ro
     return RouterV4Runtime(recognizer=FakeIntentRecognizer(decisions), **kwargs)
 
 
+def _write_intent_and_route(spec_root: Path, *, intent_id: str = "transfer", scene_id: str = "transfer") -> None:
+    (spec_root / "intents").mkdir(parents=True, exist_ok=True)
+    (spec_root / "routes").mkdir(parents=True, exist_ok=True)
+    (spec_root / "intents" / f"{intent_id}.intent.md").write_text(
+        f"""
++++
+intent_id = "{intent_id}"
+version = "0.1.0"
+name = "{intent_id}"
+description = "{intent_id} intent"
+references = []
++++
+
+# {intent_id} Intent
+
+用户表达办理该业务时命中。
+""",
+        encoding="utf-8",
+    )
+    (spec_root / "routes" / "intent-routes.md").write_text(
+        f"""
++++
+[[routes]]
+intent_id = "{intent_id}"
+scene_id = "{scene_id}"
++++
+
+# Intent Routes
+""",
+        encoding="utf-8",
+    )
+
+
 def test_spec_registry_loads_default_scenes_and_agents() -> None:
     registry = SpecRegistry()
 
+    intents = registry.intent_index()
     scenes = registry.scene_index()
     transfer = registry.scene("transfer")
     agent = registry.agent("transfer-agent")
 
+    assert [intent.intent_id for intent in intents] == ["balance_query", "fund_query", "transfer"]
     assert [scene.scene_id for scene in scenes] == ["balance_query", "fund_query", "transfer"]
     assert [agent.agent_id for agent in registry.agent_index()] == [
         "balance-agent",
@@ -88,7 +123,7 @@ def test_spec_registry_loads_default_scenes_and_agents() -> None:
         "transfer-agent",
     ]
     assert transfer.target_agent == "transfer-agent"
-    assert transfer.skill_fields == ()
+    assert registry.scene_for_intent("transfer").scene_id == "transfer"
     assert transfer.dispatch_contract.handoff_fields == ("raw_message", "user_profile_ref", "page_context_ref")
     assert agent.accepted_scene_ids == ("transfer",)
     assert registry.agent("fallback-agent").accepted_scene_ids == ("fallback",)
@@ -113,22 +148,20 @@ def test_runtime_dispatches_transfer_scene_without_router_business_slots() -> No
     assert output.response == "task_dispatched"
     assert output.routing_hints == {}
     assert any(event["type"] == "agent_dispatched" for event in output.events)
-    assert "routing_spec" in output.prompt_report["included_blocks"]
+    assert "scene_contract" in output.prompt_report["included_blocks"]
     blocks = [item["block"] for item in output.prompt_report["load_trace"]]
-    assert "scene_markdown_index" in blocks
-    assert "recognized_scenes" in blocks
-    assert "routing_spec" in blocks
-    assert "agent_field_policy" in blocks
-    assert "skill_card" in blocks
-    assert "retrieved_references" in blocks
-    skill_trace = next(item for item in output.prompt_report["load_trace"] if item["block"] == "skill_card")
-    assert skill_trace["files"][0]["path"].endswith("transfer.skill.md")
-    assert "transfer-agent 负责业务理解、自由表达提槽" in skill_trace["files"][0]["excerpt"]
-    assert "ishandover" in skill_trace["files"][0]["excerpt"]
+    assert "intent_markdown_index" in blocks
+    assert "recognized_intents" in blocks
+    assert "scene_contract" in blocks
+    assert "dispatch_contract" in blocks
+    assert "skill_card" not in blocks
+    intent_trace = next(item for item in output.prompt_report["load_trace"] if item["block"] == "intent_markdown_index")
+    assert any(file["path"].endswith("transfer.intent.md") for file in intent_trace["files"])
     dispatch_event = next(event for event in output.events if event["type"] == "agent_dispatched")
-    assert dispatch_event["skill"]["skill_id"] == "transfer"
+    assert dispatch_event["task_payload"]["intent_id"] == "transfer"
     assert dispatch_event["task_payload"]["scene_id"] == "transfer"
     assert dispatch_event["task_payload"]["routing_hints"] == {}
+    assert dispatch_event["task_payload"]["skill_ref"]["skill_id"] == "transfer"
     assert "recipient" not in dispatch_event["task_payload"]
     assert "amount" not in dispatch_event["task_payload"]
 
@@ -147,8 +180,8 @@ def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "selected_scene_id": "transfer",
-                                    "selected_scene_ids": [],
+                                    "selected_intent_id": "transfer",
+                                    "selected_intent_ids": [],
                                     "confidence": 0.93,
                                     "reason": "用户明确表达转账",
                                 },
@@ -171,16 +204,17 @@ def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
-    candidates = recognizer.shortlist("我要转账", registry.scene_index())
+    candidates = recognizer.recognize("我要转账", registry.intent_index())
 
-    assert candidates[0].scene.scene_id == "transfer"
+    assert candidates[0].intent.intent_id == "transfer"
     assert candidates[0].score == 93
     assert "llm" in candidates[0].reasons
     assert candidates[0].routing_hints == {}
     assert captured["url"] == "https://llm.example/v1/chat/completions"
     assert captured["payload"]["model"] == "test-model"
-    assert "不要提取业务槽位" in captured["payload"]["messages"][0]["content"]
+    assert "不要选择场景" in captured["payload"]["messages"][0]["content"]
     assert "markdown_spec" in captured["payload"]["messages"][1]["content"]
+    assert "intents" in captured["payload"]["messages"][1]["content"]
     assert "给张三转5000块" in captured["payload"]["messages"][1]["content"]
 
 
@@ -250,7 +284,8 @@ def test_runtime_does_not_dispatch_when_agent_missing(tmp_path: Path) -> None:
     spec_root = tmp_path / "specs"
     (spec_root / "scenes").mkdir(parents=True)
     (spec_root / "agents").mkdir(parents=True)
-    (spec_root / "scenes" / "transfer.routing.md").write_text(
+    _write_intent_and_route(spec_root)
+    (spec_root / "scenes" / "transfer.scene.md").write_text(
         """
 +++
 scene_id = "transfer"
@@ -259,7 +294,6 @@ name = "转账"
 description = "转账场景"
 target_agent = "missing-agent"
 references = []
-skill_fields = []
 
 [skill]
 skill_id = "transfer"
@@ -268,20 +302,14 @@ owner = "missing-agent"
 path = "skills/transfer.skill.md"
 description = "转账 Skill"
 
-[triggers]
-keywords = ["转账"]
-examples = ["我要转账"]
-negative_keywords = []
-negative_examples = []
-
 [dispatch_contract]
 task_type = "transfer"
 handoff_fields = ["raw_message"]
 +++
 
-# 转账路由 Spec
+# 转账执行场景 Contract
 
-用户要转账时命中。
+Router 只用于派发。
 """,
         encoding="utf-8",
     )
@@ -306,11 +334,12 @@ agents = []
     assert "unknown agent" in output.response
 
 
-def test_runtime_dispatches_even_when_scene_declares_required_business_slots(tmp_path: Path) -> None:
+def test_runtime_dispatches_without_router_business_fields_even_if_contract_names_them(tmp_path: Path) -> None:
     spec_root = tmp_path / "specs"
     (spec_root / "scenes").mkdir(parents=True)
     (spec_root / "agents").mkdir(parents=True)
-    (spec_root / "scenes" / "transfer.routing.md").write_text(
+    _write_intent_and_route(spec_root)
+    (spec_root / "scenes" / "transfer.scene.md").write_text(
         """
 +++
 scene_id = "transfer"
@@ -327,34 +356,14 @@ owner = "transfer-agent"
 path = "skills/transfer.skill.md"
 description = "转账 Skill"
 
-[triggers]
-keywords = ["转账"]
-examples = []
-negative_keywords = []
-negative_examples = []
-
-[[skill_fields]]
-name = "recipient"
-source = "user_utterance"
-required_for_dispatch = true
-handoff = true
-extraction = {type = "llm", instruction = "提取收款人"}
-
-[[skill_fields]]
-name = "amount"
-source = "user_utterance"
-required_for_dispatch = true
-handoff = true
-extraction = {type = "llm", instruction = "提取金额"}
-
 [dispatch_contract]
 task_type = "transfer"
 handoff_fields = ["raw_message", "recipient", "amount"]
 +++
 
-# 转账路由 Spec
+# 转账执行场景 Contract
 
-用户要转账时命中，业务字段由 Agent 处理。
+即使派发契约误写了业务字段，Router runtime 也不会从用户表达里提取或补入。
 """,
         encoding="utf-8",
     )
@@ -433,7 +442,7 @@ def test_context_report_applies_budget_and_keeps_core_blocks() -> None:
     assert output.status == RouterTurnStatus.DISPATCHED
     assert output.prompt_report["max_chars"] == 700
     assert output.prompt_report["dropped_blocks"]
-    assert output.prompt_report["included_blocks"][:3] == ["router_boundary", "routing_state", "scene_markdown_index"]
+    assert output.prompt_report["included_blocks"][:3] == ["router_boundary", "routing_state", "intent_markdown_index"]
 
 
 def test_push_context_generic_acceptance_dispatches_first_recommended_scene() -> None:

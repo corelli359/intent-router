@@ -4,9 +4,9 @@ owner: transfer-agent
 scene_id: transfer
 task_type: transfer
 
-## Router 使用边界
+## Router 交互边界
 
-Router 只把这张卡片当成场景提供的 Skill 元数据，用于意图识别、上下文构建和任务派发。
+Router 不读取本 Skill 正文做意图识别，也不使用本 Skill 做上下文构建。Router 只在场景契约中传递 `skill_ref`，由 transfer-agent 在执行阶段加载本 Skill。
 Router 不执行转账流程，不调用风控、限额或转账 API，也不生成面向用户的最终办理结果。
 
 ## 执行 Agent 职责

@@ -154,6 +154,7 @@ def _state_to_dict(state: RoutingSessionState) -> dict[str, Any]:
         "source": state.source,
         "push_context": dict(state.push_context),
         "raw_messages": list(state.raw_messages),
+        "selected_intent_ids": list(state.selected_intent_ids),
         "selected_scene_ids": list(state.selected_scene_ids),
         "target_agents": list(state.target_agents),
         "agent_task_ids": list(state.agent_task_ids),
@@ -181,6 +182,7 @@ def _state_from_dict(payload: dict[str, Any]) -> RoutingSessionState:
         source=str(payload.get("source") or "user"),
         push_context=dict(payload.get("push_context") or {}),
         raw_messages=[str(value) for value in payload.get("raw_messages", [])],
+        selected_intent_ids=[str(value) for value in payload.get("selected_intent_ids", [])],
         selected_scene_ids=[str(value) for value in payload.get("selected_scene_ids", [])],
         target_agents=[str(value) for value in payload.get("target_agents", [])],
         agent_task_ids=[str(value) for value in payload.get("agent_task_ids", [])],
@@ -201,6 +203,7 @@ def _state_from_dict(payload: dict[str, Any]) -> RoutingSessionState:
 def _task_from_dict(payload: dict[str, Any]) -> RouterTaskState:
     return RouterTaskState(
         task_id=str(payload.get("task_id") or ""),
+        intent_id=str(payload.get("intent_id") or ""),
         scene_id=str(payload.get("scene_id") or ""),
         target_agent=str(payload.get("target_agent") or ""),
         agent_task_id=str(payload.get("agent_task_id") or ""),

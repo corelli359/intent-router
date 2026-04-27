@@ -27,6 +27,7 @@ const stageLabels = {
   turn_start: "本轮开始",
   before_recognition: "识别前",
   after_recognition: "识别后",
+  after_intent_mapped: "意图映射后",
   after_scene_selected: "场景选定后",
   before_dispatch: "派发前",
   after_state: "状态读取后"
@@ -42,7 +43,7 @@ const eventLabels = {
   assistant_request: "助手请求进入意图服务",
   context_progressive_built: "构建渐进式上下文",
   context_block_loaded: "加载上下文块",
-  scene_selected: "LLM 意图识别完成",
+  intent_selected: "LLM 意图识别完成",
   agent_dispatched: "派发执行任务",
   scene_unrecognized: "未识别到场景",
   llm_recognition_failed: "LLM 意图识别失败",
@@ -273,8 +274,8 @@ function traceSnippet(trace, limit = 420) {
   return raw.length > limit ? `${raw.slice(0, limit).trimEnd()}\n...` : raw;
 }
 
-function selectedSceneEvent(output) {
-  return (output?.events || []).find((event) => event.type === "scene_selected") || null;
+function selectedIntentEvent(output) {
+  return (output?.events || []).find((event) => event.type === "intent_selected" || event.type === "scene_selected") || null;
 }
 
 function dispatchEvent(output) {
@@ -282,12 +283,14 @@ function dispatchEvent(output) {
 }
 
 function sceneSummary(output) {
-  const recognizedTrace = findTrace("recognized_scenes", output);
+  const recognizedTrace = findTrace("recognized_intents", output);
   const recognized = Array.isArray(recognizedTrace?.content) ? recognizedTrace.content[0] : null;
+  const selected = selectedIntentEvent(output);
   return {
+    intentId: selected?.intent_id || recognized?.intent_id || "未命中",
     sceneId: output?.scene_id || recognized?.scene_id || "未命中",
-    score: selectedSceneEvent(output)?.score || recognized?.score || null,
-    reasons: selectedSceneEvent(output)?.reasons || recognized?.reasons || [],
+    score: selected?.score || recognized?.score || null,
+    reasons: selected?.reasons || recognized?.reasons || [],
     hints: output?.routing_hints || recognized?.routing_hints || {}
   };
 }
@@ -380,20 +383,19 @@ function buildDerivedFlow(output) {
   if (!output) return [];
   const scene = sceneSummary(output);
   const dispatch = dispatchEvent(output);
-  const skillTrace = findTrace("skill_card", output);
-  const specTrace = findTrace("routing_spec", output);
-  const fieldTrace = findTrace("agent_field_policy", output);
+  const intentTrace = findTrace("intent_markdown_index", output);
+  const sceneContractTrace = findTrace("scene_contract", output);
   const referenceTrace = findTrace("retrieved_references", output);
-  const sceneTrace = findTrace("recognized_scenes", output);
+  const recognizedTrace = findTrace("recognized_intents", output);
   const stateTrace = findTrace("routing_state", output);
-  const skill = dispatch?.skill || skillTrace?.content?.skill || {};
+  const skillRef = dispatch?.task_payload?.skill_ref || {};
   const tasks = asArray(output.tasks);
   const routerEvents = asArray(output.events);
   const agentCallbacks = routerEvents.filter((event) => {
     const type = String(event.type || event.event || "").toLowerCase();
     return type.includes("agent") || type.includes("task_updated") || type.includes("result");
   });
-  const sceneEvent = selectedSceneEvent(output);
+  const intentEvent = selectedIntentEvent(output);
   const agentOutput = output.agent_output;
   const hints = output.routing_hints || scene.hints || {};
   const reasonText = asArray(scene.reasons).length ? scene.reasons.join("；") : "未返回可读识别理由";
@@ -433,42 +435,44 @@ function buildDerivedFlow(output) {
     {
       id: "router-spec",
       type: "router/spec",
-      title: "Spec 驱动场景识别",
-      summary: `命中 ${scene.sceneId}。Router 先加载场景 markdown 摘要交给 LLM 直接识别，再按需读取选中场景的 markdown spec。`,
+      title: "独立 Intent Spec 识别",
+      summary: `命中意图 ${scene.intentId}。Router 识别阶段只加载 intent markdown，不加载场景执行 Skill。`,
       status: output.status === "failed" ? "异常" : "已识别",
       owner: "意图识别服务",
       details: [
         `识别理由：${reasonText}`,
         `置信分：${scene.score ?? "未返回"}`,
+        `映射场景：${scene.sceneId}`,
         `业务提槽：由执行 Agent 按 Skill 处理${Object.keys(hints).length ? `；兼容 hints=${Object.keys(hints).join("、")}` : ""}`
       ],
-      evidence: [stateTrace, sceneTrace, specTrace, fieldTrace].filter(Boolean),
+      evidence: [stateTrace, intentTrace, recognizedTrace, sceneContractTrace].filter(Boolean),
       payload: {
+        intent_id: scene.intentId,
         scene_id: scene.sceneId,
         score: scene.score,
         reasons: scene.reasons,
         field_owner: "execution-agent/skill",
         routing_hints: hints,
-        scene_event: sceneEvent
+        intent_event: intentEvent
       }
     }
   ];
 
-  if (skill.skill_id || skillTrace || dispatch?.skill) {
+  if (skillRef.skill_id) {
     nodes.push({
-      id: "skill-contract",
+      id: "skill-ref",
       type: "skill",
-      title: "Skill 定义执行边界",
-      summary: `${skill.skill_id || "场景 Skill"} 约束 Agent 负责补槽、校验、确认和业务 API，Router 不接管业务流程。`,
-      status: "已绑定",
-      owner: skill.owner || output.target_agent || "执行 Agent",
+      title: "Skill 引用交给 Agent",
+      summary: `${skillRef.skill_id} 是派发引用；Skill md 的实际加载发生在执行 Agent 内。`,
+      status: "已引用",
+      owner: skillRef.owner || output.target_agent || "执行 Agent",
       details: [
-        `Skill：${skill.skill_id || "未返回"}`,
-        `职责说明：${skill.description || "按场景 Skill 完成业务动作"}`,
-        "Router 只传递原始表达、上下文引用和 Skill 元数据；业务字段由 Agent/Skill 提取。"
+        `Skill：${skillRef.skill_id}`,
+        `职责说明：${skillRef.description || "按场景 Skill 完成业务动作"}`,
+        "Router 不读取 skill md；Agent 会在自己的生命周期中加载 skill md。"
       ],
-      evidence: [skillTrace, referenceTrace].filter(Boolean),
-      payload: skill
+      evidence: [dispatch, referenceTrace].filter(Boolean),
+      payload: skillRef
     });
   }
 
@@ -633,25 +637,25 @@ function renderMechanism() {
     state.selectedFlowId = nodes.find((node) => flowTypeClass(node.type) === "router-spec")?.id || nodes[0]?.id || null;
   }
   const selected = selectedFlowNode(nodes);
-  const skill = dispatchEvent(output)?.skill || findTrace("skill_card", output)?.content?.skill || {};
+  const skillRef = dispatchEvent(output)?.task_payload?.skill_ref || {};
   const hintNames = Object.keys(scene.hints || {});
 
   elements.mechanismView.innerHTML = `
     <section class="drive-summary">
       <div>
-        <span>命中业务场景</span>
-        <strong>${escapeHtml(scene.sceneId)}</strong>
+        <span>命中意图</span>
+        <strong>${escapeHtml(scene.intentId)}</strong>
         <small>${scene.score ? `置信分：${escapeHtml(scene.score)}` : "由 spec/LLM 识别结果决定"}</small>
       </div>
       <div>
-        <span>绑定 Skill</span>
-        <strong>${escapeHtml(skill.skill_id || "未绑定")}</strong>
-        <small>${escapeHtml(skill.owner || output.target_agent || "等待目标 Agent")}</small>
+        <span>映射场景</span>
+        <strong>${escapeHtml(scene.sceneId)}</strong>
+        <small>${escapeHtml(output.target_agent || "等待目标 Agent")}</small>
       </div>
       <div>
-        <span>提槽归属</span>
-        <strong>Agent / Skill</strong>
-        <small>${hintNames.length ? `兼容 hints：${escapeHtml(hintNames.join("、"))}` : "Router 不提业务字段"}</small>
+        <span>Skill 归属</span>
+        <strong>${escapeHtml(skillRef.skill_id || "Agent 内加载")}</strong>
+        <small>${hintNames.length ? `兼容 hints：${escapeHtml(hintNames.join("、"))}` : "Router 不读取 Skill md"}</small>
       </div>
       <div>
         <span>当前结果</span>
@@ -664,7 +668,7 @@ function renderMechanism() {
       <div class="flow-title">
         <div>
           <h2>本轮业务链路 Flow</h2>
-          <p>默认展示 spec + skill 驱动主线。底层报文不铺满页面，点击节点后在右侧查看依据和结构化数据。</p>
+          <p>默认展示 intent spec、场景契约、Agent Skill 加载和业务结果。底层报文不铺满页面，点击节点查看依据。</p>
         </div>
         <span>${escapeHtml(nodes.length)} 个节点</span>
       </div>
@@ -685,7 +689,7 @@ function renderMechanism() {
         </article>
         <article>
           <strong>渐进加载</strong>
-          <p>先 <code>scene_markdown_index</code>，命中后再 <code>routing_spec</code>、<code>skill_card</code>、<code>retrieved_references</code>，源头是 markdown spec。</p>
+          <p>识别前只读 <code>intent_markdown_index</code>，命中后再读 <code>scene_contract</code> 和 <code>dispatch_contract</code>；Skill md 由 Agent 加载。</p>
         </article>
         <article>
           <strong>压缩 / 裁剪</strong>
@@ -693,7 +697,7 @@ function renderMechanism() {
         </article>
         <article>
           <strong>按需检索</strong>
-          <p>对应 <code>retrieved_references</code>。命中 <code>transfer</code> 才读 <code>transfer-routing.md</code>，后续可替换成真实检索服务。</p>
+          <p>对应 <code>retrieved_references</code>。目前只用于 intent 参考材料，后续可替换成真实检索服务。</p>
         </article>
       </div>
     </section>
@@ -757,7 +761,7 @@ function selectedEvent() {
 function resultConclusion(output) {
   if (!output) return "";
   if (output.status === "dispatched") {
-    return `已经完成 Router 层闭环：命中 ${output.scene_id || "目标"} 场景，绑定 Skill，创建任务并交给 ${output.target_agent || "执行 Agent"}。业务补槽、确认、风控和 API 调用由执行 Agent 继续完成。`;
+    return `已经完成 Router 层闭环：命中意图并映射到 ${output.scene_id || "目标"} 场景，创建任务并交给 ${output.target_agent || "执行 Agent"}。业务补槽、确认、风控和 API 调用由执行 Agent 继续完成。`;
   }
   if (output.status === "planned") {
     return "已经完成多意图拆流：Router 创建任务图并按任务拆分 SSE/执行流，助手侧可以分流消费进度。";
@@ -804,7 +808,7 @@ function renderResult() {
 
   const scene = sceneSummary(output);
   const dispatch = dispatchEvent(output);
-  const skill = dispatch?.skill || findTrace("skill_card", output)?.content?.skill || {};
+  const skillRef = dispatch?.task_payload?.skill_ref || {};
   const agentOutput = output.agent_output;
   elements.resultView.innerHTML = `
     <section class="result-hero">
@@ -821,13 +825,13 @@ function renderResult() {
       </article>
       <article>
         <span>Router 完成</span>
-        <strong>${escapeHtml(scene.sceneId)}</strong>
-        <p>spec 识别、Skill 绑定、Agent 派发和任务追踪；业务提槽在 Agent/Skill 内完成。</p>
+        <strong>${escapeHtml(scene.intentId)} -> ${escapeHtml(scene.sceneId)}</strong>
+        <p>Intent 识别、场景映射、Agent 派发和任务追踪；业务提槽在 Agent/Skill 内完成。</p>
       </article>
       <article>
         <span>执行 Agent 接管</span>
         <strong>${escapeHtml(output.target_agent || "等待派发")}</strong>
-        <p>${escapeHtml(skill.description || "按场景 Skill 完成业务补槽、校验、确认和 API 调用。")}</p>
+        <p>${escapeHtml(skillRef.description || "按场景 Skill 完成业务补槽、校验、确认和 API 调用。")}</p>
       </article>
       <article>
         <span>业务结果</span>
@@ -1030,11 +1034,11 @@ function buildEventsFromRouterOutput({ sessionId, message, output }) {
       phase: "load",
       event: "context_progressive_built",
       title: "构建渐进式上下文",
-      summary: "意图识别服务按预算加载场景索引、识别结果、路由规格、近期对话和检索引用。",
+      summary: "意图识别服务按预算加载独立 intent spec、识别结果、场景契约、近期对话和检索引用。",
       artifact: {
         included_blocks: output.prompt_report.included_blocks,
         dropped_blocks: output.prompt_report.dropped_blocks,
-        recognized_scene_ids: output.prompt_report.recognized_scene_ids,
+        recognized_intent_ids: output.prompt_report.recognized_intent_ids,
         selected_scene_id: output.prompt_report.selected_scene_id,
         retrieved_references: output.prompt_report.retrieved_references,
         lifecycle: output.prompt_report.lifecycle
@@ -1105,10 +1109,10 @@ function routerEventToObservedEvent(routerEvent, output, seq, timestamp) {
     title,
     summary: summarizeRouterEvent(routerEvent, output),
     artifact: {
+      intent_id: routerEvent.intent_id,
       scene_id: routerEvent.scene_id || output.scene_id,
       target_agent: routerEvent.target_agent || output.target_agent,
       task_id: routerEvent.task_id || output.task_id,
-      skill: routerEvent.skill,
       task_payload: routerEvent.task_payload,
       reasons: routerEvent.reasons,
       score: routerEvent.score
@@ -1127,12 +1131,12 @@ function routerEventToObservedEvent(routerEvent, output, seq, timestamp) {
 
 function summarizeRouterEvent(routerEvent, output) {
   const type = routerEvent.type || "";
-  if (type === "scene_selected") {
+  if (type === "intent_selected" || type === "scene_selected") {
     const via = Array.isArray(routerEvent.reasons) && routerEvent.reasons.includes("llm") ? "由 LLM" : "由意图识别服务";
-    return `${via}选中 ${routerEvent.scene_id || output.scene_id}，置信分 ${routerEvent.score ?? "未知"}。`;
+    return `${via}选中意图 ${routerEvent.intent_id || "未知"}，映射场景 ${routerEvent.scene_id || output.scene_id}，置信分 ${routerEvent.score ?? "未知"}。`;
   }
   if (type === "agent_dispatched") {
-    const skill = routerEvent.skill?.skill_id ? `，绑定 Skill：${routerEvent.skill.skill_id}` : "";
+    const skill = routerEvent.task_payload?.skill_ref?.skill_id ? `，Skill 引用：${routerEvent.task_payload.skill_ref.skill_id}` : "";
     return `Router 已创建 Agent task 并派发给 ${routerEvent.target_agent || output.target_agent}${skill}。`;
   }
   if (type === "llm_recognition_failed") {
