@@ -1,4 +1,5 @@
-const API_BASE = "http://127.0.0.1:8024";
+const ASSISTANT_API_BASE = "http://127.0.0.1:8040";
+const ROUTER_API_BASE = "http://127.0.0.1:8024";
 const AGENT_API_BASE = "http://127.0.0.1:8031";
 
 const scenarioDefaults = {
@@ -32,6 +33,12 @@ const stageLabels = {
 };
 
 const eventLabels = {
+  "assistant.turn_received": "助手服务端接收消息",
+  "assistant.router_request": "助手调用意图识别服务",
+  "assistant.router_response": "助手收到 Router 返回",
+  "assistant.agent_request": "助手调用执行 Agent",
+  "assistant.agent_response": "助手收到 Agent 返回",
+  "assistant.visible_result_generated": "助手生成用户可见结果",
   assistant_request: "助手请求进入意图服务",
   context_progressive_built: "构建渐进式上下文",
   context_block_loaded: "加载上下文块",
@@ -76,7 +83,7 @@ const elements = {
   resultView: document.querySelector("#resultView")
 };
 
-elements.apiBase.textContent = `${API_BASE} / ${AGENT_API_BASE}`;
+elements.apiBase.textContent = `${ASSISTANT_API_BASE} -> ${ROUTER_API_BASE} -> ${AGENT_API_BASE}`;
 
 function serviceName(event) {
   return serviceLabels[event.service] || event.service || "服务";
@@ -190,7 +197,7 @@ function syncActiveTab() {
   });
 }
 
-function requestJson(path, options, baseUrl = API_BASE) {
+function requestJson(path, options, baseUrl = ASSISTANT_API_BASE) {
   return fetch(`${baseUrl}${path}`, {
     ...options,
     headers: {
@@ -422,7 +429,7 @@ function buildDerivedFlow(output) {
         `来源：${state.scenario === "normal" ? "用户主动输入" : "助手主动推送承接"}`
       ],
       evidence: [],
-      payload: buildRouterRequest({
+      payload: buildAssistantRequest({
         sessionId: state.run?.session_id || "observer-session",
         message: output.observer_message || getInputMessage(state.events[0] || {}) || elements.messageInput.value
       })
@@ -906,14 +913,6 @@ function addAgentFlow(agentOutput, turnIndex) {
   state.flowHistory = [...state.flowHistory, ...nodes];
 }
 
-async function runTransferAgentTurn({ sessionId, taskId, message }) {
-  if (!taskId) return null;
-  return requestJson("/api/transfer-agent/turn", {
-    method: "POST",
-    body: JSON.stringify({ session_id: sessionId, task_id: taskId, message })
-  }, AGENT_API_BASE);
-}
-
 async function startRun() {
   const message = elements.messageInput.value.trim() || scenarioDefaults[state.scenario];
   const sessionId = ensureSession();
@@ -923,44 +922,16 @@ async function startRun() {
   elements.messageInput.value = "";
 
   try {
-    const output = await requestJson("/api/router/v4/message", {
+    const assistantTurn = await requestJson("/api/assistant/turn", {
       method: "POST",
-      body: JSON.stringify(buildRouterRequest({ sessionId, message }))
+      body: JSON.stringify(buildAssistantRequest({ sessionId, message }))
     });
-    rememberTask(output);
-    let displayOutput = output;
-    let assistantMessage = assistantText(output);
-    let agentTurnOutput = null;
-    const shouldRunTransferAgent = state.activeTaskId && (output.target_agent === "transfer-agent" || output.scene_id === "transfer");
-    if (shouldRunTransferAgent) {
-      agentTurnOutput = await runTransferAgentTurn({ sessionId, taskId: state.activeTaskId, message });
-      if (agentTurnOutput) {
-        if (agentTurnOutput.router_update) {
-          displayOutput = {
-            ...agentTurnOutput.router_update,
-            prompt_report: agentTurnOutput.router_update.prompt_report || output.prompt_report,
-            events: [
-              ...asArray(output.events),
-              ...asArray(agentTurnOutput.events),
-              ...asArray(agentTurnOutput.router_update.events)
-            ],
-            tasks: agentTurnOutput.router_update.tasks?.length ? agentTurnOutput.router_update.tasks : output.tasks
-          };
-        }
-        displayOutput = {
-          ...displayOutput,
-          events: [
-            ...asArray(output.events),
-            ...asArray(agentTurnOutput.events),
-            ...asArray(agentTurnOutput.router_update?.events)
-          ]
-        };
-        assistantMessage = agentTurnOutput.assistant_message || assistantMessage;
-      }
-    }
+    let displayOutput = assistantTurn.output || assistantTurn.router_output || {};
+    rememberTask(displayOutput);
+    let assistantMessage = assistantTurn.assistant_message || assistantText(displayOutput);
     displayOutput = { ...displayOutput, observer_message: message };
     addFlowForOutput(displayOutput, state.turnIndex, "router");
-    if (agentTurnOutput) addAgentFlow(agentTurnOutput, state.turnIndex);
+    if (assistantTurn.agent_output) addAgentFlow(assistantTurn.agent_output, state.turnIndex);
     displayOutput = { ...displayOutput, agent_flow: state.flowHistory };
     state.run = {
       run_id: `real_${Date.now().toString(36)}`,
@@ -989,10 +960,11 @@ async function startRun() {
   }
 }
 
-function buildRouterRequest({ sessionId, message }) {
+function buildAssistantRequest({ sessionId, message }) {
   const request = {
     session_id: sessionId,
     message,
+    scenario: state.scenario,
     source: "user",
     user_profile: { user_id: "observer-user" },
     page_context: { current_page: "observer-ui" }
@@ -1025,9 +997,9 @@ function buildEventsFromRouterOutput({ sessionId, message, output }) {
       service: "assistant-service",
       layer: "assistant",
       phase: "request",
-      event: "assistant_request",
-      title: "助手请求进入意图服务",
-      summary: "助手把用户表达和页面上下文传给意图识别服务。",
+      event: "assistant_frontend_request",
+      title: "前端请求助手服务端",
+      summary: "对话窗口只和助手服务端通信，Router 和 Agent 都在服务端后置调用。",
       input: { message, scenario: state.scenario },
       output: null,
       timestamp: now
@@ -1093,6 +1065,21 @@ function buildEventsFromRouterOutput({ sessionId, message, output }) {
 }
 
 function routerEventToObservedEvent(routerEvent, output, seq, timestamp) {
+  if (routerEvent.service === "assistant-service") {
+    return {
+      seq,
+      service: "assistant-service",
+      layer: "assistant",
+      phase: routerEvent.phase || "request",
+      event: routerEvent.type || "assistant_event",
+      title: routerEvent.title || eventLabels[routerEvent.type] || "助手服务端事件",
+      summary: routerEvent.summary || "助手服务端编排事件。",
+      artifact: routerEvent.artifact || null,
+      input: routerEvent.input || null,
+      output: routerEvent.output || routerEvent,
+      timestamp
+    };
+  }
   if (routerEvent.service === "transfer-agent") {
     return {
       seq,

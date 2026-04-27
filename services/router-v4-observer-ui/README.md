@@ -27,6 +27,13 @@ ROUTER_V4_ENV_FILE=.env.local PYTHONPATH=backend/services/router-v4-service/src 
   python -m uvicorn router_v4_service.api.app:app --host 127.0.0.1 --port 8024
 ```
 
+助手服务端是独立服务，前端只调用它：
+
+```bash
+cd services/assistant-demo
+python -m uvicorn app:app --host 127.0.0.1 --port 8040
+```
+
 转账执行 Agent 是独立服务：
 
 ```bash
@@ -34,5 +41,5 @@ cd services/transfer-agent-demo
 python -m uvicorn app:app --host 127.0.0.1 --port 8031
 ```
 
-当前前端调用真实 `/api/router/v4/message` 和独立 `/api/transfer-agent/turn`，不会调用 Router 内置模拟接口。
+当前前端只调用真实 `/api/assistant/turn`。助手服务端再调用 Router `/api/router/v4/message` 和独立转账 Agent `/api/transfer-agent/turn`，不会调用 Router 内置模拟接口。
 Router V4 默认走 LLM 识别；`.env.local` 需要提供 OpenAI-compatible LLM 配置。
