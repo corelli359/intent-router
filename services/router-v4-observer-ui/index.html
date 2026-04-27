@@ -37,7 +37,7 @@
         </div>
 
         <footer class="composer">
-          <textarea id="messageInput" rows="4" aria-label="用户输入">我要转账</textarea>
+          <textarea id="messageInput" rows="4" aria-label="用户输入"></textarea>
           <button id="sendButton" type="button">发送</button>
         </footer>
       </section>
@@ -67,35 +67,12 @@
             <span>事件数量</span>
             <strong id="eventCount">0</strong>
           </div>
-          <div>
-            <span>后端接口</span>
-            <strong id="apiBase">http://127.0.0.1:8024</strong>
-          </div>
         </div>
 
         <div class="service-line" aria-label="服务层级">
           <span id="assistantLane">掌银助手</span>
           <span id="routerLane">意图识别服务</span>
           <span id="agentLane">执行智能体</span>
-        </div>
-
-        <div class="scenario-tabs" aria-label="调试场景">
-          <button class="scenario active" data-scenario="normal">
-            <strong>普通用户输入</strong>
-            <span>助手把用户表达交给意图服务识别</span>
-          </button>
-          <button class="scenario" data-scenario="assistant_push">
-            <strong>主动推送卡片</strong>
-            <span>助手推送后不再二次确认，直接进入路由</span>
-          </button>
-          <button class="scenario" data-scenario="multi_intent">
-            <strong>多意图拆流</strong>
-            <span>一次表达拆成多个任务流返回给助手</span>
-          </button>
-          <button class="scenario" data-scenario="fund_query">
-            <strong>基金查询</strong>
-            <span>普通用户表达识别到基金场景</span>
-          </button>
         </div>
 
         <div class="tabs" role="tablist" aria-label="观察内容">

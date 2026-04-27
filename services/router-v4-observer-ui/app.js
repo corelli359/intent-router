@@ -1,7 +1,5 @@
 const CLUSTER_DEMO_PREFIX = "/v4-demo";
 const LOCAL_ASSISTANT_API_BASE = "http://127.0.0.1:8040/api/assistant";
-const LOCAL_ROUTER_API_BASE = "http://127.0.0.1:8024/api/router";
-const LOCAL_AGENT_API_BASE = "http://127.0.0.1:8031/api/transfer-agent";
 
 function observerPrefix() {
   const { pathname } = window.location;
@@ -24,15 +22,6 @@ function resolveApiBase(localBase, clusterSuffix) {
 
 const OBSERVER_PREFIX = observerPrefix();
 const ASSISTANT_API_BASE = resolveApiBase(LOCAL_ASSISTANT_API_BASE, "/api/assistant");
-const ROUTER_API_BASE = resolveApiBase(LOCAL_ROUTER_API_BASE, "/api/router");
-const AGENT_API_BASE = resolveApiBase(LOCAL_AGENT_API_BASE, "/api/transfer-agent");
-
-const scenarioDefaults = {
-  normal: "帮我给张三转账",
-  assistant_push: "就按这个办",
-  multi_intent: "都看一下",
-  fund_query: "查一下基金"
-};
 
 const serviceLabels = {
   "assistant-service": "掌银助手",
@@ -80,7 +69,6 @@ const eventLabels = {
 };
 
 const state = {
-  scenario: "normal",
   sessionId: null,
   turnIndex: 0,
   activeTaskId: null,
@@ -101,7 +89,6 @@ const elements = {
   runId: document.querySelector("#runId"),
   sessionId: document.querySelector("#sessionId"),
   eventCount: document.querySelector("#eventCount"),
-  apiBase: document.querySelector("#apiBase"),
   assistantLane: document.querySelector("#assistantLane"),
   routerLane: document.querySelector("#routerLane"),
   agentLane: document.querySelector("#agentLane"),
@@ -109,8 +96,6 @@ const elements = {
   loadsList: document.querySelector("#loadsList"),
   resultView: document.querySelector("#resultView")
 };
-
-elements.apiBase.textContent = `${ASSISTANT_API_BASE} -> ${ROUTER_API_BASE} -> ${AGENT_API_BASE}`;
 
 function serviceName(event) {
   return serviceLabels[event.service] || event.service || "服务";
@@ -490,7 +475,7 @@ function buildDerivedFlow(output) {
       status: "已接收",
       owner: "掌银助手",
       details: [
-        `场景入口：${state.scenario}`,
+        "场景入口：对话输入",
         "助手只负责收集用户表达和页面上下文，再交给 Router 识别。"
       ],
       evidence: [],
@@ -505,7 +490,7 @@ function buildDerivedFlow(output) {
       owner: "掌银助手",
       details: [
         "业务展示中左侧只保留用户和助手话术，底层请求细节放在节点详情里。",
-        `来源：${state.scenario === "normal" ? "用户主动输入" : "助手主动推送承接"}`
+        "来源：用户主动输入"
       ],
       evidence: [],
       payload: buildAssistantRequest({
@@ -996,7 +981,11 @@ function addAgentFlow(agentOutput, turnIndex) {
 }
 
 async function startRun() {
-  const message = elements.messageInput.value.trim() || scenarioDefaults[state.scenario];
+  const message = elements.messageInput.value.trim();
+  if (!message) {
+    elements.messageInput.focus();
+    return;
+  }
   const sessionId = ensureSession();
   state.turnIndex += 1;
   setBusy(true);
@@ -1079,32 +1068,13 @@ async function startRun() {
 }
 
 function buildAssistantRequest({ sessionId, message }) {
-  const request = {
+  return {
     session_id: sessionId,
     message,
-    scenario: state.scenario,
     source: "user",
     user_profile: { user_id: "observer-user" },
     page_context: { current_page: "observer-ui" }
   };
-  if (state.scenario === "assistant_push") {
-    request.source = "assistant_push";
-    request.push_context = {
-      push_id: "observer-push-fund",
-      intents: [{ scene_id: "fund_query", rank: 1 }]
-    };
-  }
-  if (state.scenario === "multi_intent") {
-    request.source = "assistant_push";
-    request.push_context = {
-      push_id: "observer-push-multi",
-      intents: [
-        { scene_id: "balance_query", rank: 1 },
-        { scene_id: "fund_query", rank: 2 }
-      ]
-    };
-  }
-  return request;
 }
 
 function buildEventsFromRouterOutput({ sessionId, message, output }) {
@@ -1118,7 +1088,7 @@ function buildEventsFromRouterOutput({ sessionId, message, output }) {
       event: "assistant_frontend_request",
       title: "前端请求助手服务端",
       summary: "对话窗口只和助手服务端通信，Router 和 Agent 都在服务端后置调用。",
-      input: { message, scenario: state.scenario },
+      input: { message },
       output: null,
       timestamp: now
     }
@@ -1261,30 +1231,6 @@ function summarizeRouterEvent(routerEvent, output) {
   }
   return routerStatusText(output);
 }
-
-document.querySelectorAll(".scenario").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".scenario").forEach((item) => item.classList.remove("active"));
-    button.classList.add("active");
-    state.scenario = button.dataset.scenario || "normal";
-    state.sessionId = null;
-    state.turnIndex = 0;
-    state.activeTaskId = null;
-    state.flowHistory = [];
-    state.run = null;
-    state.events = [];
-    state.selectedSeq = null;
-    state.selectedFlowId = null;
-    elements.messageInput.value = scenarioDefaults[state.scenario] || "";
-    elements.chatLog.innerHTML = `
-      <article class="bubble assistant">
-        <span>助手</span>
-        <p>你好，请输入你要办理的事情。</p>
-      </article>
-    `;
-    renderAll();
-  });
-});
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => {
