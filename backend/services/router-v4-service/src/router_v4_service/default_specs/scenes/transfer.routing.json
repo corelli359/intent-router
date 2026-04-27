@@ -17,31 +17,10 @@
     "examples": ["我要转账", "我想转账", "我我要转账", "给张三转5000块", "向李四汇款"],
     "negative_examples": ["查询转账记录"]
   },
-  "routing_slots": [
-    {
-      "name": "recipient",
-      "source": "user_utterance",
-      "required_for_dispatch": false,
-      "handoff": true,
-      "extraction": {
-        "type": "llm",
-        "instruction": "如果用户明确说明收款人，提取收款人姓名或称呼；无法确定时不要填写。"
-      }
-    },
-    {
-      "name": "amount",
-      "source": "user_utterance",
-      "required_for_dispatch": false,
-      "handoff": true,
-      "extraction": {
-        "type": "llm",
-        "instruction": "如果用户明确说明转账金额，提取数值金额；无法确定时不要填写。"
-      }
-    }
-  ],
+  "skill_fields": [],
   "dispatch_contract": {
     "task_type": "transfer",
-    "handoff_fields": ["raw_message", "recipient", "amount", "user_profile_ref", "page_context_ref"]
+    "handoff_fields": ["raw_message", "user_profile_ref", "page_context_ref"]
   },
   "references": ["references/transfer-routing.md"]
 }

@@ -55,8 +55,8 @@ class TriggerSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class RoutingSlotSpec:
-    """A slot that Router is allowed to extract as a dispatch hint."""
+class SkillFieldSpec:
+    """A business field declared by the scene Skill and owned by the execution Agent."""
 
     name: str
     source: str
@@ -84,7 +84,7 @@ class SceneSpec:
     target_agent: str
     skill: dict[str, Any]
     triggers: TriggerSpec
-    routing_slots: tuple[RoutingSlotSpec, ...]
+    skill_fields: tuple[SkillFieldSpec, ...]
     dispatch_contract: DispatchContract
     references: tuple[str, ...]
     spec_hash: str
@@ -117,7 +117,7 @@ class RouterTaskState:
     agent_task_id: str
     status: TaskStatus
     raw_message: str
-    routing_slots: dict[str, Any] = field(default_factory=dict)
+    routing_hints: dict[str, Any] = field(default_factory=dict)
     scene_spec_hash: str = ""
     stream_url: str = ""
     resume_token: str = ""
@@ -137,7 +137,7 @@ class RouterTaskState:
             "agent_task_id": self.agent_task_id,
             "status": self.status.value,
             "raw_message": self.raw_message,
-            "routing_slots": dict(self.routing_slots),
+            "routing_hints": dict(self.routing_hints),
             "scene_spec_hash": self.scene_spec_hash,
             "stream_url": self.stream_url,
             "resume_token": self.resume_token,
@@ -185,7 +185,7 @@ class RoutingSessionState:
     target_agent: str | None = None
     agent_task_id: str | None = None
     dispatch_status: str | None = None
-    routing_slots: dict[str, Any] = field(default_factory=dict)
+    routing_hints: dict[str, Any] = field(default_factory=dict)
     turn_count: int = 0
     summary: str = ""
     active_graph_id: str | None = None
@@ -209,7 +209,7 @@ class RoutingSessionState:
         scene_id: str,
         target_agent: str,
         agent_task_id: str,
-        routing_slots: dict[str, Any],
+        routing_hints: dict[str, Any],
         summary: str,
     ) -> None:
         self.active_scene_id = scene_id
@@ -217,7 +217,7 @@ class RoutingSessionState:
         self.target_agent = target_agent
         self.agent_task_id = agent_task_id
         self.dispatch_status = "dispatched"
-        self.routing_slots = dict(routing_slots)
+        self.routing_hints = dict(routing_hints)
         self.summary = summary
         self.active_task_ids = [task_id]
         self.selected_scene_ids = _append_unique(self.selected_scene_ids, scene_id)
@@ -270,7 +270,7 @@ class RouterV4Output:
     task_id: str | None = None
     graph_id: str | None = None
     stream_mode: str | None = None
-    routing_slots: dict[str, Any] = field(default_factory=dict)
+    routing_hints: dict[str, Any] = field(default_factory=dict)
     tasks: tuple[dict[str, Any], ...] = ()
     agent_output: dict[str, Any] | None = None
     action_required: dict[str, Any] | None = None
@@ -289,7 +289,7 @@ class RouterV4Output:
             "task_id": self.task_id,
             "graph_id": self.graph_id,
             "stream_mode": self.stream_mode,
-            "routing_slots": dict(self.routing_slots),
+            "routing_hints": dict(self.routing_hints),
             "tasks": [dict(item) for item in self.tasks],
             "agent_output": self.agent_output,
             "action_required": self.action_required,

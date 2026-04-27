@@ -23,7 +23,6 @@ from router_v4_service.core.recognizer import (
     IntentRecognizerError,
     LLMIntentRecognizer,
 )
-from router_v4_service.core.slot_projector import RoutingSlotProjector
 from router_v4_service.core.spec_registry import SpecRegistry, SpecRegistryError
 from router_v4_service.core.stores import (
     FileRoutingSessionStore,
@@ -48,7 +47,6 @@ class RouterV4Runtime:
         *,
         registry: SpecRegistry | None = None,
         recognizer: IntentRecognizer | None = None,
-        slot_projector: RoutingSlotProjector | None = None,
         agent_client: AgentDispatchClient | None = None,
         session_store: RoutingSessionStore | None = None,
         transcript_store: TranscriptStore | None = None,
@@ -58,7 +56,6 @@ class RouterV4Runtime:
         self.settings = settings or RouterV4Settings.from_env()
         self.registry = registry or SpecRegistry(self.settings.spec_root)
         self.recognizer = recognizer or LLMIntentRecognizer(self.settings.llm)
-        self.slot_projector = slot_projector or RoutingSlotProjector()
         self.agent_client = agent_client or AgentDispatchClient()
         if session_store is not None:
             self.session_store = session_store
@@ -98,8 +95,7 @@ class RouterV4Runtime:
             return self._forward_to_active_agent(state=state, request=request, turn_id=turn_id)
 
         push_scene_ids = self._push_scene_ids(request)
-        pending_scene = self._pending_scene(state)
-        scenes = [pending_scene] if pending_scene is not None else self._candidate_scenes(push_scene_ids)
+        scenes = self._candidate_scenes(push_scene_ids)
         try:
             candidates = self.recognizer.shortlist(
                 request.message,
@@ -154,30 +150,7 @@ class RouterV4Runtime:
                 turn_id=turn_id,
             )
 
-        selected = self._select_candidate(candidates)
-        if selected is None:
-            prompt_report = self._build_prompt_report(
-                state=state,
-                candidates=candidates,
-                selected_scene=None,
-                scene_index_scenes=scenes,
-            )
-            scene_names = "、".join(candidate.scene.name for candidate in candidates[:2])
-            self._append(
-                state,
-                turn_id,
-                "scene_ambiguous",
-                {"candidates": [candidate.scene.scene_id for candidate in candidates]},
-            )
-            self.session_store.save(state)
-            return RouterV4Output(
-                session_id=request.session_id,
-                status=RouterTurnStatus.CLARIFICATION_REQUIRED,
-                response=f"这个请求可能涉及多个场景：{scene_names}。请补充说明要办理哪一类业务。",
-                events=({"type": "scene_ambiguous"},),
-                prompt_report=prompt_report,
-            )
-
+        selected = candidates[0]
         scene = selected.scene
         prompt_report = self._build_prompt_report(
             state=state,
@@ -200,42 +173,12 @@ class RouterV4Runtime:
                 prompt_report=prompt_report,
             )
 
-        current_slots = self.slot_projector.normalize(scene, selected.routing_slots)
-        routing_slots = (
-            {**state.routing_slots, **current_slots}
-            if state.pending_scene_id == scene.scene_id
-            else current_slots
-        )
-        missing = self.slot_projector.missing_required_for_dispatch(scene, routing_slots)
-        if missing:
-            state.pending_scene_id = scene.scene_id
-            state.dispatch_status = "waiting_router_slot"
-            state.routing_slots = dict(routing_slots)
-            state.summary = f"{scene.name}场景等待 Router 侧路由槽位：{', '.join(missing)}"
-            self._append(
-                state,
-                turn_id,
-                "route_clarification_required",
-                {"scene_id": scene.scene_id, "missing_slots": missing},
-            )
-            self.session_store.save(state)
-            return RouterV4Output(
-                session_id=request.session_id,
-                status=RouterTurnStatus.CLARIFICATION_REQUIRED,
-                response=f"为了判断是否进入{scene.name}场景，请补充：{missing[0]}。",
-                scene_id=scene.scene_id,
-                routing_slots=routing_slots,
-                action_required={"type": "input", "slot": missing[0], "owner": "router"},
-                events=({"type": "route_clarification_required", "missing_slots": missing},),
-                prompt_report=prompt_report,
-            )
-
-        handoff_slots = self.slot_projector.handoff_slots(scene, routing_slots)
+        routing_hints: dict[str, Any] = {}
         task_payload = self._build_agent_task_payload(
             request=request,
             state=state,
             scene=scene,
-            routing_slots=handoff_slots,
+            routing_hints=routing_hints,
         )
         try:
             dispatch = self.agent_client.dispatch(agent=agent, task_payload=task_payload)
@@ -248,7 +191,7 @@ class RouterV4Runtime:
                 response=str(exc),
                 scene_id=scene.scene_id,
                 target_agent=agent.agent_id,
-                routing_slots=handoff_slots,
+                routing_hints=routing_hints,
                 events=({"type": "agent_dispatch_failed"},),
                 prompt_report=prompt_report,
             )
@@ -261,7 +204,7 @@ class RouterV4Runtime:
             agent_task_id=dispatch.agent_task_id,
             status=TaskStatus.DISPATCHED,
             request=request,
-            routing_slots=handoff_slots,
+            routing_hints=routing_hints,
         )
         state.tasks[task_id] = task
         state.bind_dispatch(
@@ -269,7 +212,7 @@ class RouterV4Runtime:
             scene_id=scene.scene_id,
             target_agent=agent.agent_id,
             agent_task_id=dispatch.agent_task_id,
-            routing_slots=handoff_slots,
+            routing_hints=routing_hints,
             summary=f"{scene.name}场景已派发给 {agent.agent_id}",
         )
         state.assistant_result_status = self._assistant_status_for_task(task.status)
@@ -283,7 +226,7 @@ class RouterV4Runtime:
                 "target_agent": agent.agent_id,
                 "agent_task_id": dispatch.agent_task_id,
                 "task_id": task_id,
-                "routing_slots": handoff_slots,
+                "routing_hints": routing_hints,
                 "skill": dict(scene.skill),
                 "task_payload": self._task_payload_preview(task_payload),
             },
@@ -296,7 +239,7 @@ class RouterV4Runtime:
             target_agent=agent.agent_id,
             agent_task_id=dispatch.agent_task_id,
             task_id=task_id,
-            routing_slots=handoff_slots,
+            routing_hints=routing_hints,
             tasks=(task.to_dict(),),
             assistant_result_status=state.assistant_result_status,
             events=(
@@ -318,13 +261,6 @@ class RouterV4Runtime:
             ),
             prompt_report=prompt_report,
         )
-
-    def _select_candidate(self, candidates: list[IntentCandidate]) -> IntentCandidate | None:
-        if len(candidates) == 1:
-            return candidates[0]
-        if candidates[0].score == candidates[1].score:
-            return None
-        return candidates[0]
 
     def _forward_to_active_agent(
         self,
@@ -361,7 +297,7 @@ class RouterV4Runtime:
             target_agent=state.target_agent,
             agent_task_id=state.agent_task_id,
             task_id=task_id,
-            routing_slots=dict(state.routing_slots),
+            routing_hints=dict(state.routing_hints),
             tasks=(task.to_dict(),) if task is not None else (),
             assistant_result_status=state.assistant_result_status,
             events=(
@@ -380,7 +316,7 @@ class RouterV4Runtime:
         request: RouterV4Input,
         state: RoutingSessionState,
         scene: SceneSpec,
-        routing_slots: dict[str, Any],
+        routing_hints: dict[str, Any],
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "router_session_id": request.session_id,
@@ -389,7 +325,7 @@ class RouterV4Runtime:
             "raw_message": request.message,
             "source": request.source,
             "push_context": dict(request.push_context),
-            "routing_slots": dict(routing_slots),
+            "routing_hints": dict(routing_hints),
             "skill": dict(scene.skill),
             "context_refs": {
                 "user_profile_present": bool(request.user_profile),
@@ -398,9 +334,7 @@ class RouterV4Runtime:
             "scene_spec_hash": scene.spec_hash,
         }
         for field in scene.dispatch_contract.handoff_fields:
-            if field in routing_slots:
-                payload[field] = routing_slots[field]
-            elif field == "raw_message":
+            if field == "raw_message":
                 payload[field] = request.message
             elif field == "user_profile_ref":
                 payload[field] = "request.user_profile"
@@ -416,7 +350,7 @@ class RouterV4Runtime:
             "scene_id": payload.get("scene_id"),
             "task_type": payload.get("task_type"),
             "raw_message": payload.get("raw_message"),
-            "routing_slots": dict(payload.get("routing_slots") or {}),
+            "routing_hints": dict(payload.get("routing_hints") or {}),
             "skill": dict(payload.get("skill") or {}),
             "context_refs": dict(payload.get("context_refs") or {}),
             "scene_spec_hash": payload.get("scene_spec_hash"),
@@ -433,7 +367,7 @@ class RouterV4Runtime:
                 "target_agent": state.target_agent,
                 "agent_task_id": state.agent_task_id,
                 "dispatch_status": state.dispatch_status,
-                "routing_slots": dict(state.routing_slots),
+                "routing_hints": dict(state.routing_hints),
                 "turn_count": state.turn_count,
                 "summary": state.summary,
                 "active_graph_id": state.active_graph_id,
@@ -620,7 +554,7 @@ class RouterV4Runtime:
             "original_agent": task.target_agent,
             "raw_message": task.raw_message,
             "handover_reason": dict(agent_payload),
-            "routing_slots": dict(task.routing_slots),
+            "routing_hints": dict(task.routing_hints),
             "push_context": dict(task.push_context),
             "scene_id": "fallback",
             "task_type": "fallback",
@@ -656,7 +590,7 @@ class RouterV4Runtime:
             agent_task_id=dispatch.agent_task_id,
             status=TaskStatus.FALLBACK_DISPATCHED,
             raw_message=task.raw_message,
-            routing_slots=dict(task.routing_slots),
+            routing_hints=dict(task.routing_hints),
             scene_spec_hash=task.scene_spec_hash,
             stream_url=self._stream_url(fallback_task_id),
             resume_token=self._resume_token(fallback_task_id),
@@ -753,13 +687,12 @@ class RouterV4Runtime:
             except SpecRegistryError as exc:
                 events.append({"type": "task.plan_failed", "scene_id": scene.scene_id, "error": str(exc)})
                 continue
-            normalized_slots = self.slot_projector.normalize(scene, candidate.routing_slots)
-            routing_slots = self.slot_projector.handoff_slots(scene, normalized_slots)
+            routing_hints: dict[str, Any] = {}
             payload = self._build_agent_task_payload(
                 request=request,
                 state=state,
                 scene=scene,
-                routing_slots=routing_slots,
+                routing_hints=routing_hints,
             )
             try:
                 dispatch = self.agent_client.dispatch(agent=agent, task_payload=payload)
@@ -773,7 +706,7 @@ class RouterV4Runtime:
                 agent_task_id=dispatch.agent_task_id,
                 status=TaskStatus.DISPATCHED,
                 request=request,
-                routing_slots=routing_slots,
+                routing_hints=routing_hints,
             )
             state.tasks[task.task_id] = task
             tasks.append(task)
@@ -877,7 +810,7 @@ class RouterV4Runtime:
         agent_task_id: str,
         status: TaskStatus,
         request: RouterV4Input,
-        routing_slots: dict[str, Any],
+        routing_hints: dict[str, Any],
     ) -> RouterTaskState:
         return RouterTaskState(
             task_id=task_id,
@@ -886,7 +819,7 @@ class RouterV4Runtime:
             agent_task_id=agent_task_id,
             status=status,
             raw_message=request.message,
-            routing_slots=dict(routing_slots),
+            routing_hints=dict(routing_hints),
             scene_spec_hash=scene.spec_hash,
             stream_url=self._stream_url(task_id),
             resume_token=self._resume_token(task_id),
@@ -950,18 +883,6 @@ class RouterV4Runtime:
         if value in values:
             return values
         return [*values, value]
-
-    def _pending_scene(self, state: RoutingSessionState) -> SceneSpec | None:
-        if state.pending_scene_id is None or state.dispatch_status != "waiting_router_slot":
-            return None
-        try:
-            return self.registry.scene(state.pending_scene_id)
-        except SpecRegistryError:
-            state.pending_scene_id = None
-            state.dispatch_status = None
-            state.routing_slots = {}
-            self.session_store.save(state)
-            return None
 
     def _build_prompt_report(
         self,

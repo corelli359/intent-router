@@ -90,6 +90,7 @@ class AssistantRuntime:
             )
 
         visible_output = self._visible_output(router_output=router_output, agent_output=agent_output, events=events)
+        self._remember_visible_result(state, visible_output)
         assistant_message = self._assistant_message(router_output=router_output, agent_output=agent_output)
         events.append(
             {
@@ -221,6 +222,17 @@ class AssistantRuntime:
         if router_output.get("status") == "task_updated":
             state.active_task_id = None
             state.active_agent = None
+
+    def _remember_visible_result(self, state: AssistantSessionState, visible_output: dict[str, Any]) -> None:
+        if visible_output.get("status") != "task_updated":
+            return
+        if (
+            visible_output.get("assistant_result_status") not in {"ready_for_assistant", "agent_output_abnormal"}
+            and not isinstance(visible_output.get("agent_output"), dict)
+        ):
+            return
+        state.active_task_id = None
+        state.active_agent = None
 
     def _should_call_transfer_agent(
         self,
@@ -357,4 +369,3 @@ async def health() -> dict[str, str]:
 @app.post("/api/assistant/turn", response_model=None)
 async def post_turn(request: AssistantTurnRequest) -> dict[str, Any]:
     return await runtime.handle_turn(request)
-

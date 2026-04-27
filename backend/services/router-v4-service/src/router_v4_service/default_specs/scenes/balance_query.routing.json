@@ -17,21 +17,10 @@
     "examples": ["查一下余额", "我卡里还有多少钱"],
     "negative_examples": ["给张三转5000块"]
   },
-  "routing_slots": [
-    {
-      "name": "account_hint",
-      "source": "user_utterance",
-      "required_for_dispatch": false,
-      "handoff": true,
-      "extraction": {
-        "type": "llm",
-        "instruction": "如果用户明确指定银行卡、账户或尾号，提取为 account_hint；未指定时不要填写。"
-      }
-    }
-  ],
+  "skill_fields": [],
   "dispatch_contract": {
     "task_type": "balance_query",
-    "handoff_fields": ["raw_message", "account_hint", "user_profile_ref", "page_context_ref"]
+    "handoff_fields": ["raw_message", "user_profile_ref", "page_context_ref"]
   },
   "references": ["references/balance-routing.md"]
 }

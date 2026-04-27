@@ -13,7 +13,7 @@ class ContextBuilder:
 
     The service exposes the report instead of a provider-specific prompt so the
     loading lifecycle is testable: state is always included, scene details are
-    loaded only after shortlist/selection, and lower-priority blocks are
+    loaded only after recognition/selection, and lower-priority blocks are
     dropped when the budget is exceeded.
     """
 
@@ -39,13 +39,13 @@ class ContextBuilder:
         if candidates:
             self._add_block(
                 blocks,
-                "scene_candidates",
+                "recognized_scenes",
                 120 + sum(len(candidate.scene.description) for candidate in candidates),
                 priority=2,
             )
         if selected_scene is not None:
             self._add_block(blocks, "routing_spec", 180 + len(selected_scene.description), priority=2)
-            self._add_block(blocks, "routing_slot_spec", 120 + len(selected_scene.routing_slots) * 80, priority=2)
+            self._add_block(blocks, "agent_field_policy", 120 + len(selected_scene.skill_fields) * 80, priority=2)
             if selected_scene.skill:
                 self._add_block(blocks, "skill_card", 160 + len(str(selected_scene.skill)), priority=2)
             self._add_block(blocks, "dispatch_contract", 160, priority=2)
@@ -78,7 +78,7 @@ class ContextBuilder:
                 references=references,
                 scene_index_scenes=scene_index,
             ),
-            "candidate_scene_ids": [candidate.scene.scene_id for candidate in candidates],
+            "recognized_scene_ids": [candidate.scene.scene_id for candidate in candidates],
             "selected_scene_id": selected_scene.scene_id if selected_scene else None,
             "active_scene_id": state.active_scene_id,
             "pending_scene_id": state.pending_scene_id,
@@ -95,9 +95,9 @@ class ContextBuilder:
                         "router_boundary",
                         "routing_state",
                         "scene_index",
-                        "scene_candidates" if candidates else "",
+                        "recognized_scenes" if candidates else "",
                         "routing_spec" if selected_scene is not None else "",
-                        "routing_slot_spec" if selected_scene is not None else "",
+                        "agent_field_policy" if selected_scene is not None else "",
                         "skill_card" if selected_scene is not None and selected_scene.skill else "",
                         "dispatch_contract" if selected_scene is not None else "",
                         "retrieved_references" if references else "",
@@ -164,7 +164,7 @@ class ContextBuilder:
                 "pending_scene_id": state.pending_scene_id,
                 "target_agent": state.target_agent,
                 "agent_task_id": state.agent_task_id,
-                "routing_slots": dict(state.routing_slots),
+                "routing_hints": dict(state.routing_hints),
                 "turn_count": state.turn_count,
             },
             included_blocks=included_blocks,
@@ -198,16 +198,15 @@ class ContextBuilder:
         if candidates:
             self._trace(
                 trace,
-                block="scene_candidates",
+                block="recognized_scenes",
                 stage="after_recognition",
                 source_type="llm_recognizer_output",
-                summary="recognizer 返回候选场景、置信度、理由和 routing slot hints。",
+                summary="recognizer 直接返回本轮选中的意图场景、置信度和理由；业务提槽由执行 Agent/Skill 负责。",
                 content=[
                     {
                         "scene_id": candidate.scene.scene_id,
                         "score": candidate.score,
                         "reasons": list(candidate.reasons),
-                        "routing_slots": dict(candidate.routing_slots),
                     }
                     for candidate in candidates
                 ],
@@ -235,12 +234,12 @@ class ContextBuilder:
             )
             self._trace(
                 trace,
-                block="routing_slot_spec",
+                block="agent_field_policy",
                 stage="after_scene_selected",
                 source_type="scene_routing_json",
-                summary="加载允许传给 Agent 的 routing slot hints；Router runtime 只按这些名称投影。",
+                summary="加载场景字段边界；Router 不提槽、不追问，业务字段由 Agent/Skill 负责。",
                 files=self._scene_files([selected_scene]),
-                json_path="$.routing_slots",
+                json_path="$.skill_fields",
                 content=[
                     {
                         "name": slot.name,
@@ -249,7 +248,7 @@ class ContextBuilder:
                         "required_for_dispatch": slot.required_for_dispatch,
                         "extraction": dict(slot.extraction),
                     }
-                    for slot in selected_scene.routing_slots
+                    for slot in selected_scene.skill_fields
                 ],
                 included_blocks=included_blocks,
                 dropped_blocks=dropped_blocks,

@@ -63,7 +63,7 @@ def test_transfer_agent_extracts_slots_from_free_utterance_before_confirmation()
             "task_id": "task-test",
             "scene_id": "transfer",
             "target_agent": "transfer-agent",
-            "routing_slots": {},
+            "routing_hints": {},
         }
     )
 
@@ -85,7 +85,7 @@ def test_transfer_agent_asks_all_missing_fields_then_accepts_free_reply() -> Non
             "task_id": "task-test",
             "scene_id": "transfer",
             "target_agent": "transfer-agent",
-            "routing_slots": {},
+            "routing_hints": {},
         }
     )
 
@@ -107,7 +107,7 @@ def test_transfer_agent_handover_uses_router_contract_for_wrong_task() -> None:
             "task_id": "task-test",
             "scene_id": "fund_query",
             "target_agent": "fund-agent",
-            "routing_slots": {},
+            "routing_hints": {},
         }
     )
 

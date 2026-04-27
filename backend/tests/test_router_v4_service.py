@@ -45,12 +45,12 @@ class FakeIntentRecognizer:
                 continue
             if isinstance(item, str):
                 scene_id = item
-                slots: dict[str, object] = {}
+                hints: dict[str, object] = {}
                 score = 90
                 reasons = ("fake_llm",)
             elif isinstance(item, dict):
                 scene_id = str(item.get("scene_id") or "")
-                slots = dict(item.get("slots") or {})
+                hints = dict(item.get("hints") or {})
                 score = int(item.get("score") or 90)
                 reasons = tuple(str(value) for value in item.get("reasons", ("fake_llm",)))
             else:
@@ -63,7 +63,7 @@ class FakeIntentRecognizer:
                     scene=scene,
                     score=score,
                     reasons=reasons,
-                    routing_slots=slots,
+                    routing_hints=hints,
                 )
             )
         return candidates[:limit]
@@ -88,20 +88,14 @@ def test_spec_registry_loads_default_scenes_and_agents() -> None:
         "transfer-agent",
     ]
     assert transfer.target_agent == "transfer-agent"
-    assert [slot.name for slot in transfer.routing_slots] == ["recipient", "amount"]
+    assert transfer.skill_fields == ()
+    assert transfer.dispatch_contract.handoff_fields == ("raw_message", "user_profile_ref", "page_context_ref")
     assert agent.accepted_scene_ids == ("transfer",)
     assert registry.agent("fallback-agent").accepted_scene_ids == ("fallback",)
 
 
-def test_runtime_dispatches_transfer_scene_with_routing_slots() -> None:
-    runtime = _runtime(
-        {
-            "给张三转5000块": {
-                "scene_id": "transfer",
-                "slots": {"recipient": "张三", "amount": 5000},
-            }
-        }
-    )
+def test_runtime_dispatches_transfer_scene_without_router_business_slots() -> None:
+    runtime = _runtime({"给张三转5000块": "transfer"})
 
     output = runtime.handle_turn(
         RouterV4Input(
@@ -117,22 +111,26 @@ def test_runtime_dispatches_transfer_scene_with_routing_slots() -> None:
     assert output.target_agent == "transfer-agent"
     assert output.agent_task_id
     assert output.response == "task_dispatched"
-    assert output.routing_slots == {"recipient": "张三", "amount": 5000}
+    assert output.routing_hints == {}
     assert any(event["type"] == "agent_dispatched" for event in output.events)
     assert "routing_spec" in output.prompt_report["included_blocks"]
     blocks = [item["block"] for item in output.prompt_report["load_trace"]]
     assert "scene_index" in blocks
+    assert "recognized_scenes" in blocks
     assert "routing_spec" in blocks
-    assert "routing_slot_spec" in blocks
+    assert "agent_field_policy" in blocks
     assert "skill_card" in blocks
     assert "retrieved_references" in blocks
     skill_trace = next(item for item in output.prompt_report["load_trace"] if item["block"] == "skill_card")
     assert skill_trace["files"][0]["path"].endswith("transfer.skill.md")
-    assert "transfer-agent 负责收款人和金额校验" in skill_trace["files"][0]["excerpt"]
-    assert "ishandover=true" in skill_trace["files"][0]["excerpt"]
+    assert "transfer-agent 负责业务理解、自由表达提槽" in skill_trace["files"][0]["excerpt"]
+    assert "ishandover" in skill_trace["files"][0]["excerpt"]
     dispatch_event = next(event for event in output.events if event["type"] == "agent_dispatched")
     assert dispatch_event["skill"]["skill_id"] == "transfer"
     assert dispatch_event["task_payload"]["scene_id"] == "transfer"
+    assert dispatch_event["task_payload"]["routing_hints"] == {}
+    assert "recipient" not in dispatch_event["task_payload"]
+    assert "amount" not in dispatch_event["task_payload"]
 
 
 def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
@@ -153,7 +151,6 @@ def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
                                     "selected_scene_ids": [],
                                     "confidence": 0.93,
                                     "reason": "用户明确表达转账",
-                                    "routing_slots": {"recipient": "张三"},
                                 },
                                 ensure_ascii=False,
                             )
@@ -179,9 +176,10 @@ def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
     assert candidates[0].scene.scene_id == "transfer"
     assert candidates[0].score == 93
     assert "llm" in candidates[0].reasons
-    assert candidates[0].routing_slots == {"recipient": "张三"}
+    assert candidates[0].routing_hints == {}
     assert captured["url"] == "https://llm.example/v1/chat/completions"
     assert captured["payload"]["model"] == "test-model"
+    assert "不要提取业务槽位" in captured["payload"]["messages"][0]["content"]
     assert "skill" in captured["payload"]["messages"][1]["content"]
 
 
@@ -219,14 +217,7 @@ ROUTER_V4_LLM_MODEL=test-model
 
 
 def test_runtime_forwards_followup_to_existing_agent_task() -> None:
-    runtime = _runtime(
-        {
-            "给张三转5000块": {
-                "scene_id": "transfer",
-                "slots": {"recipient": "张三", "amount": 5000},
-            }
-        }
-    )
+    runtime = _runtime({"给张三转5000块": "transfer"})
     first = runtime.handle_turn(
         RouterV4Input(session_id="sess-follow", message="给张三转5000块")
     )
@@ -267,7 +258,7 @@ def test_runtime_does_not_dispatch_when_agent_missing(tmp_path: Path) -> None:
   "description": "转账场景",
   "target_agent": "missing-agent",
   "triggers": {"keywords": ["转账"]},
-  "routing_slots": [],
+  "skill_fields": [],
   "dispatch_contract": {"task_type": "transfer", "handoff_fields": ["raw_message"]},
   "references": []
 }
@@ -289,7 +280,7 @@ def test_runtime_does_not_dispatch_when_agent_missing(tmp_path: Path) -> None:
     assert "unknown agent" in output.response
 
 
-def test_runtime_keeps_pending_scene_and_collects_required_slots(tmp_path: Path) -> None:
+def test_runtime_dispatches_even_when_scene_declares_required_business_slots(tmp_path: Path) -> None:
     spec_root = tmp_path / "specs"
     (spec_root / "scenes").mkdir(parents=True)
     (spec_root / "agents").mkdir(parents=True)
@@ -302,7 +293,7 @@ def test_runtime_keeps_pending_scene_and_collects_required_slots(tmp_path: Path)
   "description": "转账场景",
   "target_agent": "transfer-agent",
   "triggers": {"keywords": ["转账"], "examples": [], "negative_keywords": [], "negative_examples": []},
-  "routing_slots": [
+  "skill_fields": [
     {
       "name": "recipient",
       "source": "user_utterance",
@@ -343,11 +334,6 @@ def test_runtime_keeps_pending_scene_and_collects_required_slots(tmp_path: Path)
     runtime = _runtime(
         {
             "我要转账": "transfer",
-            "给张三转500元": {
-                "scene_id": "transfer",
-                "slots": {"recipient": "张三", "amount": 500},
-                "reasons": ("pending_scene",),
-            },
         },
         registry=SpecRegistry(spec_root),
     )
@@ -355,22 +341,21 @@ def test_runtime_keeps_pending_scene_and_collects_required_slots(tmp_path: Path)
     first = runtime.handle_turn(RouterV4Input(session_id="sess-pending", message="我要转账"))
     second = runtime.handle_turn(RouterV4Input(session_id="sess-pending", message="给张三转500元"))
 
-    assert first.status == RouterTurnStatus.CLARIFICATION_REQUIRED
-    assert first.action_required == {"type": "input", "slot": "recipient", "owner": "router"}
-    assert second.status == RouterTurnStatus.DISPATCHED
-    assert second.routing_slots == {"recipient": "张三", "amount": 500}
-    assert second.events[0]["reasons"] == ["pending_scene"]
+    assert first.status == RouterTurnStatus.DISPATCHED
+    assert first.action_required is None
+    assert first.routing_hints == {}
+    dispatch_event = next(event for event in first.events if event["type"] == "agent_dispatched")
+    assert dispatch_event["task_payload"]["routing_hints"] == {}
+    assert "recipient" not in dispatch_event["task_payload"]
+    assert "amount" not in dispatch_event["task_payload"]
+    assert second.status == RouterTurnStatus.FORWARDED
+    assert second.agent_task_id == first.agent_task_id
 
 
 def test_runtime_can_persist_session_state_between_instances(tmp_path: Path) -> None:
     state_dir = tmp_path / "router-state"
     recognizer = FakeIntentRecognizer(
-        {
-            "给张三转5000块": {
-                "scene_id": "transfer",
-                "slots": {"recipient": "张三", "amount": 5000},
-            }
-        }
+        {"给张三转5000块": "transfer"}
     )
     first_runtime = RouterV4Runtime(
         recognizer=recognizer,
@@ -395,12 +380,7 @@ def test_runtime_can_persist_session_state_between_instances(tmp_path: Path) -> 
 
 def test_context_report_applies_budget_and_keeps_core_blocks() -> None:
     runtime = _runtime(
-        {
-            "给张三转5000块": {
-                "scene_id": "transfer",
-                "slots": {"recipient": "张三", "amount": 5000},
-            }
-        },
+        {"给张三转5000块": "transfer"},
         context_builder=ContextBuilder(
             ContextPolicy(max_chars=700, recent_turn_limit=2, retrieved_reference_limit=1)
         ),
@@ -617,14 +597,7 @@ def test_api_allows_router_v4_observer_frontend_origin() -> None:
 
 def test_api_session_snapshot_exposes_router_owned_state() -> None:
     app = create_app(
-        runtime=_runtime(
-            {
-                "给张三转5000块": {
-                    "scene_id": "transfer",
-                    "slots": {"recipient": "张三", "amount": 5000},
-                }
-            }
-        )
+        runtime=_runtime({"给张三转5000块": "transfer"})
     )
 
     with TestClient(app) as client:
@@ -638,6 +611,7 @@ def test_api_session_snapshot_exposes_router_owned_state() -> None:
     payload = response.json()
     assert payload["session"]["active_scene_id"] == "transfer"
     assert payload["session"]["dispatch_status"] == "dispatched"
+    assert payload["session"]["routing_hints"] == {}
     assert payload["transcript"]
 
 

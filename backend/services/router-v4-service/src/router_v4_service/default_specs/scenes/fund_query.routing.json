@@ -17,21 +17,10 @@
     "examples": ["沪深300ETF怎么样", "我想了解QDII基金"],
     "negative_examples": ["给张三转5000块"]
   },
-  "routing_slots": [
-    {
-      "name": "fund_name",
-      "source": "user_utterance",
-      "required_for_dispatch": false,
-      "handoff": true,
-      "extraction": {
-        "type": "llm",
-        "instruction": "如果用户明确提到基金名称、简称、代码或产品类型，提取为 fund_name；无法确定时不要填写。"
-      }
-    }
-  ],
+  "skill_fields": [],
   "dispatch_contract": {
     "task_type": "fund_query",
-    "handoff_fields": ["raw_message", "fund_name", "user_profile_ref", "page_context_ref"]
+    "handoff_fields": ["raw_message", "user_profile_ref", "page_context_ref"]
   },
   "references": ["references/fund-routing.md"]
 }

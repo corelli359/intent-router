@@ -8,8 +8,8 @@ from typing import Any
 from router_v4_service.core.models import (
     AgentDefinition,
     DispatchContract,
-    RoutingSlotSpec,
     SceneSpec,
+    SkillFieldSpec,
     TriggerSpec,
 )
 
@@ -108,9 +108,9 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_hash: str, source: Path) 
     dispatch = payload.get("dispatch_contract")
     if not isinstance(dispatch, dict):
         raise SpecRegistryError(f"dispatch_contract must be an object: {source}")
-    routing_slots_payload = payload.get("routing_slots", [])
-    if not isinstance(routing_slots_payload, list):
-        raise SpecRegistryError(f"routing_slots must be an array: {source}")
+    skill_fields_payload = payload.get("skill_fields", [])
+    if not isinstance(skill_fields_payload, list):
+        raise SpecRegistryError(f"skill_fields must be an array: {source}")
     return SceneSpec(
         scene_id=_required_str(payload, "scene_id"),
         name=_required_str(payload, "name"),
@@ -124,7 +124,7 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_hash: str, source: Path) 
             keywords=tuple(str(value) for value in triggers.get("keywords", [])),
             negative_keywords=tuple(str(value) for value in triggers.get("negative_keywords", [])),
         ),
-        routing_slots=tuple(_parse_routing_slot(value, source) for value in routing_slots_payload),
+        skill_fields=tuple(_parse_skill_field(value, source) for value in skill_fields_payload),
         dispatch_contract=DispatchContract(
             task_type=_required_str(dispatch, "task_type"),
             handoff_fields=tuple(str(value) for value in dispatch.get("handoff_fields", [])),
@@ -135,10 +135,10 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_hash: str, source: Path) 
     )
 
 
-def _parse_routing_slot(payload: object, source: Path) -> RoutingSlotSpec:
+def _parse_skill_field(payload: object, source: Path) -> SkillFieldSpec:
     if not isinstance(payload, dict):
-        raise SpecRegistryError(f"routing slot must be an object: {source}")
-    return RoutingSlotSpec(
+        raise SpecRegistryError(f"skill field must be an object: {source}")
+    return SkillFieldSpec(
         name=_required_str(payload, "name"),
         source=str(payload.get("source") or "user_utterance"),
         required_for_dispatch=bool(payload.get("required_for_dispatch", False)),

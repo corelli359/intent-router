@@ -83,9 +83,8 @@ class TransferAgentRuntime:
                 ),
             )
 
-        memory = self._memory_for(request, task_payload)
+        memory = self._memory_for(request)
         skill_content = self._load_skill(events)
-        self._bootstrap_from_router_slots(memory, task_payload)
         assistant_message, status, router_update = await self._advance(
             request=request,
             memory=memory,
@@ -124,7 +123,7 @@ class TransferAgentRuntime:
                 "service": "transfer-agent",
                 "phase": "load",
                 "title": "读取 Router 任务快照",
-                "summary": "Agent 通过 HTTP 读取 Router 派发任务和 routing slot hints。",
+                "summary": "Agent 通过 HTTP 读取 Router 派发任务、原始表达和 Skill 元数据。",
                 "artifact": {"url": url},
                 "output": payload,
             }
@@ -146,27 +145,11 @@ class TransferAgentRuntime:
         )
         return content
 
-    def _memory_for(self, request: TransferAgentTurnRequest, task_payload: dict[str, Any] | None) -> TransferTaskMemory:
+    def _memory_for(self, request: TransferAgentTurnRequest) -> TransferTaskMemory:
         key = (request.session_id, request.task_id)
         if key not in self._tasks:
             self._tasks[key] = TransferTaskMemory(session_id=request.session_id, task_id=request.task_id)
-        memory = self._tasks[key]
-        if task_payload:
-            slots = _as_dict(task_payload.get("routing_slots"))
-            if memory.recipient is None and slots.get("recipient"):
-                memory.recipient = str(slots["recipient"])
-            if memory.amount is None and slots.get("amount"):
-                memory.amount = _normalize_amount(slots["amount"])
-        return memory
-
-    def _bootstrap_from_router_slots(self, memory: TransferTaskMemory, task_payload: dict[str, Any] | None) -> None:
-        if memory.skill_step != "start" or not task_payload:
-            return
-        slots = _as_dict(task_payload.get("routing_slots"))
-        if slots.get("recipient") and memory.recipient is None:
-            memory.recipient = str(slots["recipient"])
-        if slots.get("amount") and memory.amount is None:
-            memory.amount = _normalize_amount(slots["amount"])
+        return self._tasks[key]
 
     async def _advance(
         self,
@@ -392,7 +375,7 @@ class TransferAgentRuntime:
                 "id": "agent-load-task",
                 "type": "agent",
                 "title": "Agent 读取 Router 任务",
-                "summary": "转账 Agent 通过 Router task snapshot 获取 scene、routing_slots 和 task_id。",
+                "summary": "转账 Agent 通过 Router task snapshot 获取 scene、Skill 元数据和 task_id。",
                 "status": "已加载",
                 "owner": "transfer-agent",
                 "details": ["这是执行 Agent 自己加载，不是 Router 内部模拟。"],
@@ -460,10 +443,6 @@ class TransferAgentRuntime:
         if not isinstance(task_payload, dict):
             return False
         return task_payload.get("scene_id") == "transfer" and task_payload.get("target_agent") == "transfer-agent"
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
 
 
 def _normalize_amount(value: Any) -> str | None:

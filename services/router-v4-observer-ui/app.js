@@ -44,9 +44,7 @@ const eventLabels = {
   context_block_loaded: "加载上下文块",
   scene_selected: "LLM 意图识别完成",
   agent_dispatched: "派发执行任务",
-  route_clarification_required: "需要补充信息",
   scene_unrecognized: "未识别到场景",
-  scene_ambiguous: "多个场景待确认",
   llm_recognition_failed: "LLM 意图识别失败",
   agent_dispatch_failed: "执行任务派发失败",
   assistant_receives_structured_state: "助手收到结构化状态"
@@ -140,9 +138,7 @@ function assistantText(output) {
   if (!output) return "意图服务未返回。";
   if (output.status === "dispatched") {
     if (output.scene_id === "transfer") {
-      return Object.keys(output.routing_slots || {}).length
-        ? "已进入转账办理流程，收款人和金额会在后续步骤继续核对确认。"
-        : "已进入转账办理流程，请继续补充收款人和金额。";
+      return "已进入转账办理流程，转账信息会由执行 Agent 按 Skill 继续处理。";
     }
     if (output.scene_id === "balance_query") {
       return "已进入余额查询流程，正在获取账户结果。";
@@ -286,13 +282,13 @@ function dispatchEvent(output) {
 }
 
 function sceneSummary(output) {
-  const candidateTrace = findTrace("scene_candidates", output);
-  const candidate = Array.isArray(candidateTrace?.content) ? candidateTrace.content[0] : null;
+  const recognizedTrace = findTrace("recognized_scenes", output);
+  const recognized = Array.isArray(recognizedTrace?.content) ? recognizedTrace.content[0] : null;
   return {
-    sceneId: output?.scene_id || candidate?.scene_id || "未命中",
-    score: selectedSceneEvent(output)?.score || candidate?.score || null,
-    reasons: selectedSceneEvent(output)?.reasons || candidate?.reasons || [],
-    slots: output?.routing_slots || candidate?.routing_slots || {}
+    sceneId: output?.scene_id || recognized?.scene_id || "未命中",
+    score: selectedSceneEvent(output)?.score || recognized?.score || null,
+    reasons: selectedSceneEvent(output)?.reasons || recognized?.reasons || [],
+    hints: output?.routing_hints || recognized?.routing_hints || {}
   };
 }
 
@@ -386,9 +382,9 @@ function buildDerivedFlow(output) {
   const dispatch = dispatchEvent(output);
   const skillTrace = findTrace("skill_card", output);
   const specTrace = findTrace("routing_spec", output);
-  const slotTrace = findTrace("routing_slot_spec", output);
+  const fieldTrace = findTrace("agent_field_policy", output);
   const referenceTrace = findTrace("retrieved_references", output);
-  const sceneTrace = findTrace("scene_candidates", output);
+  const sceneTrace = findTrace("recognized_scenes", output);
   const stateTrace = findTrace("routing_state", output);
   const skill = dispatch?.skill || skillTrace?.content?.skill || {};
   const tasks = asArray(output.tasks);
@@ -399,7 +395,7 @@ function buildDerivedFlow(output) {
   });
   const sceneEvent = selectedSceneEvent(output);
   const agentOutput = output.agent_output;
-  const slots = output.routing_slots || scene.slots || {};
+  const hints = output.routing_hints || scene.hints || {};
   const reasonText = asArray(scene.reasons).length ? scene.reasons.join("；") : "未返回可读识别理由";
 
   const nodes = [
@@ -438,20 +434,21 @@ function buildDerivedFlow(output) {
       id: "router-spec",
       type: "router/spec",
       title: "Spec 驱动场景识别",
-      summary: `命中 ${scene.sceneId}。Router 先用场景索引收敛候选，再按需读取选中场景的 routing spec。`,
+      summary: `命中 ${scene.sceneId}。Router 先加载场景索引交给 LLM 直接识别，再按需读取选中场景的 routing spec。`,
       status: output.status === "failed" ? "异常" : "已识别",
       owner: "意图识别服务",
       details: [
         `识别理由：${reasonText}`,
         `置信分：${scene.score ?? "未返回"}`,
-        `槽位 hints：${Object.keys(slots).length ? Object.keys(slots).join("、") : "无"}`
+        `业务提槽：由执行 Agent 按 Skill 处理${Object.keys(hints).length ? `；兼容 hints=${Object.keys(hints).join("、")}` : ""}`
       ],
-      evidence: [stateTrace, sceneTrace, specTrace, slotTrace].filter(Boolean),
+      evidence: [stateTrace, sceneTrace, specTrace, fieldTrace].filter(Boolean),
       payload: {
         scene_id: scene.sceneId,
         score: scene.score,
         reasons: scene.reasons,
-        routing_slots: slots,
+        field_owner: "execution-agent/skill",
+        routing_hints: hints,
         scene_event: sceneEvent
       }
     }
@@ -468,7 +465,7 @@ function buildDerivedFlow(output) {
       details: [
         `Skill：${skill.skill_id || "未返回"}`,
         `职责说明：${skill.description || "按场景 Skill 完成业务动作"}`,
-        "Router 只传递 spec 允许的 hints 和上下文引用。"
+        "Router 只传递原始表达、上下文引用和 Skill 元数据；业务字段由 Agent/Skill 提取。"
       ],
       evidence: [skillTrace, referenceTrace].filter(Boolean),
       payload: skill
@@ -637,7 +634,7 @@ function renderMechanism() {
   }
   const selected = selectedFlowNode(nodes);
   const skill = dispatchEvent(output)?.skill || findTrace("skill_card", output)?.content?.skill || {};
-  const slotNames = Object.keys(scene.slots || {});
+  const hintNames = Object.keys(scene.hints || {});
 
   elements.mechanismView.innerHTML = `
     <section class="drive-summary">
@@ -652,9 +649,9 @@ function renderMechanism() {
         <small>${escapeHtml(skill.owner || output.target_agent || "等待目标 Agent")}</small>
       </div>
       <div>
-        <span>路由槽位 hints</span>
-        <strong>${slotNames.length ? escapeHtml(slotNames.join("、")) : "无"}</strong>
-        <small>只作为交接线索，业务校验归执行 Agent</small>
+        <span>提槽归属</span>
+        <strong>Agent / Skill</strong>
+        <small>${hintNames.length ? `兼容 hints：${escapeHtml(hintNames.join("、"))}` : "Router 不提业务字段"}</small>
       </div>
       <div>
         <span>当前结果</span>
@@ -825,7 +822,7 @@ function renderResult() {
       <article>
         <span>Router 完成</span>
         <strong>${escapeHtml(scene.sceneId)}</strong>
-        <p>spec 识别、slot hint 投影、Skill 绑定、Agent 派发和任务追踪。</p>
+        <p>spec 识别、Skill 绑定、Agent 派发和任务追踪；业务提槽在 Agent/Skill 内完成。</p>
       </article>
       <article>
         <span>执行 Agent 接管</span>
@@ -1033,11 +1030,11 @@ function buildEventsFromRouterOutput({ sessionId, message, output }) {
       phase: "load",
       event: "context_progressive_built",
       title: "构建渐进式上下文",
-      summary: "意图识别服务按预算加载场景索引、候选场景、路由规格、近期对话和检索引用。",
+      summary: "意图识别服务按预算加载场景索引、识别结果、路由规格、近期对话和检索引用。",
       artifact: {
         included_blocks: output.prompt_report.included_blocks,
         dropped_blocks: output.prompt_report.dropped_blocks,
-        candidate_scene_ids: output.prompt_report.candidate_scene_ids,
+        recognized_scene_ids: output.prompt_report.recognized_scene_ids,
         selected_scene_id: output.prompt_report.selected_scene_id,
         retrieved_references: output.prompt_report.retrieved_references,
         lifecycle: output.prompt_report.lifecycle
@@ -1121,7 +1118,7 @@ function routerEventToObservedEvent(routerEvent, output, seq, timestamp) {
     state_diff: {
       status: output.status,
       scene_id: output.scene_id,
-      routing_slots: output.routing_slots,
+      routing_hints: output.routing_hints,
       action_required: output.action_required
     },
     timestamp
@@ -1137,9 +1134,6 @@ function summarizeRouterEvent(routerEvent, output) {
   if (type === "agent_dispatched") {
     const skill = routerEvent.skill?.skill_id ? `，绑定 Skill：${routerEvent.skill.skill_id}` : "";
     return `Router 已创建 Agent task 并派发给 ${routerEvent.target_agent || output.target_agent}${skill}。`;
-  }
-  if (type === "route_clarification_required") {
-    return `需要补充：${(routerEvent.missing_slots || []).join("、") || "必要信息"}。`;
   }
   if (type === "llm_recognition_failed") {
     return routerEvent.error || "LLM 意图识别失败。";

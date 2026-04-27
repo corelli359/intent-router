@@ -3,5 +3,5 @@
 这份参考文档只供 Router V4 构建意图识别上下文使用。
 
 转账意图覆盖用户向他人转账、汇款、打款、付款等请求。
-Router 可以在用户明确表达时给出 `recipient`、`amount` 等路由槽位提示，但这些只是交接给 Agent 的线索，不是最终业务事实。
-transfer-agent 必须负责收款人、金额、风控、限额、确认和实际转账执行。
+Router 只判断是否命中转账场景，并把原始表达、上下文引用和 Skill 元数据派发给 transfer-agent。
+收款人、金额、风控、限额、确认和实际转账执行都属于 transfer-agent 的 Skill 生命周期。

@@ -92,6 +92,7 @@ def test_assistant_is_front_door_and_generates_transfer_result_text() -> None:
     assert runtime.agent_calls == ["task-a:我要转账300给小红"]
     assert output["assistant_message"] == "转账成功，已向小红转账300元。"
     assert output["output"]["status"] == "task_updated"
+    assert output["assistant_state"]["active_task_id"] is None
 
 
 def test_assistant_calls_router_only_for_non_transfer_scene() -> None:
@@ -113,4 +114,3 @@ def test_assistant_calls_router_only_for_non_transfer_scene() -> None:
     assert runtime.router_calls == ["查一下基金"]
     assert runtime.agent_calls == []
     assert output["router_output"]["target_agent"] == "fund-agent"
-

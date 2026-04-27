@@ -6,7 +6,12 @@ task_type: transfer
 
 ## 执行边界
 
-transfer-agent 只处理转账办理。Router 传入的 `routing_slots` 只是路由阶段的 hints，不是最终业务事实。
+transfer-agent 只处理转账办理。Router 只派发原始表达、上下文引用和 Skill 元数据，不提供最终业务事实；业务提槽是否发生、提哪些字段、怎么追问都由本 Skill 决定。
+
+本 Skill 声明的转账字段：
+
+- `recipient`：收款人姓名、称呼或可解析的收款对象。
+- `amount`：转账金额，必须在用户表达中明确出现。
 
 ## 生命周期
 
