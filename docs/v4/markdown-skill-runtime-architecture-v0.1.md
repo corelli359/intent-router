@@ -8,6 +8,8 @@ scope: router-service v4 markdown skill runtime
 
 本文描述当前已落地的 v4 markdown-first Skill runtime MVP。目标是把业务流程放在 markdown Skill 中，把执行边界、会话状态、工具调用和 API 能力校验放在代码中。
 
+> 说明：本文是早期 `router-service` 内 markdown Skill runtime 的 MVP 文档，不是当前独立 `router-v4-service` 的边界基线。当前三层边界以 `docs/v4/router-v4-boundary-baseline-v0.3.md` 为准。
+
 ## 1. 总体架构
 
 ```mermaid

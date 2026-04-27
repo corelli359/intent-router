@@ -396,7 +396,7 @@
             <small>掌银助手前端 / 后端</small>
           </div>
           <div class="layer-body">
-            <p>面向用户的总控入口，负责承载会话、用户身份、页面上下文、展示交互和上游编排。它不应该承载具体业务执行流程。</p>
+        <p>面向用户的总控入口，负责承载会话、用户身份、页面上下文、展示交互、主动推送和最终话术。它不应该承载具体业务执行流程。</p>
             <div class="layer-items">
               <div class="item"><strong>前端</strong>输入框、确认控件、页面上下文、结果展示。</div>
               <div class="item"><strong>助手后端</strong>统一会话入口、用户画像快照、渠道权限、可用 Agent 列表。</div>
@@ -417,10 +417,10 @@
             <small>Router / Intent Framework</small>
           </div>
           <div class="layer-body">
-            <p>负责识别用户要进入哪个场景，按场景提供的路由 spec 做候选槽位提取，派发给对应执行 Agent，并追踪 Agent 任务状态。</p>
+            <p>负责识别用户要进入哪个场景，调用 spec 驱动识别器产出候选场景和路由槽位 hints，派发给对应执行 Agent，并追踪 Agent 任务状态。</p>
             <div class="layer-items">
               <div class="item"><strong>识别</strong>场景召回、LLM 确认、歧义澄清。</div>
-              <div class="item"><strong>提槽 hints</strong>只提取对话中可直取、且场景 spec 允许的槽位。</div>
+              <div class="item"><strong>提槽 hints</strong>只接收识别器按场景 spec 输出的槽位，并做白名单投影。</div>
               <div class="item"><strong>派发追踪</strong>创建 agent_task_id，记录 transcript 和 Agent event。</div>
             </div>
           </div>
@@ -484,7 +484,7 @@
 
         <div class="cell">提槽</div>
         <div class="cell">可提供页面已选项、用户输入控件值。</div>
-        <div class="cell">只提取场景 spec 声明的可直取槽位，作为 hints。</div>
+        <div class="cell">不在 runtime 本地提槽；只投影识别器按场景 spec 返回的 routing slot hints。</div>
         <div class="cell">主责：业务槽位补全、校验、纠错、确认。</div>
         <div class="cell">权威校验字段有效性。</div>
       </div>
@@ -578,13 +578,13 @@
 
         <div class="cell">`triggers`</div>
         <div class="cell">场景方</div>
-        <div class="cell">Router 做召回、LLM 判别和负例抑制。</div>
+        <div class="cell">识别器基于 routing spec、push_context 和 LLM 输出候选；Router runtime 只编排调用。</div>
         <div class="cell">不代表一定派发，仍要过置信度和歧义判断。</div>
 
         <div class="cell">`routing_slots`</div>
         <div class="cell">场景方</div>
-        <div class="cell">Router 只提取声明过的可直取槽位。</div>
-        <div class="cell">只是 hints，Agent 拥有最终校验权。</div>
+        <div class="cell">识别器按声明返回 routing slot hints，Router runtime 只做白名单投影。</div>
+        <div class="cell">只是 hints，Agent 拥有最终校验权；Router 不做本地启发式提槽。</div>
 
         <div class="cell">`target_agent`</div>
         <div class="cell">场景方 + 平台注册</div>
@@ -695,19 +695,19 @@
         <div class="step">
           <div>
             <h3>场景识别</h3>
-            <p>Router 用场景 metadata 和 LLM/embedding 判断是 `transfer` 场景。歧义时只做路由澄清，例如“是转账还是查转账记录”。</p>
+            <p>LLM recognizer 用场景 metadata、routing spec 和 Skill metadata 判断是 `transfer` 场景。歧义时 Router 只做路由澄清，例如“是转账还是查转账记录”。</p>
           </div>
         </div>
         <div class="step">
           <div>
             <h3>渐进读取路由 Skill</h3>
-            <p>选中 `transfer` 后才读取场景提供的路由 spec：目标 Agent 是 `transfer-agent`，可直取槽位是 `recipient` 和 `amount`。</p>
+            <p>选中 `transfer` 后才读取场景提供的路由 spec：目标 Agent 是 `transfer-agent`，允许传递的 routing slot hints 是 `recipient` 和 `amount`。</p>
           </div>
         </div>
         <div class="step">
           <div>
-            <h3>Router 提取候选槽位</h3>
-            <p>从对话里提取 `recipient=张三`、`amount=5000`。这些只作为 `routing_slots`，执行 Agent 仍要做业务校验和必要补槽。</p>
+            <h3>识别器返回候选槽位</h3>
+            <p>LLM recognizer 基于 routing spec 返回 `recipient=张三`、`amount=5000` 等 hints；Router runtime 只做白名单投影。这些只作为 `routing_slots`，执行 Agent 仍要做业务校验和必要补槽。</p>
           </div>
         </div>
         <div class="step">

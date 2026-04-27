@@ -6,11 +6,12 @@ This service is intentionally separate from the existing `router-service`. It ow
 
 - scene recognition
 - scene routing spec loading
-- routing-slot hint extraction from user utterance
+- LLM/spec/skill-provided routing-slot projection
 - execution-agent task dispatch
 - router-level session and transcript tracking
 
 It does not perform business confirmation, risk checks, limits, idempotency, or direct business API calls. Those remain in scene execution agents.
+The Router runtime also does not perform regex/keyword matching, hardcoded push acceptance, or heuristic slot extraction. Recognition and slot hints are produced by the LLM recognizer from scene routing specs and scene-owned Skill metadata; Router only projects returned slots onto the selected scene spec before dispatch.
 
 Implemented v0.2 capabilities:
 
@@ -21,16 +22,24 @@ Implemented v0.2 capabilities:
 - fixed `ishandover=true` plus `output.data=[]` handover protocol
 - one-hop fallback dispatch to `fallback-agent`
 - task and graph snapshots
+- LLM-only recognizer path with no rules fallback in Router runtime
 
 Runtime switches:
 
 ```bash
 ROUTER_V4_SPEC_ROOT=/path/to/spec-root
 ROUTER_V4_STATE_DIR=/path/to/router-state
+ROUTER_V4_RECOGNIZER_BACKEND=llm
+ROUTER_V4_LLM_API_BASE_URL=https://provider.example/v1
+ROUTER_V4_LLM_API_KEY=...
+ROUTER_V4_LLM_MODEL=...
+ROUTER_V4_FALLBACK_AGENT_ID=fallback-agent
 ROUTER_V4_CONTEXT_MAX_CHARS=4000
 ROUTER_V4_RECENT_TURNS=6
 ROUTER_V4_RETRIEVAL_LIMIT=3
 ```
+
+`ROUTER_V4_*` LLM variables take precedence. For local compatibility, the service also accepts existing `ROUTER_RECOGNIZER_BACKEND` and `ROUTER_LLM_*` names.
 
 If `ROUTER_V4_STATE_DIR` is unset, the service uses in-memory session and transcript stores. If it is set, router-owned session state and transcript records are persisted under that directory.
 
@@ -38,7 +47,8 @@ Run locally:
 
 ```bash
 python -m pip install -e backend/services/router-v4-service
-python -m uvicorn router_v4_service.api.app:app --reload --port 8024
+ROUTER_V4_ENV_FILE=.env.local PYTHONPATH=backend/services/router-v4-service/src \
+  python -m uvicorn router_v4_service.api.app:app --reload --port 8024
 ```
 
 Health:
@@ -78,6 +88,15 @@ curl -X POST http://127.0.0.1:8024/api/router/v4/agent-output \
     "output": {"data": [{"type": "balance", "amount": "1000.00"}]}
   }'
 ```
+
+Standalone observer UI:
+
+```bash
+cd services/router-v4-observer-ui
+python -m http.server 3010 --bind 127.0.0.1
+```
+
+Open `http://127.0.0.1:3010` after the Router V4 service is running on port `8024`.
 
 Run focused tests:
 

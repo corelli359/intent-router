@@ -46,3 +46,4 @@ class AgentOutputRequest(BaseModel):
         if self.ishandover is not None:
             payload["ishandover"] = self.ishandover
         return payload
+

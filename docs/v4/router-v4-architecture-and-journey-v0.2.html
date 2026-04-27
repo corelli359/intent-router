@@ -291,7 +291,7 @@
       <div class="eyebrow">Router V4 / v0.2</div>
       <h1>架构方案与业务旅程</h1>
       <p class="lead">
-        v0.2 在 v0.1 的 spec 驱动路由基础上，增加主动推送、任务图、Agent structured output、handover 兜底改派和任务级拆流预留。核心边界仍然不变：Router 做判断、计划、派发和追踪；业务执行和安全确认仍在场景 Agent；最终用户话术由助手生成。
+        v0.2 在 v0.1 的 spec 驱动路由基础上，增加主动推送、任务图、Agent structured output、handover 兜底改派和任务级拆流预留。核心边界仍然不变：Router 编排识别、计划、派发和追踪；业务执行和安全确认仍在场景 Agent；最终用户话术由助手生成。
       </p>
     </header>
 
@@ -310,7 +310,7 @@
         <div class="layer orange">
           <div class="layer-name">Router 层<small>router-v4-service</small></div>
           <div class="grid three">
-            <div class="card"><h3>识别与计划</h3><p>按 routing spec 识别场景；主动推送时受 <code>push_context.intents</code> 约束；多意图生成 graph/tasks。</p></div>
+            <div class="card"><h3>识别与计划</h3><p>调用 spec 驱动识别器选择场景；主动推送时受 <code>push_context.intents</code> 约束；多意图生成 graph/tasks。</p></div>
             <div class="card"><h3>派发与追踪</h3><p>创建 task，派发执行 Agent，维护 session、task、graph、transcript 和 snapshots。</p></div>
             <div class="card"><h3>兜底改派</h3><p>仅在 <code>ishandover=true</code> 且 <code>output.data=[]</code> 时改派 <code>fallback-agent</code>。</p></div>
           </div>
@@ -421,8 +421,8 @@
       <div class="timeline">
         <div class="step"><div><h3>用户输入</h3><p>用户输入“给张三转5000块”，助手传入 session、用户画像和页面上下文。</p></div></div>
         <div class="step"><div><h3>加载路由上下文</h3><p>Router 读取 session/transcript；若已有 active task，则直接转发给对应 Agent，不重新识别。</p></div></div>
-        <div class="step"><div><h3>识别场景</h3><p>根据 scene index 和 routing spec metadata 选中 <code>transfer</code>。</p></div></div>
-        <div class="step"><div><h3>提取 routing slots</h3><p>提取可直取 hints，例如 <code>recipient=张三</code>、<code>amount=5000</code>。</p></div></div>
+        <div class="step"><div><h3>识别场景</h3><p>LLM recognizer 根据 scene index、routing spec、Skill metadata 选中 <code>transfer</code>。</p></div></div>
+        <div class="step"><div><h3>投影 routing slots</h3><p>recognizer 可返回 <code>recipient=张三</code>、<code>amount=5000</code> 等 hints；Router runtime 只按 spec 白名单投影。</p></div></div>
         <div class="step"><div><h3>派发 Agent</h3><p>创建 task，派发给 <code>transfer-agent</code>；Router 只追踪状态，不做业务确认、风控或交易 API。</p></div></div>
         <div class="step"><div><h3>助手展示</h3><p>助手展示 Router/Agent 结构化状态；最终结果由助手基于 Agent output 组织。</p></div></div>
       </div>
@@ -433,7 +433,7 @@
       <div class="timeline">
         <div class="step"><div><h3>助手推送卡片</h3><p>助手直接推送推荐卡片，并在后续请求里携带 <code>push_context.intents</code>。</p></div></div>
         <div class="step"><div><h3>用户表达</h3><p>用户说“就按这个办”。Router 不再问“是否接受推荐”。</p></div></div>
-        <div class="step"><div><h3>候选约束</h3><p>Router 优先在推荐意图清单内判断；泛化接受默认选择第一推荐项或卡片绑定项。</p></div></div>
+        <div class="step"><div><h3>候选约束</h3><p>Router 把推荐意图清单和用户表达交给 recognizer；runtime 不内置接受/拒绝词表。</p></div></div>
         <div class="step"><div><h3>执行派发</h3><p>Router 直接派发对应 Agent。业务安全确认仍由 Agent/业务域处理。</p></div></div>
         <div class="step"><div><h3>拒绝分支</h3><p>用户说“不用了”时返回 <code>no_action</code>，不创建 task。</p></div></div>
       </div>

@@ -525,7 +525,7 @@
             <small>Router</small>
           </div>
           <div class="layer-body">
-            <p>做路由，不执行业务。读取场景提供的路由 spec，识别用户要进入哪个场景，提取可从对话直取的候选槽位，构造 Agent task 并追踪状态。</p>
+            <p>做路由，不执行业务。读取场景提供的路由 spec，调用识别器识别用户要进入哪个场景，投影 recognizer 返回的候选槽位，构造 Agent task 并追踪状态。</p>
             <div class="layer-items">
               <div class="layer-item">
                 <strong>识别</strong>
@@ -651,11 +651,11 @@
       <div class="callout-grid" style="margin-top: 18px;">
         <div class="card">
           <h3>代码负责什么</h3>
-          <p>保存路由状态、组装上下文、读取场景提供的 spec、识别意图、抽取可直取槽位、派发执行 Agent、记录路由审计、压缩裁剪。</p>
+          <p>保存路由状态、组装上下文、读取场景提供的 spec、调用识别器识别意图、投影 routing slot hints、派发执行 Agent、记录路由审计、压缩裁剪。</p>
         </div>
         <div class="card">
           <h3>Spec 负责什么</h3>
-          <p>Router 侧 spec 由场景提供，描述触发条件、目标 Agent、可由 Router 直取的槽位、派发字段和 reference；业务步骤、确认、风控、业务 API 由场景执行 Agent 的 spec 定义。</p>
+          <p>Router 侧 spec 由场景提供，描述触发条件、目标 Agent、允许传递的 routing slot hints、派发字段和 reference；业务步骤、确认、风控、业务 API 由场景执行 Agent 的 spec 定义。</p>
         </div>
       </div>
     </section>
@@ -665,7 +665,7 @@
       <div class="grid two">
         <div class="card blue">
           <h3>Router 应该负责</h3>
-          <p>识别意图、做必要澄清、读取场景提供的路由 spec、提取可从对话直取的候选槽位、选择目标 Agent、派发任务、记录路由 transcript、追踪 Agent 状态。</p>
+          <p>识别意图、做必要路由澄清、读取场景提供的路由 spec、投影识别器返回的候选槽位、选择目标 Agent、派发任务、记录路由 transcript、追踪 Agent 状态。</p>
           <div class="pill-row">
             <span class="pill">识别</span>
             <span class="pill">派发</span>
@@ -685,7 +685,7 @@
         </div>
       </div>
       <div class="note" style="margin-top: 16px;">
-        Router 可以提槽，但槽位 schema 必须由场景 spec 提供；Router 提取出来的是派发 hints，执行 Agent 仍然拥有最终业务校验权。
+        Router runtime 不做本地启发式提槽；槽位 schema 必须由场景 spec 提供。识别器返回的是派发 hints，Router 只做白名单投影，执行 Agent 仍然拥有最终业务校验权。
       </div>
     </section>
 
@@ -768,7 +768,7 @@ agent.md 全文
 + 当前路由 session state
 + 最近几轮原文
 + 候选场景 metadata
-+ 场景提供的可直取 slot spec
++ 场景提供的 routing slot spec
 + 目标 Agent 派发契约</code></pre>
         </div>
       </div>
@@ -798,7 +798,7 @@ agent.md 全文
         <div class="step">
           <div>
             <h3>加载短 Agent Rules</h3>
-            <p>读取 `agent.md` 中稳定规则：Router 只做识别、澄清、提取可直取槽位、派发和追踪；业务确认和业务执行必须交给场景 Agent。</p>
+            <p>读取 `agent.md` 中稳定规则：Router 只做识别、澄清、投影 routing slot hints、派发和追踪；业务确认和业务执行必须交给场景 Agent。</p>
           </div>
         </div>
         <div class="step">
@@ -816,19 +816,19 @@ agent.md 全文
         <div class="step">
           <div>
             <h3>读取场景路由 Spec</h3>
-            <p>选中 `transfer` 后才读场景提供的路由 spec，拿到目标 `transfer-agent`、可由 Router 直取的 slot schema、派发字段和 reference 列表。</p>
+            <p>选中 `transfer` 后才读场景提供的路由 spec，拿到目标 `transfer-agent`、允许传递的 routing slot schema、派发字段和 reference 列表。</p>
           </div>
         </div>
         <div class="step">
           <div>
             <h3>按当前 step 读取 Reference</h3>
-            <p>如果识别或提槽需要业务说明，读取场景 reference 的必要片段。例如“收款人”和“金额”如何从自然语言中直取。完整业务执行规则仍由场景 Agent 持有。</p>
+            <p>如果识别或路由槽位 hints 需要业务说明，读取场景 reference 的必要片段。例如“收款人”和“金额”在路由侧如何作为 hints 表达。完整业务执行规则仍由场景 Agent 持有。</p>
           </div>
         </div>
         <div class="step">
           <div>
-            <h3>提取 Router 可直取 slots</h3>
-            <p>根据场景提供的 slot spec，从“给张三转5000块”提取候选 `recipient=张三`、`amount=5000`。这些是派发 hints，不替代执行 Agent 的业务校验。</p>
+            <h3>投影 Router routing slots</h3>
+            <p>LLM recognizer 根据场景提供的 slot spec 返回候选 `recipient=张三`、`amount=5000`。Router runtime 只按 spec 白名单投影，这些是派发 hints，不替代执行 Agent 的业务校验。</p>
           </div>
         </div>
         <div class="step">

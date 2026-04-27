@@ -44,7 +44,7 @@ class AgentDispatchClient:
             return AgentDispatchResult(
                 agent_task_id=str(payload.get("agent_task_id") or payload.get("task_id") or ""),
                 status=str(payload.get("status") or "dispatched"),
-                message=str(payload.get("message") or "已派发给执行 Agent。"),
+                message=str(payload.get("message") or "task_dispatched"),
                 raw=payload,
             )
         raise AgentDispatchError(f"unsupported agent endpoint: {agent.endpoint}")
@@ -59,7 +59,7 @@ class AgentDispatchClient:
         return AgentDispatchResult(
             agent_task_id=agent_task_id,
             status="forwarded",
-            message=f"已将消息转交给 {agent_id} 继续处理。",
+            message="message_forwarded_to_active_agent",
             raw={"message": message, "agent_id": agent_id},
         )
 
@@ -75,7 +75,7 @@ class AgentDispatchClient:
         return AgentDispatchResult(
             agent_task_id=task_id,
             status="dispatched",
-            message=f"已将{scene_id or '当前'}场景交给 {agent.agent_id} 处理。",
+            message="task_dispatched",
             raw={
                 "agent_task_id": task_id,
                 "status": "dispatched",

@@ -46,6 +46,9 @@ class SpecRegistry:
         except KeyError as exc:
             raise SpecRegistryError(f"unknown agent: {agent_id}") from exc
 
+    def agent_index(self) -> list[AgentDefinition]:
+        return sorted(self._load_agents().values(), key=lambda item: item.agent_id)
+
     def _load_scenes(self) -> dict[str, SceneSpec]:
         if self._scenes is not None:
             return self._scenes
@@ -114,6 +117,7 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_hash: str, source: Path) 
         version=str(payload.get("version") or "0.0.0"),
         description=str(payload.get("description") or ""),
         target_agent=_required_str(payload, "target_agent"),
+        skill=dict(payload.get("skill") or {}),
         triggers=TriggerSpec(
             examples=tuple(str(value) for value in triggers.get("examples", [])),
             negative_examples=tuple(str(value) for value in triggers.get("negative_examples", [])),
@@ -127,6 +131,7 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_hash: str, source: Path) 
         ),
         references=tuple(str(value) for value in payload.get("references", [])),
         spec_hash=spec_hash,
+        source_path=str(source),
     )
 
 
@@ -138,7 +143,7 @@ def _parse_routing_slot(payload: object, source: Path) -> RoutingSlotSpec:
         source=str(payload.get("source") or "user_utterance"),
         required_for_dispatch=bool(payload.get("required_for_dispatch", False)),
         handoff=bool(payload.get("handoff", True)),
-        extractor=dict(payload.get("extractor") or {}),
+        extraction=dict(payload.get("extraction") or {}),
     )
 
 

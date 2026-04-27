@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>意图识别链路观察</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="chat-pane" aria-label="对话区">
+        <header class="pane-head">
+          <div>
+            <p>掌银助手</p>
+            <h1>用户对话</h1>
+          </div>
+        </header>
+
+        <div id="chatLog" class="chat-log">
+          <article class="bubble assistant">
+            <span>助手</span>
+            <p>你好，请输入你要办理的事情。</p>
+          </article>
+        </div>
+
+        <footer class="composer">
+          <textarea id="messageInput" rows="4" aria-label="用户输入">我要转账</textarea>
+          <button id="sendButton" type="button">发送</button>
+        </footer>
+      </section>
+
+      <section class="observe-pane" aria-label="链路查看">
+        <header class="pane-head">
+          <div>
+            <p>链路查看</p>
+            <h1>助手到意图服务再到执行智能体</h1>
+          </div>
+          <div class="head-actions">
+            <span id="runStatus" class="status">待发送</span>
+            <button id="refreshButton" class="secondary" type="button" disabled>刷新</button>
+          </div>
+        </header>
+
+        <div class="run-meta">
+          <div>
+            <span>运行编号</span>
+            <strong id="runId">未开始</strong>
+          </div>
+          <div>
+            <span>会话编号</span>
+            <strong id="sessionId">未创建</strong>
+          </div>
+          <div>
+            <span>事件数量</span>
+            <strong id="eventCount">0</strong>
+          </div>
+          <div>
+            <span>后端接口</span>
+            <strong id="apiBase">http://127.0.0.1:8024</strong>
+          </div>
+        </div>
+
+        <div class="service-line" aria-label="服务层级">
+          <span id="assistantLane">掌银助手</span>
+          <span id="routerLane">意图识别服务</span>
+          <span id="agentLane">执行智能体</span>
+        </div>
+
+        <div class="scenario-tabs" aria-label="调试场景">
+          <button class="scenario active" data-scenario="normal">
+            <strong>普通用户输入</strong>
+            <span>助手把用户表达交给意图服务识别</span>
+          </button>
+          <button class="scenario" data-scenario="assistant_push">
+            <strong>主动推送卡片</strong>
+            <span>助手推送后不再二次确认，直接进入路由</span>
+          </button>
+          <button class="scenario" data-scenario="multi_intent">
+            <strong>多意图拆流</strong>
+            <span>一次表达拆成多个任务流返回给助手</span>
+          </button>
+          <button class="scenario" data-scenario="fund_query">
+            <strong>基金查询</strong>
+            <span>普通用户表达识别到基金场景</span>
+          </button>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="观察内容">
+          <button class="tab active" data-tab="mechanism" type="button">业务链路 Flow</button>
+          <button class="tab" data-tab="loads" type="button">加载证据</button>
+          <button class="tab" data-tab="result" type="button">执行结果</button>
+        </div>
+
+        <section id="mechanismPanel" class="panel active" aria-label="业务链路 Flow">
+          <div id="mechanismView" class="mechanism-view">
+            <div class="empty">发送一次对话后，这里展示用户、助手、Router/Spec、Skill、Agent 和结果节点。</div>
+          </div>
+        </section>
+
+        <section id="loadsPanel" class="panel" aria-label="加载证据">
+          <div id="loadsList" class="load-list">
+            <div class="empty">发送一次对话后，这里展示每个阶段读取了哪些 spec、md、reference，以及内容摘录。</div>
+          </div>
+        </section>
+
+        <section id="resultPanel" class="panel" aria-label="执行结果">
+          <div id="resultView" class="result-view">
+            <div class="empty">发送一次对话后，这里展示本轮业务结论、Agent 接管状态和助手最终可见结果。</div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

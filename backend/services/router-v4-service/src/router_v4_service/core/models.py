@@ -62,7 +62,7 @@ class RoutingSlotSpec:
     source: str
     required_for_dispatch: bool = False
     handoff: bool = True
-    extractor: dict[str, Any] = field(default_factory=dict)
+    extraction: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,11 +82,13 @@ class SceneSpec:
     version: str
     description: str
     target_agent: str
+    skill: dict[str, Any]
     triggers: TriggerSpec
     routing_slots: tuple[RoutingSlotSpec, ...]
     dispatch_contract: DispatchContract
     references: tuple[str, ...]
     spec_hash: str
+    source_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +274,7 @@ class RouterV4Output:
     tasks: tuple[dict[str, Any], ...] = ()
     agent_output: dict[str, Any] | None = None
     action_required: dict[str, Any] | None = None
+    assistant_result_status: str = ""
     events: tuple[dict[str, Any], ...] = ()
     prompt_report: dict[str, Any] = field(default_factory=dict)
 
@@ -290,6 +293,7 @@ class RouterV4Output:
             "tasks": [dict(item) for item in self.tasks],
             "agent_output": self.agent_output,
             "action_required": self.action_required,
+            "assistant_result_status": self.assistant_result_status,
             "events": [dict(item) for item in self.events],
             "prompt_report": dict(self.prompt_report),
         }

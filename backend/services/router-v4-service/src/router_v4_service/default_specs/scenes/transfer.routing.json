@@ -4,10 +4,17 @@
   "name": "转账",
   "description": "识别用户向他人转账、汇款、打款的请求，并派发给转账执行 Agent。",
   "target_agent": "transfer-agent",
+  "skill": {
+    "skill_id": "transfer",
+    "version": "0.1.0",
+    "owner": "transfer-agent",
+    "path": "skills/transfer.skill.md",
+    "description": "由转账执行 Agent 按转账 Skill 补槽、风控、确认和执行。"
+  },
   "triggers": {
     "keywords": ["转账", "转给", "汇款", "打钱", "打款"],
     "negative_keywords": ["记录", "明细", "历史"],
-    "examples": ["给张三转5000块", "向李四汇款"],
+    "examples": ["我要转账", "我想转账", "我我要转账", "给张三转5000块", "向李四汇款"],
     "negative_examples": ["查询转账记录"]
   },
   "routing_slots": [
@@ -16,11 +23,9 @@
       "source": "user_utterance",
       "required_for_dispatch": false,
       "handoff": true,
-      "extractor": {
-        "type": "after_terms",
-        "terms": ["转给", "给", "向"],
-        "stop_terms": ["转账", "汇款", "打钱", "打款", "转", "支付"],
-        "max_chars": 16
+      "extraction": {
+        "type": "llm",
+        "instruction": "如果用户明确说明收款人，提取收款人姓名或称呼；无法确定时不要填写。"
       }
     },
     {
@@ -28,8 +33,9 @@
       "source": "user_utterance",
       "required_for_dispatch": false,
       "handoff": true,
-      "extractor": {
-        "type": "number"
+      "extraction": {
+        "type": "llm",
+        "instruction": "如果用户明确说明转账金额，提取数值金额；无法确定时不要填写。"
       }
     }
   ],
@@ -37,5 +43,5 @@
     "task_type": "transfer",
     "handoff_fields": ["raw_message", "recipient", "amount", "user_profile_ref", "page_context_ref"]
   },
-  "references": ["transfer-routing.md"]
+  "references": ["references/transfer-routing.md"]
 }

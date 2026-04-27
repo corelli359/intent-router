@@ -261,17 +261,17 @@ task.handover_exhausted
 }
 ```
 
-### Router 判断规则
+### Router 判断边界
 
 主动推送模式下：
 
+- Router runtime 不内置接受、拒绝、多意图等文本词表。
 - Router 候选场景必须优先受 `push_context.intents` 约束。
-- 用户表达明确指向某个推荐项时，选择该推荐项。
-- 用户表达是“就这个、按推荐来、办理这个”时，优先选择推荐清单第一项或卡片绑定项。
-- 用户表达是“都办、一起处理”时，可以生成多意图计划。
-- 用户表达是修改式表达时，Router 需要结合 routing spec 重新提取可直取槽位 hints。
-- 用户表达明确拒绝时，Router 返回 `no_action` 或 `cancelled`，不派发 Agent。
-- 用户表达完全偏离推荐清单时，Router 可以退回普通 routing spec 识别，或进入 fallback policy；具体策略由产品配置决定。
+- LLM recognizer 基于用户表达、`push_context.intents`、routing spec 和 Skill metadata 输出 `selected_scene_id` 或 `selected_scene_ids`。
+- recognizer 未选择任何场景时，Router 返回 `no_action`，不派发 Agent。
+- recognizer 选择一个场景时，Router 创建单 task 并派发对应 Agent。
+- recognizer 选择多个场景时，Router 创建 graph/tasks，按任务拆流。
+- 用户表达完全偏离推荐清单时，是否退回普通 routing spec 识别或进入 fallback policy，由产品策略配置决定；不在 Router runtime 中写死。
 
 ### 不进入 Router 确认态
 

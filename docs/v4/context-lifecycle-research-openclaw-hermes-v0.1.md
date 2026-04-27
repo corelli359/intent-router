@@ -14,7 +14,7 @@ date: 2026-04-25
 - 长 spec 场景不能靠“每轮把所有文档和历史重新塞给模型”解决。
 - 正确做法是把运行时事实拆成四类：**结构化状态、短期 transcript、可重载 spec/reference、长期记忆/检索索引**。
 - LLM 每轮看到的是 runtime 组装出的“当前必要视图”，不是系统的全部事实。
-- 对金融业务，Router 的状态机只应覆盖**识别、澄清、提取可直取槽位、派发、追踪**；业务确认、风控、幂等和业务 API 调用应下沉到场景执行 Agent。
+- 对金融业务，Router 的状态机只应覆盖**识别、澄清、投影 routing slot hints、派发、追踪**；业务确认、风控、幂等和业务 API 调用应下沉到场景执行 Agent。
 
 ## 0. Router 与场景执行 Agent 的边界修订
 
@@ -22,13 +22,13 @@ date: 2026-04-25
 
 | 维度 | Router | 场景执行 Agent |
 |---|---|---|
-| 核心职责 | 识别意图、选择场景、读取场景提供的路由 spec、做路由澄清、提取可直取槽位、派发任务、追踪完成态 | 业务提槽补全、业务校验、风控、确认、幂等、业务 API 调用、异常处理、业务结果生成 |
+| 核心职责 | 识别意图、选择场景、读取场景提供的路由 spec、做路由澄清、投影 recognizer 返回的 routing slot hints、派发任务、追踪完成态 | 业务提槽补全、业务校验、风控、确认、幂等、业务 API 调用、异常处理、业务结果生成 |
 | Spec 类型 | 路由 spec：触发条件、目标 Agent、路由槽位、派发契约、可读 reference | 执行 spec：业务步骤、确认、风控、接口协议、异常处理 |
-| 槽位 | 可以按场景提供的 slot spec 从对话中提取候选值 | 拥有最终业务校验权，可补槽、改槽、拒绝槽位 |
+| 槽位 | 不做本地启发式提槽；只按场景 slot spec 投影 recognizer 返回的候选值 | 拥有最终业务校验权，可补槽、改槽、拒绝槽位 |
 | API | LLM/embedding、spec registry、session/transcript、Agent registry、Agent dispatch | 业务 API，例如转账、风控、申购、还款、缴费 |
 | 多轮状态 | 路由状态、候选场景、agent_task_id、派发状态、路由槽位 hints | 业务状态、业务步骤游标、确认态、风控结果、幂等键 |
 
-因此，Router 里不应出现“转账确认态”或直接 `risk_check/transfer` 调用。Router 可以把 `recipient=张三`、`amount=5000` 作为场景 spec 允许的候选槽位传给 `transfer-agent`，但确认与最终执行由 `transfer-agent` 负责。
+因此，Router 里不应出现“转账确认态”或直接 `risk_check/transfer` 调用。Router 可以把 recognizer 返回且场景 spec 允许的 `recipient=张三`、`amount=5000` 候选槽位传给 `transfer-agent`，但确认与最终执行由 `transfer-agent` 负责。
 
 ## 1. 调研范围
 
@@ -411,8 +411,8 @@ stateDiagram-v2
 | 阶段 | 输入 | Runtime 动作 | Prompt 内容 |
 |---|---|---|---|
 | Discover | message + scene index | 候选召回/排序 | 只放候选 metadata |
-| Bind | selected scene | 读取路由 spec，记录 version/hash | 派发契约、可直取 slot spec |
-| Extract | message + slot spec | 提取路由槽位 hints | slots、置信度、来源文本 |
+| Bind | selected scene | 读取路由 spec，记录 version/hash | 派发契约、routing slot spec |
+| Extract | message + slot spec | 投影 recognizer 返回的路由槽位 hints | slots、置信度、来源说明 |
 | Dispatch | routing state | 创建 Agent task | 目标 Agent、handoff fields |
 | Track | Agent callback | 更新派发状态 | Agent 状态摘要 |
 | Resume | next user turn | 用 state 恢复 scene/task | 不重复注入 full spec，除非 hash 变化 |
@@ -788,7 +788,7 @@ OpenClaw/Hermes 多数能力面向通用 agent，可以把很多规则放在 pro
 LLM 负责：
   - 理解用户表达
   - 从候选场景中选择
-  - 按场景提供的 slot spec 辅助提取可直取槽位
+  - 按场景提供的 slot spec 返回 routing slot hints
   - 对 reference 做自然语言解释
   - 在受控路由 action 集合内建议下一步
 
@@ -814,7 +814,7 @@ Runtime 负责：
 4. Deterministic pruning。
 5. Reference 按识别/提槽需要加载。
 
-这五项完成后，再接 LLM recognizer/extractor 和 embedding 才有意义。否则 LLM 能力越强，越容易在不可控上下文里越过 Router/Agent 边界。
+这五项完成后，再接 LLM recognizer 和 embedding 才有意义。否则 LLM 能力越强，越容易在不可控上下文里越过 Router/Agent 边界。
 
 ## 13. 参考资料
 

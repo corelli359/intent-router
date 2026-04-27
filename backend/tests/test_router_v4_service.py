@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
+import httpx
 from fastapi.testclient import TestClient
 
 
@@ -12,11 +15,62 @@ if str(ROUTER_V4_SRC) not in sys.path:
     sys.path.insert(0, str(ROUTER_V4_SRC))
 
 from router_v4_service.api.app import create_app  # noqa: E402
+from router_v4_service.core.config import RouterV4LLMSettings, RouterV4Settings, load_env_file  # noqa: E402
 from router_v4_service.core.context import ContextBuilder  # noqa: E402
 from router_v4_service.core.models import ContextPolicy, RouterTurnStatus, RouterV4Input  # noqa: E402
+from router_v4_service.core.recognizer import IntentCandidate, LLMIntentRecognizer  # noqa: E402
 from router_v4_service.core.runtime import RouterV4Runtime  # noqa: E402
 from router_v4_service.core.spec_registry import SpecRegistry  # noqa: E402
 from router_v4_service.core.stores import FileRoutingSessionStore, FileTranscriptStore  # noqa: E402
+
+
+class FakeIntentRecognizer:
+    def __init__(self, decisions: dict[str, object] | None = None) -> None:
+        self.decisions = decisions or {}
+
+    def shortlist(
+        self,
+        message: str,
+        scenes: list[object],
+        *,
+        limit: int = 3,
+        push_context: dict[str, object] | None = None,
+    ) -> list[IntentCandidate]:
+        raw = self.decisions.get(message, self.decisions.get("*", []))
+        items = raw if isinstance(raw, list) else [raw]
+        scene_by_id = {getattr(scene, "scene_id"): scene for scene in scenes}
+        candidates: list[IntentCandidate] = []
+        for item in items:
+            if item in (None, "", []):
+                continue
+            if isinstance(item, str):
+                scene_id = item
+                slots: dict[str, object] = {}
+                score = 90
+                reasons = ("fake_llm",)
+            elif isinstance(item, dict):
+                scene_id = str(item.get("scene_id") or "")
+                slots = dict(item.get("slots") or {})
+                score = int(item.get("score") or 90)
+                reasons = tuple(str(value) for value in item.get("reasons", ("fake_llm",)))
+            else:
+                continue
+            scene = scene_by_id.get(scene_id)
+            if scene is None:
+                continue
+            candidates.append(
+                IntentCandidate(
+                    scene=scene,
+                    score=score,
+                    reasons=reasons,
+                    routing_slots=slots,
+                )
+            )
+        return candidates[:limit]
+
+
+def _runtime(decisions: dict[str, object] | None = None, **kwargs: object) -> RouterV4Runtime:
+    return RouterV4Runtime(recognizer=FakeIntentRecognizer(decisions), **kwargs)
 
 
 def test_spec_registry_loads_default_scenes_and_agents() -> None:
@@ -27,6 +81,12 @@ def test_spec_registry_loads_default_scenes_and_agents() -> None:
     agent = registry.agent("transfer-agent")
 
     assert [scene.scene_id for scene in scenes] == ["balance_query", "fund_query", "transfer"]
+    assert [agent.agent_id for agent in registry.agent_index()] == [
+        "balance-agent",
+        "fallback-agent",
+        "fund-agent",
+        "transfer-agent",
+    ]
     assert transfer.target_agent == "transfer-agent"
     assert [slot.name for slot in transfer.routing_slots] == ["recipient", "amount"]
     assert agent.accepted_scene_ids == ("transfer",)
@@ -34,7 +94,14 @@ def test_spec_registry_loads_default_scenes_and_agents() -> None:
 
 
 def test_runtime_dispatches_transfer_scene_with_routing_slots() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime(
+        {
+            "给张三转5000块": {
+                "scene_id": "transfer",
+                "slots": {"recipient": "张三", "amount": 5000},
+            }
+        }
+    )
 
     output = runtime.handle_turn(
         RouterV4Input(
@@ -49,13 +116,117 @@ def test_runtime_dispatches_transfer_scene_with_routing_slots() -> None:
     assert output.scene_id == "transfer"
     assert output.target_agent == "transfer-agent"
     assert output.agent_task_id
+    assert output.response == "task_dispatched"
     assert output.routing_slots == {"recipient": "张三", "amount": 5000}
     assert any(event["type"] == "agent_dispatched" for event in output.events)
     assert "routing_spec" in output.prompt_report["included_blocks"]
+    blocks = [item["block"] for item in output.prompt_report["load_trace"]]
+    assert "scene_index" in blocks
+    assert "routing_spec" in blocks
+    assert "routing_slot_spec" in blocks
+    assert "skill_card" in blocks
+    assert "retrieved_references" in blocks
+    skill_trace = next(item for item in output.prompt_report["load_trace"] if item["block"] == "skill_card")
+    assert skill_trace["files"][0]["path"].endswith("transfer.skill.md")
+    assert "transfer-agent 负责收款人和金额校验" in skill_trace["files"][0]["excerpt"]
+    assert "ishandover=true" in skill_trace["files"][0]["excerpt"]
+    dispatch_event = next(event for event in output.events if event["type"] == "agent_dispatched")
+    assert dispatch_event["skill"]["skill_id"] == "transfer"
+    assert dispatch_event["task_payload"]["scene_id"] == "transfer"
+
+
+def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "selected_scene_id": "transfer",
+                                    "selected_scene_ids": [],
+                                    "confidence": 0.93,
+                                    "reason": "用户明确表达转账",
+                                    "routing_slots": {"recipient": "张三"},
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    registry = SpecRegistry()
+    recognizer = LLMIntentRecognizer(
+        RouterV4LLMSettings(
+            api_base_url="https://llm.example/v1",
+            api_key="test-key",
+            model="test-model",
+            temperature=0,
+        ),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    candidates = recognizer.shortlist("我要转账", registry.scene_index())
+
+    assert candidates[0].scene.scene_id == "transfer"
+    assert candidates[0].score == 93
+    assert "llm" in candidates[0].reasons
+    assert candidates[0].routing_slots == {"recipient": "张三"}
+    assert captured["url"] == "https://llm.example/v1/chat/completions"
+    assert captured["payload"]["model"] == "test-model"
+    assert "skill" in captured["payload"]["messages"][1]["content"]
+
+
+def test_runtime_llm_backend_surfaces_missing_llm_config() -> None:
+    runtime = RouterV4Runtime(settings=RouterV4Settings(recognizer_backend="llm"))
+
+    output = runtime.handle_turn(RouterV4Input(session_id="sess-llm-missing", message="我要转账"))
+
+    assert output.status == RouterTurnStatus.FAILED
+    assert output.events[0]["type"] == "llm_recognition_failed"
+
+
+def test_load_env_file_ignores_comments_without_shell_execution(tmp_path: Path, monkeypatch) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(
+        """
+# Router comment with spaces
+ROUTER_V4_RECOGNIZER_BACKEND=llm
+BROKEN LINE WITHOUT EQUALS
+ROUTER_V4_LLM_MODEL=test-model
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ROUTER_V4_RECOGNIZER_BACKEND", raising=False)
+    monkeypatch.delenv("ROUTER_V4_LLM_MODEL", raising=False)
+
+    try:
+        load_env_file(env_file)
+
+        assert RouterV4Settings.from_env().recognizer_backend == "llm"
+        assert RouterV4Settings.from_env().llm.model == "test-model"
+    finally:
+        os.environ.pop("ROUTER_V4_RECOGNIZER_BACKEND", None)
+        os.environ.pop("ROUTER_V4_LLM_MODEL", None)
 
 
 def test_runtime_forwards_followup_to_existing_agent_task() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime(
+        {
+            "给张三转5000块": {
+                "scene_id": "transfer",
+                "slots": {"recipient": "张三", "amount": 5000},
+            }
+        }
+    )
     first = runtime.handle_turn(
         RouterV4Input(session_id="sess-follow", message="给张三转5000块")
     )
@@ -68,11 +239,11 @@ def test_runtime_forwards_followup_to_existing_agent_task() -> None:
     assert second.scene_id == "transfer"
     assert second.target_agent == "transfer-agent"
     assert second.agent_task_id == first.agent_task_id
-    assert "继续处理" in second.response
+    assert second.response == "message_forwarded_to_active_agent"
 
 
 def test_runtime_returns_clarification_when_scene_is_unknown() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime({"今天天气怎么样": []})
 
     output = runtime.handle_turn(
         RouterV4Input(session_id="sess-unknown", message="今天天气怎么样")
@@ -107,7 +278,7 @@ def test_runtime_does_not_dispatch_when_agent_missing(tmp_path: Path) -> None:
         '{"agents": []}',
         encoding="utf-8",
     )
-    runtime = RouterV4Runtime(registry=SpecRegistry(spec_root))
+    runtime = _runtime({"我要转账": "transfer"}, registry=SpecRegistry(spec_root))
 
     output = runtime.handle_turn(
         RouterV4Input(session_id="sess-missing-agent", message="我要转账")
@@ -137,14 +308,14 @@ def test_runtime_keeps_pending_scene_and_collects_required_slots(tmp_path: Path)
       "source": "user_utterance",
       "required_for_dispatch": true,
       "handoff": true,
-      "extractor": {"type": "after_terms", "terms": ["给"], "stop_terms": ["转"], "max_chars": 16}
+      "extraction": {"type": "llm", "instruction": "提取收款人"}
     },
     {
       "name": "amount",
       "source": "user_utterance",
       "required_for_dispatch": true,
       "handoff": true,
-      "extractor": {"type": "number"}
+      "extraction": {"type": "llm", "instruction": "提取金额"}
     }
   ],
   "dispatch_contract": {"task_type": "transfer", "handoff_fields": ["raw_message", "recipient", "amount"]},
@@ -169,7 +340,17 @@ def test_runtime_keeps_pending_scene_and_collects_required_slots(tmp_path: Path)
 """,
         encoding="utf-8",
     )
-    runtime = RouterV4Runtime(registry=SpecRegistry(spec_root))
+    runtime = _runtime(
+        {
+            "我要转账": "transfer",
+            "给张三转500元": {
+                "scene_id": "transfer",
+                "slots": {"recipient": "张三", "amount": 500},
+                "reasons": ("pending_scene",),
+            },
+        },
+        registry=SpecRegistry(spec_root),
+    )
 
     first = runtime.handle_turn(RouterV4Input(session_id="sess-pending", message="我要转账"))
     second = runtime.handle_turn(RouterV4Input(session_id="sess-pending", message="给张三转500元"))
@@ -183,13 +364,23 @@ def test_runtime_keeps_pending_scene_and_collects_required_slots(tmp_path: Path)
 
 def test_runtime_can_persist_session_state_between_instances(tmp_path: Path) -> None:
     state_dir = tmp_path / "router-state"
+    recognizer = FakeIntentRecognizer(
+        {
+            "给张三转5000块": {
+                "scene_id": "transfer",
+                "slots": {"recipient": "张三", "amount": 5000},
+            }
+        }
+    )
     first_runtime = RouterV4Runtime(
+        recognizer=recognizer,
         session_store=FileRoutingSessionStore(state_dir),
         transcript_store=FileTranscriptStore(state_dir),
     )
     first = first_runtime.handle_turn(RouterV4Input(session_id="sess-persist", message="给张三转5000块"))
 
     second_runtime = RouterV4Runtime(
+        recognizer=recognizer,
         session_store=FileRoutingSessionStore(state_dir),
         transcript_store=FileTranscriptStore(state_dir),
     )
@@ -203,10 +394,16 @@ def test_runtime_can_persist_session_state_between_instances(tmp_path: Path) -> 
 
 
 def test_context_report_applies_budget_and_keeps_core_blocks() -> None:
-    runtime = RouterV4Runtime(
+    runtime = _runtime(
+        {
+            "给张三转5000块": {
+                "scene_id": "transfer",
+                "slots": {"recipient": "张三", "amount": 5000},
+            }
+        },
         context_builder=ContextBuilder(
             ContextPolicy(max_chars=700, recent_turn_limit=2, retrieved_reference_limit=1)
-        )
+        ),
     )
 
     output = runtime.handle_turn(RouterV4Input(session_id="sess-context", message="给张三转5000块"))
@@ -214,11 +411,11 @@ def test_context_report_applies_budget_and_keeps_core_blocks() -> None:
     assert output.status == RouterTurnStatus.DISPATCHED
     assert output.prompt_report["max_chars"] == 700
     assert output.prompt_report["dropped_blocks"]
-    assert output.prompt_report["included_blocks"][:3] == ["agent_rules", "routing_state", "scene_index"]
+    assert output.prompt_report["included_blocks"][:3] == ["router_boundary", "routing_state", "scene_index"]
 
 
 def test_push_context_generic_acceptance_dispatches_first_recommended_scene() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime({"就按这个办": {"scene_id": "fund_query", "reasons": ("llm_push_selected",)}})
 
     output = runtime.handle_turn(
         RouterV4Input(
@@ -239,12 +436,12 @@ def test_push_context_generic_acceptance_dispatches_first_recommended_scene() ->
     assert output.scene_id == "fund_query"
     assert output.target_agent == "fund-agent"
     assert output.action_required is None
-    assert output.events[0]["reasons"] == ["push_default"]
+    assert output.events[0]["reasons"] == ["llm_push_selected"]
     assert output.tasks[0]["push_context"]["push_id"] == "push-001"
 
 
 def test_push_context_rejection_returns_no_action_without_dispatch() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime({"不用了": []})
 
     output = runtime.handle_turn(
         RouterV4Input(
@@ -262,7 +459,14 @@ def test_push_context_rejection_returns_no_action_without_dispatch() -> None:
 
 
 def test_push_context_multi_intent_returns_split_task_plan() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime(
+        {
+            "都看一下": [
+                {"scene_id": "balance_query", "score": 95, "reasons": ("llm_multi_intent",)},
+                {"scene_id": "fund_query", "score": 94, "reasons": ("llm_multi_intent",)},
+            ]
+        }
+    )
 
     output = runtime.handle_turn(
         RouterV4Input(
@@ -289,7 +493,7 @@ def test_push_context_multi_intent_returns_split_task_plan() -> None:
 
 
 def test_agent_completed_output_is_preserved_for_assistant_generation() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime({"查一下余额": "balance_query"})
     dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-agent-output", message="查一下余额"))
 
     updated = runtime.handle_agent_output(
@@ -310,7 +514,7 @@ def test_agent_completed_output_is_preserved_for_assistant_generation() -> None:
 
 
 def test_agent_handover_protocol_dispatches_fallback_agent_once() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime({"基金": "fund_query"})
     dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-handover", message="基金"))
 
     updated = runtime.handle_agent_output(
@@ -336,7 +540,7 @@ def test_agent_handover_protocol_dispatches_fallback_agent_once() -> None:
 
 
 def test_agent_camel_case_handover_is_not_accepted() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime({"基金": "fund_query"})
     dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-camel-handover", message="基金"))
 
     updated = runtime.handle_agent_output(
@@ -354,7 +558,7 @@ def test_agent_camel_case_handover_is_not_accepted() -> None:
 
 
 def test_fallback_handover_does_not_loop() -> None:
-    runtime = RouterV4Runtime()
+    runtime = _runtime({"基金": "fund_query"})
     dispatched = runtime.handle_turn(RouterV4Input(session_id="sess-no-loop", message="基金"))
     fallback = runtime.handle_agent_output(
         session_id="sess-no-loop",
@@ -375,7 +579,7 @@ def test_fallback_handover_does_not_loop() -> None:
 
 
 def test_api_message_endpoint_dispatches_scene() -> None:
-    app = create_app()
+    app = create_app(runtime=_runtime({"查一下余额": "balance_query"}))
 
     with TestClient(app) as client:
         response = client.post(
@@ -395,8 +599,33 @@ def test_api_message_endpoint_dispatches_scene() -> None:
     assert payload["target_agent"] == "balance-agent"
 
 
-def test_api_session_snapshot_exposes_router_owned_state() -> None:
+def test_api_allows_router_v4_observer_frontend_origin() -> None:
     app = create_app()
+
+    with TestClient(app) as client:
+        response = client.options(
+            "/api/router/v4/message",
+            headers={
+                "origin": "http://localhost:3010",
+                "access-control-request-method": "POST",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3010"
+
+
+def test_api_session_snapshot_exposes_router_owned_state() -> None:
+    app = create_app(
+        runtime=_runtime(
+            {
+                "给张三转5000块": {
+                    "scene_id": "transfer",
+                    "slots": {"recipient": "张三", "amount": 5000},
+                }
+            }
+        )
+    )
 
     with TestClient(app) as client:
         client.post(
@@ -413,7 +642,7 @@ def test_api_session_snapshot_exposes_router_owned_state() -> None:
 
 
 def test_api_agent_output_records_structured_result_and_task_snapshot() -> None:
-    app = create_app()
+    app = create_app(runtime=_runtime({"查一下余额": "balance_query"}))
 
     with TestClient(app) as client:
         first = client.post(

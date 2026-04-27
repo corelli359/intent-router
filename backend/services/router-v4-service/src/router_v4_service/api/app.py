@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
-from router_v4_service.api.schemas import AgentOutputRequest, RouterV4MessageRequest
+from router_v4_service.api.schemas import (
+    AgentOutputRequest,
+    RouterV4MessageRequest,
+)
+from router_v4_service.core.config import load_env_file
 from router_v4_service.core.models import RouterV4Input
 from router_v4_service.core.runtime import RouterV4Runtime
 
 
 def build_runtime() -> RouterV4Runtime:
+    env_file = os.environ.get("ROUTER_V4_ENV_FILE")
+    if env_file:
+        load_env_file(env_file)
     return RouterV4Runtime()
 
 
@@ -22,13 +31,24 @@ def get_runtime(request: Request) -> RouterV4Runtime:
     return runtime
 
 
-def create_app() -> FastAPI:
+def create_app(runtime: RouterV4Runtime | None = None) -> FastAPI:
     app = FastAPI(
         title="Intent Router V4 Service",
         version="0.1.0",
         default_response_class=ORJSONResponse,
     )
-    app.state.router_v4_runtime = build_runtime()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3010",
+            "http://127.0.0.1:3010",
+            "http://localhost:3011",
+            "http://127.0.0.1:3011",
+        ],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
+    app.state.router_v4_runtime = runtime or build_runtime()
 
     @app.get("/health")
     async def health() -> dict[str, str]:

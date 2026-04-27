@@ -8,7 +8,7 @@
 
 - 场景识别
 - 加载场景方提供的 Router 侧 routing spec
-- 按 routing spec 提取可直取槽位 hints
+- 接收 LLM 根据 spec/skill 识别出的路由槽位 hints，并投影到场景 spec
 - 构造 Agent task
 - 派发给场景执行 Agent
 - 记录 Router 侧 session / transcript
@@ -22,6 +22,8 @@
 - 业务 API 调用
 
 这些能力属于场景执行 Agent。
+
+补充约束：Router runtime 不做正则匹配、不做 keyword/词表匹配、不做硬编码推送接受/拒绝判断，也不做本地启发式提槽。场景选择、主动推送承接、多意图判断、路由槽位 hints 均由 LLM recognizer 基于 scene routing spec、push_context 和 scene-owned Skill metadata 产出。
 
 ## 新增代码位置
 
@@ -37,10 +39,10 @@ backend/services/router-v4-service/
     │   ├── agent_client.py
     │   ├── config.py
     │   ├── context.py
-    │   ├── extractor.py
-    │   ├── matcher.py
     │   ├── models.py
+    │   ├── recognizer.py
     │   ├── runtime.py
+    │   ├── slot_projector.py
     │   ├── spec_registry.py
     │   └── stores.py
     └── default_specs/
@@ -52,19 +54,20 @@ backend/services/router-v4-service/
 
 Router 侧 routing spec 驱动：
 
-- `triggers`：驱动场景召回与负例抑制
-- `routing_slots`：驱动 Router 可提取哪些槽位 hints
+- `triggers`：作为 LLM 识别场景的正负例材料，不由 Router runtime 做字符串匹配
+- `routing_slots.extraction`：作为 LLM 提槽说明，不由 Router runtime 解释执行
+- `skill`：绑定场景执行 Skill 元信息，进入识别上下文和 Agent task payload
 - `target_agent`：驱动派发目标
 - `dispatch_contract`：驱动 Agent task 报文字段
 
-Agent 侧 execution spec 不在 Router 中解释。Router 只把任务交给目标 Agent。
+Agent 侧 execution spec 不在 Router 中解释。Router 只把任务和 Skill 绑定信息交给目标 Agent。
 
 ## 上下文生命周期落地
 
 本版已经把“状态持久化 + 渐进加载 + 压缩/裁剪 + 按需检索”落到代码里，但保持在 Router 边界内：
 
 - 状态持久化：默认 in-memory；设置 `ROUTER_V4_STATE_DIR` 后使用文件态 session store 和 transcript JSONL store。
-- 渐进加载：每轮先加载 Router 规则、路由状态、场景索引；识别候选后加载候选摘要；选定场景后才加载 routing spec、routing slot spec、dispatch contract。
+- 渐进加载：每轮先加载 Router 边界、路由状态、场景索引；识别候选后加载候选摘要；选定场景后才加载 routing spec、routing slot spec、dispatch contract。
 - 压缩/裁剪：`ContextBuilder` 根据 `ROUTER_V4_CONTEXT_MAX_CHARS` 做预算控制，核心块保留，低优先级块如 transcript/reference 会被裁剪，并在 `prompt_report.dropped_blocks` 中可观测。
 - 按需检索：当前按 scene spec 的 `references` 返回引用清单，先完成接口形态；后续可替换为向量/关键词检索。
 - 多轮续接：已派发 Agent 后，同一 Router session 的后续消息不重新识别，直接转发给已有 `agent_task_id`；Router 侧缺路由槽位时，会进入 `pending_scene_id` 并在下一轮补齐后派发。
@@ -99,7 +102,8 @@ backend/tests/test_router_v4_service.py
 覆盖：
 
 - 默认 scene spec 和 agent registry 加载
-- 转账场景识别、候选槽位提取、Agent 派发
+- LLM recognizer OpenAI-compatible 调用、候选槽位返回、Agent 派发
+- runtime 不依赖规则 matcher 或本地 slot extractor
 - 后续多轮消息转发到已有 Agent task
 - Router 侧 pending 场景跨轮补齐 required routing slots
 - 文件态 session/transcript 持久化后跨 runtime 实例续接
@@ -108,8 +112,8 @@ backend/tests/test_router_v4_service.py
 - 缺失 Agent 时不派发
 - FastAPI message endpoint
 - FastAPI session snapshot endpoint
-- 主动推送 `push_context.intents` 候选约束
-- 主动推送拒绝时返回 `no_action`，不进入 Router 确认态
+- 主动推送 `push_context.intents` 候选约束与结构化 `assistant_push_policy`
+- LLM 未选择推送意图时返回 `no_action`，不进入 Router 确认态
 - 多意图返回 `planned` + task 级 stream URL
 - Agent structured output 回传后，Router 只记录结构化结果，由助手生成最终表达
 - 固定 `ishandover=true` 且 `output.data=[]` 时改派 `fallback-agent`
@@ -126,7 +130,7 @@ pytest backend/tests/test_router_v4_service.py -q
 结果：
 
 ```text
-18 passed in 0.13s
+22 passed in 0.16s
 ```
 
 编译检查：
@@ -161,12 +165,58 @@ pytest -q
 依据 `docs/v4/router-v4-updated-requirements-v0.2.md`，本次新增：
 
 - `source=assistant_push` 和 `push_context.intents`：Router 在主动推送模式下优先受推荐意图清单约束。
-- 推送接受/拒绝：用户说“就按这个办”时直接选推荐第一项；用户拒绝时返回 `no_action`，不派发 Agent。
+- 推送选择：Router runtime 不判断接受/拒绝词表，由 LLM recognizer 基于用户表达、`push_context.intents`、routing spec 和 Skill metadata 产出 selected scene；未选择时返回 `no_action`。
 - 多意图计划：用户表达“都看一下/一起处理”时返回 `planned`，生成 graph 和多个 task，每个 task 带 `stream_url` 和 `resume_token`。
 - Agent output callback：`POST /api/router/v4/agent-output` 接收结构化执行结果，Router 记录 `agent_output`，不生成最终用户话术。
 - handover：只识别固定 `ishandover=true` 且 `output.data=[]`；触发后标记原任务 `handover_requested` 并派发 `fallback-agent`。
 - 防循环：fallback task 再次 handover 时标记 `handover_exhausted`，不继续改派。
 - task/graph snapshot：支持助手按 session 查询任务和图状态。
+
+## v0.3 运行时边界收敛
+
+本次依据“保持 v3 边界，Router runtime 不能有正则匹配、hardcode、启发式提槽，必须 spec 驱动 + skill”的要求，完成以下调整：
+
+- 删除 v4 service 内的规则 `matcher.py` 和本地启发式 `extractor.py`。
+- 新增 `core/recognizer.py`：只保留 LLM recognizer，输入为 scene routing spec、push_context、Skill metadata，输出为 selected scene、multi scene、confidence、reason、routing_slots。
+- 新增 `core/slot_projector.py`：只负责把 LLM 返回的槽位按场景 `routing_slots` 白名单过滤和投影，不读取用户文本。
+- `runtime.py` 删除推送接受/拒绝词表；主动推送统一交给 LLM 根据 `push_context.intents` 和 `assistant_push_policy` 判断。
+- 默认 spec 的槽位定义从 `extractor` 改为 `extraction.type=llm`，并增加 `skill` 绑定。
+- `RouterV4Settings.recognizer_backend` 默认改为 `llm`，不再提供 rules fallback。
+
+真实 LLM 冒烟：
+
+- `我要转账` -> `transfer` -> `transfer-agent`
+- `查一下余额` -> `balance_query` -> `balance-agent`
+- 单推荐 `就按这个办` -> `fund_query` -> `fund-agent`
+- 多推荐 `两个都看一下` -> `planned`，拆成 `balance_query` 和 `fund_query` 两个 task，`stream_mode=split_by_task`
+
+备注：真实 LLM 调用中出现过一次外部请求超时，runtime 直接返回 `llm_recognition_failed`，没有规则 fallback。
+
+## v0.4 可观测与话术边界修正
+
+针对功能联调中暴露的问题，本次修正：
+
+- `RouterV4Output.response` 不再透出 mock Agent 的自然语言派发消息，单意图派发返回机器状态 `task_dispatched`。
+- 观察前端不再把 Router 结构化状态展示成“助手结果”，改为“意图服务状态”；最终用户结果仍应由助手在 Agent output 完成后生成。
+- `agent_dispatched` 事件增加 `skill` 和 `task_payload` 摘要，可以看到任务如何带着 `skill_id`、`routing_slots`、`context_refs` 触发执行 Agent。
+- `prompt_report.load_trace` 增加逐项渐进式加载轨迹，展示加载阶段、文件、JSON path、内容摘要、是否被预算裁剪。
+- 默认场景增加可见 markdown：
+  - `default_specs/skills/transfer.skill.md`
+  - `default_specs/skills/fund_query.skill.md`
+  - `default_specs/skills/balance_query.skill.md`
+  - `default_specs/references/*-routing.md`
+
+以 `我我要转账` 为例，成功链路会显示：
+
+```text
+turn_start          -> router_boundary / routing_state
+before_recognition  -> scene_index: 三个 *.routing.json
+after_recognition   -> scene_candidates: transfer + reasons + routing slot hints
+after_scene_selected -> transfer.routing.json / transfer.skill.md / transfer-routing.md
+before_dispatch     -> dispatch_contract + task_payload
+```
+
+再次强调：`transfer.skill.md` 在 Router 中只是场景绑定 Skill card 和派发上下文，真正执行、补槽、确认、风控、API 调用仍由 `transfer-agent` 完成。
 
 架构方案与业务旅程已更新到：
 
