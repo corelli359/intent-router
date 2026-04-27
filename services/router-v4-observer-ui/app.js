@@ -434,7 +434,7 @@ function buildDerivedFlow(output) {
       id: "router-spec",
       type: "router/spec",
       title: "Spec 驱动场景识别",
-      summary: `命中 ${scene.sceneId}。Router 先加载场景索引交给 LLM 直接识别，再按需读取选中场景的 routing spec。`,
+      summary: `命中 ${scene.sceneId}。Router 先加载场景 markdown 摘要交给 LLM 直接识别，再按需读取选中场景的 markdown spec。`,
       status: output.status === "failed" ? "异常" : "已识别",
       owner: "意图识别服务",
       details: [
@@ -685,7 +685,7 @@ function renderMechanism() {
         </article>
         <article>
           <strong>渐进加载</strong>
-          <p>先 <code>scene_index</code>，命中后再 <code>routing_spec</code>、<code>skill_card</code>、<code>retrieved_references</code>，不是全量 md 入 prompt。</p>
+          <p>先 <code>scene_markdown_index</code>，命中后再 <code>routing_spec</code>、<code>skill_card</code>、<code>retrieved_references</code>，源头是 markdown spec。</p>
         </article>
         <article>
           <strong>压缩 / 裁剪</strong>
@@ -724,7 +724,7 @@ function renderLoads() {
           <p>${escapeHtml(artifact?.summary || event.summary || "")}</p>
           <div class="load-facts">
             ${fileNames ? `<b>文件：${escapeHtml(fileNames)}</b>` : `<b>文件：无</b>`}
-            ${artifact?.json_path ? `<b>JSON path：${escapeHtml(artifact.json_path)}</b>` : ""}
+            ${artifact?.spec_path ? `<b>Spec path：${escapeHtml(artifact.spec_path)}</b>` : ""}
             ${mdFiles.length ? `<b>MD：${escapeHtml(mdFiles.map((file) => getFileName(file.path)).join("、"))}</b>` : ""}
           </div>
           ${files.length ? renderFiles(files) : ""}

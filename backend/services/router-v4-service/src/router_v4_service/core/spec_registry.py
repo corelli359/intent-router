@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
+import tomllib
 from typing import Any
 
 from router_v4_service.core.models import (
@@ -22,7 +22,7 @@ class SpecRegistryError(RuntimeError):
 
 
 class SpecRegistry:
-    """Loads scene routing specs and execution-agent registry entries."""
+    """Loads markdown scene specs and execution-agent registry entries."""
 
     def __init__(self, spec_root: str | Path | None = None) -> None:
         self.spec_root = Path(spec_root).expanduser().resolve() if spec_root else DEFAULT_SPEC_ROOT.resolve()
@@ -54,10 +54,10 @@ class SpecRegistry:
             return self._scenes
         scenes_dir = self.spec_root / "scenes"
         scenes: dict[str, SceneSpec] = {}
-        for path in sorted(scenes_dir.glob("*.routing.json")):
+        for path in sorted(scenes_dir.glob("*.routing.md")):
             raw = path.read_text(encoding="utf-8")
-            payload = _load_json_object(raw, path)
-            scene = _parse_scene_spec(payload, spec_hash=_hash_text(raw), source=path)
+            frontmatter, markdown = _load_markdown_spec(raw, path)
+            scene = _parse_scene_spec(frontmatter, spec_markdown=markdown, spec_hash=_hash_text(raw), source=path)
             if scene.scene_id in scenes:
                 raise SpecRegistryError(f"duplicate scene_id: {scene.scene_id}")
             scenes[scene.scene_id] = scene
@@ -67,11 +67,11 @@ class SpecRegistry:
     def _load_agents(self) -> dict[str, AgentDefinition]:
         if self._agents is not None:
             return self._agents
-        path = self.spec_root / "agents" / "agent-registry.json"
-        payload = _load_json_object(path.read_text(encoding="utf-8"), path)
+        path = self.spec_root / "agents" / "agent-registry.md"
+        payload, _markdown = _load_markdown_spec(path.read_text(encoding="utf-8"), path)
         raw_agents = payload.get("agents")
         if not isinstance(raw_agents, list):
-            raise SpecRegistryError("agent registry must contain an agents array")
+            raise SpecRegistryError("agent registry markdown frontmatter must contain an agents array")
         agents: dict[str, AgentDefinition] = {}
         for item in raw_agents:
             if not isinstance(item, dict):
@@ -91,17 +91,25 @@ class SpecRegistry:
         return agents
 
 
-def _load_json_object(raw: str, path: Path) -> dict[str, Any]:
+def _load_markdown_spec(raw: str, path: Path) -> tuple[dict[str, Any], str]:
+    text = raw.lstrip()
+    if not text.startswith("+++\n"):
+        raise SpecRegistryError(f"markdown spec must start with TOML frontmatter: {path}")
+    end = text.find("\n+++", 4)
+    if end == -1:
+        raise SpecRegistryError(f"markdown spec frontmatter is not closed: {path}")
+    frontmatter_raw = text[4:end].strip()
+    body_start = end + len("\n+++")
+    if body_start < len(text) and text[body_start] == "\n":
+        body_start += 1
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise SpecRegistryError(f"invalid JSON spec: {path}") from exc
-    if not isinstance(payload, dict):
-        raise SpecRegistryError(f"JSON spec must be an object: {path}")
-    return payload
+        payload = tomllib.loads(frontmatter_raw)
+    except tomllib.TOMLDecodeError as exc:
+        raise SpecRegistryError(f"invalid markdown frontmatter: {path}") from exc
+    return payload, text[body_start:].strip()
 
 
-def _parse_scene_spec(payload: dict[str, Any], *, spec_hash: str, source: Path) -> SceneSpec:
+def _parse_scene_spec(payload: dict[str, Any], *, spec_markdown: str, spec_hash: str, source: Path) -> SceneSpec:
     triggers = payload.get("triggers")
     if not isinstance(triggers, dict):
         raise SpecRegistryError(f"scene triggers must be an object: {source}")
@@ -131,6 +139,7 @@ def _parse_scene_spec(payload: dict[str, Any], *, spec_hash: str, source: Path) 
         ),
         references=tuple(str(value) for value in payload.get("references", [])),
         spec_hash=spec_hash,
+        spec_markdown=spec_markdown,
         source_path=str(source),
     )
 

@@ -6,7 +6,7 @@
 
 - 左侧展示掌银助手对话。
 - 右侧查看 Spec + Skill 如何驱动识别、加载、派发和 Agent 接管。
-- 加载证据会展示每个阶段读取的 spec/json/md/reference、读取时机和内容摘录。
+- 加载证据会展示每个阶段读取的 markdown spec、skill、reference、读取时机和内容摘录。
 
 启动方式：
 

@@ -75,7 +75,7 @@ class DispatchContract:
 
 @dataclass(frozen=True, slots=True)
 class SceneSpec:
-    """Router-side scene routing spec."""
+    """Router-side view compiled from a markdown scene spec."""
 
     scene_id: str
     name: str
@@ -88,6 +88,7 @@ class SceneSpec:
     dispatch_contract: DispatchContract
     references: tuple[str, ...]
     spec_hash: str
+    spec_markdown: str
     source_path: str = ""
 
 

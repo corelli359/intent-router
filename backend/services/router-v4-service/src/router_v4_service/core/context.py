@@ -35,7 +35,7 @@ class ContextBuilder:
         blocks: list[dict[str, Any]] = []
         self._add_block(blocks, "router_boundary", 240, required=True, priority=0)
         self._add_block(blocks, "routing_state", 180 + len(state.summary), required=True, priority=0)
-        self._add_block(blocks, "scene_index", 220 + len(scene_index) * 120, required=True, priority=1)
+        self._add_block(blocks, "scene_markdown_index", 260 + sum(len(self._excerpt(scene.spec_markdown)) for scene in scene_index), required=True, priority=1)
         if candidates:
             self._add_block(
                 blocks,
@@ -94,7 +94,7 @@ class ContextBuilder:
                     for block in (
                         "router_boundary",
                         "routing_state",
-                        "scene_index",
+                        "scene_markdown_index",
                         "recognized_scenes" if candidates else "",
                         "routing_spec" if selected_scene is not None else "",
                         "agent_field_policy" if selected_scene is not None else "",
@@ -172,10 +172,10 @@ class ContextBuilder:
         )
         self._trace(
             trace,
-            block="scene_index",
+            block="scene_markdown_index",
             stage="before_recognition",
-            source_type="scene_specs",
-            summary="加载场景索引字段给 recognizer；不是加载执行 Agent 的业务流程。",
+            source_type="scene_markdown_specs",
+            summary="识别前加载场景 markdown spec 摘要给 recognizer；markdown 是场景源。",
             files=self._scene_files(scene_index_scenes),
             content=[
                 {
@@ -183,11 +183,7 @@ class ContextBuilder:
                     "name": scene.name,
                     "target_agent": scene.target_agent,
                     "skill_id": scene.skill.get("skill_id"),
-                    "description": scene.description,
-                    "triggers": {
-                        "examples": list(scene.triggers.examples),
-                        "negative_examples": list(scene.triggers.negative_examples),
-                    },
+                    "markdown_excerpt": self._excerpt(scene.spec_markdown),
                     "spec_hash": scene.spec_hash,
                 }
                 for scene in scene_index_scenes
@@ -218,15 +214,15 @@ class ContextBuilder:
                 trace,
                 block="routing_spec",
                 stage="after_scene_selected",
-                source_type="scene_routing_json",
-                summary=f"选中 {selected_scene.scene_id} 后加载该场景 routing spec。",
+                source_type="scene_markdown_spec",
+                summary=f"选中 {selected_scene.scene_id} 后加载该场景 markdown routing spec。",
                 files=self._scene_files([selected_scene]),
                 content={
                     "scene_id": selected_scene.scene_id,
                     "version": selected_scene.version,
                     "name": selected_scene.name,
-                    "description": selected_scene.description,
                     "target_agent": selected_scene.target_agent,
+                    "markdown_excerpt": self._excerpt(selected_scene.spec_markdown),
                     "spec_hash": selected_scene.spec_hash,
                 },
                 included_blocks=included_blocks,
@@ -236,10 +232,10 @@ class ContextBuilder:
                 trace,
                 block="agent_field_policy",
                 stage="after_scene_selected",
-                source_type="scene_routing_json",
-                summary="加载场景字段边界；Router 不提槽、不追问，业务字段由 Agent/Skill 负责。",
+                source_type="scene_markdown_frontmatter",
+                summary="从 markdown frontmatter 加载场景字段边界；Router 不提槽、不追问，业务字段由 Agent/Skill 负责。",
                 files=self._scene_files([selected_scene]),
-                json_path="$.skill_fields",
+                spec_path="frontmatter.skill_fields",
                 content=[
                     {
                         "name": slot.name,
@@ -272,10 +268,10 @@ class ContextBuilder:
                 trace,
                 block="dispatch_contract",
                 stage="before_dispatch",
-                source_type="scene_routing_json",
-                summary="加载派发契约，构造 Agent task payload。",
+                source_type="scene_markdown_frontmatter",
+                summary="从 markdown frontmatter 加载派发契约，构造 Agent task payload。",
                 files=self._scene_files([selected_scene]),
-                json_path="$.dispatch_contract",
+                spec_path="frontmatter.dispatch_contract",
                 content={
                     "task_type": selected_scene.dispatch_contract.task_type,
                     "handoff_fields": list(selected_scene.dispatch_contract.handoff_fields),
@@ -336,7 +332,7 @@ class ContextBuilder:
         dropped_blocks: set[str],
         content: Any | None = None,
         files: list[dict[str, Any]] | None = None,
-        json_path: str | None = None,
+        spec_path: str | None = None,
     ) -> None:
         trace.append(
             {
@@ -348,7 +344,7 @@ class ContextBuilder:
                 "dropped": block in dropped_blocks,
                 "summary": summary,
                 "files": files or [],
-                "json_path": json_path,
+                "spec_path": spec_path,
                 "content": content,
             }
         )
@@ -361,7 +357,7 @@ class ContextBuilder:
             files.append(
                 {
                     "path": scene.source_path,
-                    "kind": "routing_spec",
+                    "kind": "scene_markdown_spec",
                     "exists": Path(scene.source_path).exists(),
                     "scene_id": scene.scene_id,
                     "hash": scene.spec_hash,

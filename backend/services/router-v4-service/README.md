@@ -5,12 +5,14 @@ Standalone v4 intent routing service.
 This service is intentionally separate from the existing `router-service`. It owns only:
 
 - scene recognition
-- scene routing spec loading
+- markdown scene spec loading
 - execution-agent task dispatch
 - router-level session and transcript tracking
 
+Scene specs are markdown-first. Router loads `default_specs/scenes/*.routing.md` and `default_specs/agents/agent-registry.md`; TOML frontmatter is only the machine-readable header inside the markdown document. There are no hand-maintained JSON scene specs.
+
 It does not perform business confirmation, risk checks, limits, idempotency, or direct business API calls. Those remain in scene execution agents.
-The Router runtime also does not perform regex/keyword matching, hardcoded push acceptance, heuristic slot extraction, or business-slot clarification. Recognition is produced by the LLM recognizer from scene routing specs and scene-owned Skill metadata. Business slot extraction belongs to the selected execution Agent and its Skill.
+The Router runtime also does not perform regex/keyword matching, hardcoded push acceptance, heuristic slot extraction, or business-slot clarification. Recognition is produced by the LLM recognizer from markdown scene specs and scene-owned Skill metadata. Business slot extraction belongs to the selected execution Agent and its Skill.
 
 Implemented v0.2 capabilities:
 

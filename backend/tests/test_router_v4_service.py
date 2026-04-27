@@ -115,7 +115,7 @@ def test_runtime_dispatches_transfer_scene_without_router_business_slots() -> No
     assert any(event["type"] == "agent_dispatched" for event in output.events)
     assert "routing_spec" in output.prompt_report["included_blocks"]
     blocks = [item["block"] for item in output.prompt_report["load_trace"]]
-    assert "scene_index" in blocks
+    assert "scene_markdown_index" in blocks
     assert "recognized_scenes" in blocks
     assert "routing_spec" in blocks
     assert "agent_field_policy" in blocks
@@ -180,7 +180,8 @@ def test_llm_intent_recognizer_calls_openai_compatible_endpoint() -> None:
     assert captured["url"] == "https://llm.example/v1/chat/completions"
     assert captured["payload"]["model"] == "test-model"
     assert "不要提取业务槽位" in captured["payload"]["messages"][0]["content"]
-    assert "skill" in captured["payload"]["messages"][1]["content"]
+    assert "markdown_spec" in captured["payload"]["messages"][1]["content"]
+    assert "给张三转5000块" in captured["payload"]["messages"][1]["content"]
 
 
 def test_runtime_llm_backend_surfaces_missing_llm_config() -> None:
@@ -249,24 +250,49 @@ def test_runtime_does_not_dispatch_when_agent_missing(tmp_path: Path) -> None:
     spec_root = tmp_path / "specs"
     (spec_root / "scenes").mkdir(parents=True)
     (spec_root / "agents").mkdir(parents=True)
-    (spec_root / "scenes" / "transfer.routing.json").write_text(
+    (spec_root / "scenes" / "transfer.routing.md").write_text(
         """
-{
-  "scene_id": "transfer",
-  "version": "0.1.0",
-  "name": "转账",
-  "description": "转账场景",
-  "target_agent": "missing-agent",
-  "triggers": {"keywords": ["转账"]},
-  "skill_fields": [],
-  "dispatch_contract": {"task_type": "transfer", "handoff_fields": ["raw_message"]},
-  "references": []
-}
++++
+scene_id = "transfer"
+version = "0.1.0"
+name = "转账"
+description = "转账场景"
+target_agent = "missing-agent"
+references = []
+skill_fields = []
+
+[skill]
+skill_id = "transfer"
+version = "0.1.0"
+owner = "missing-agent"
+path = "skills/transfer.skill.md"
+description = "转账 Skill"
+
+[triggers]
+keywords = ["转账"]
+examples = ["我要转账"]
+negative_keywords = []
+negative_examples = []
+
+[dispatch_contract]
+task_type = "transfer"
+handoff_fields = ["raw_message"]
++++
+
+# 转账路由 Spec
+
+用户要转账时命中。
 """,
         encoding="utf-8",
     )
-    (spec_root / "agents" / "agent-registry.json").write_text(
-        '{"agents": []}',
+    (spec_root / "agents" / "agent-registry.md").write_text(
+        """
++++
+agents = []
++++
+
+# Agent Registry
+""",
         encoding="utf-8",
     )
     runtime = _runtime({"我要转账": "transfer"}, registry=SpecRegistry(spec_root))
@@ -284,50 +310,66 @@ def test_runtime_dispatches_even_when_scene_declares_required_business_slots(tmp
     spec_root = tmp_path / "specs"
     (spec_root / "scenes").mkdir(parents=True)
     (spec_root / "agents").mkdir(parents=True)
-    (spec_root / "scenes" / "transfer.routing.json").write_text(
+    (spec_root / "scenes" / "transfer.routing.md").write_text(
         """
-{
-  "scene_id": "transfer",
-  "version": "0.1.0",
-  "name": "转账",
-  "description": "转账场景",
-  "target_agent": "transfer-agent",
-  "triggers": {"keywords": ["转账"], "examples": [], "negative_keywords": [], "negative_examples": []},
-  "skill_fields": [
-    {
-      "name": "recipient",
-      "source": "user_utterance",
-      "required_for_dispatch": true,
-      "handoff": true,
-      "extraction": {"type": "llm", "instruction": "提取收款人"}
-    },
-    {
-      "name": "amount",
-      "source": "user_utterance",
-      "required_for_dispatch": true,
-      "handoff": true,
-      "extraction": {"type": "llm", "instruction": "提取金额"}
-    }
-  ],
-  "dispatch_contract": {"task_type": "transfer", "handoff_fields": ["raw_message", "recipient", "amount"]},
-  "references": []
-}
++++
+scene_id = "transfer"
+version = "0.1.0"
+name = "转账"
+description = "转账场景"
+target_agent = "transfer-agent"
+references = []
+
+[skill]
+skill_id = "transfer"
+version = "0.1.0"
+owner = "transfer-agent"
+path = "skills/transfer.skill.md"
+description = "转账 Skill"
+
+[triggers]
+keywords = ["转账"]
+examples = []
+negative_keywords = []
+negative_examples = []
+
+[[skill_fields]]
+name = "recipient"
+source = "user_utterance"
+required_for_dispatch = true
+handoff = true
+extraction = {type = "llm", instruction = "提取收款人"}
+
+[[skill_fields]]
+name = "amount"
+source = "user_utterance"
+required_for_dispatch = true
+handoff = true
+extraction = {type = "llm", instruction = "提取金额"}
+
+[dispatch_contract]
+task_type = "transfer"
+handoff_fields = ["raw_message", "recipient", "amount"]
++++
+
+# 转账路由 Spec
+
+用户要转账时命中，业务字段由 Agent 处理。
 """,
         encoding="utf-8",
     )
-    (spec_root / "agents" / "agent-registry.json").write_text(
+    (spec_root / "agents" / "agent-registry.md").write_text(
         """
-{
-  "agents": [
-    {
-      "agent_id": "transfer-agent",
-      "endpoint": "mock://transfer-agent",
-      "accepted_scene_ids": ["transfer"],
-      "task_schema": "transfer.task.v1",
-      "event_schema": "transfer.event.v1"
-    }
-  ]
-}
++++
+[[agents]]
+agent_id = "transfer-agent"
+endpoint = "mock://transfer-agent"
+accepted_scene_ids = ["transfer"]
+task_schema = "transfer.task.v1"
+event_schema = "transfer.event.v1"
++++
+
+# Agent Registry
 """,
         encoding="utf-8",
     )
@@ -391,7 +433,7 @@ def test_context_report_applies_budget_and_keeps_core_blocks() -> None:
     assert output.status == RouterTurnStatus.DISPATCHED
     assert output.prompt_report["max_chars"] == 700
     assert output.prompt_report["dropped_blocks"]
-    assert output.prompt_report["included_blocks"][:3] == ["router_boundary", "routing_state", "scene_index"]
+    assert output.prompt_report["included_blocks"][:3] == ["router_boundary", "routing_state", "scene_markdown_index"]
 
 
 def test_push_context_generic_acceptance_dispatches_first_recommended_scene() -> None:

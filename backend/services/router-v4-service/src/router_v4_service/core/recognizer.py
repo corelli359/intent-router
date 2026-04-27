@@ -35,7 +35,7 @@ class IntentRecognizerError(RuntimeError):
 
 
 class LLMIntentRecognizer:
-    """OpenAI-compatible recognizer driven only by scene routing specs."""
+    """OpenAI-compatible recognizer driven by markdown scene specs."""
 
     def __init__(
         self,
@@ -72,8 +72,8 @@ class LLMIntentRecognizer:
                 {
                     "role": "system",
                     "content": (
-                        "你是银行助手的意图识别器。必须只根据用户表达、助手推送上下文和给定场景规格进行判断。"
-                        "场景是否命中、是否多意图，都必须由场景 spec 中的 triggers、skill 和 dispatch_contract 驱动。"
+                        "你是银行助手的意图识别器。必须只根据用户表达、助手推送上下文和给定 markdown 场景 spec 进行判断。"
+                        "场景是否命中、是否多意图，都必须由 markdown spec 的意图边界、正例、反例、Skill 归属和派发契约驱动。"
                         "不要提取业务槽位；提槽属于选中场景的执行 Agent/Skill。"
                         "不要使用外部知识补充未知场景；如果没有明确可执行的场景，selected_scene_id 返回 null。"
                         "助手主动推送时，用户表达可能是指代、承接或省略业务名称；你必须结合 push_context 中按 rank 排序的意图清单判断。"
@@ -168,21 +168,24 @@ def _scene_payload(scene: SceneSpec) -> dict[str, Any]:
     return {
         "scene_id": scene.scene_id,
         "name": scene.name,
-        "description": scene.description,
         "target_agent": scene.target_agent,
-        "skill": dict(scene.skill),
-        "triggers": {
-            "keywords": list(scene.triggers.keywords),
-            "negative_keywords": list(scene.triggers.negative_keywords),
-            "examples": list(scene.triggers.examples),
-            "negative_examples": list(scene.triggers.negative_examples),
+        "markdown_spec": _markdown_excerpt(scene.spec_markdown, limit=1600),
+        "frontmatter": {
+            "skill": dict(scene.skill),
+            "dispatch_contract": {
+                "task_type": scene.dispatch_contract.task_type,
+                "handoff_fields": list(scene.dispatch_contract.handoff_fields),
+            },
+            "references": list(scene.references),
         },
-        "dispatch_contract": {
-            "task_type": scene.dispatch_contract.task_type,
-            "handoff_fields": list(scene.dispatch_contract.handoff_fields),
-        },
-        "references": list(scene.references),
     }
+
+
+def _markdown_excerpt(text: str, *, limit: int) -> str:
+    normalized = "\n".join(line.rstrip() for line in text.strip().splitlines() if line.strip())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit].rstrip() + "..."
 
 
 def _assistant_push_policy(push_context: dict[str, Any]) -> dict[str, Any]:
