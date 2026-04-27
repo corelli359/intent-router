@@ -3,6 +3,9 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - router-api.yaml
+  - assistant-demo.yaml
+  - transfer-agent-demo.yaml
+  - router-v4-observer-ui.yaml
   - admin-api.yaml
   - order-agent.yaml
   - appointment-agent.yaml
@@ -12,3 +15,4 @@ resources:
   - chat-web.yaml
   - admin-web.yaml
   - ingress.yaml
+  - ingress-v4-demo.yaml

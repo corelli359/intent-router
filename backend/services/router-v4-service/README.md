@@ -100,6 +100,12 @@ python -m http.server 3010 --bind 127.0.0.1
 
 Open `http://127.0.0.1:3010` after the Router V4 service is running on port `8024`.
 
+K8s note:
+
+- the `v4-skill` branch keeps the cluster Service name as `intent-router-api`
+- that Service now runs `router-v4-service`
+- the demo ingress entry is exposed under `/v4-demo`
+
 Run focused tests:
 
 ```bash

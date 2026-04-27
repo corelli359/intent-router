@@ -17,3 +17,9 @@
 ```bash
 python -m uvicorn app:app --host 127.0.0.1 --port 8031
 ```
+
+可选环境变量：
+
+- `TRANSFER_AGENT_DEMO_ROUTER_BASE_URL`
+
+如果不传，默认回落到本地 `http://127.0.0.1:8024`；部署到 K8s 时应改为集群内 Router Service 地址。

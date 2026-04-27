@@ -1,53 +1,56 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: intent-router-api
+  name: intent-assistant-demo
   namespace: intent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: intent-router-api
+      app: intent-assistant-demo
   template:
     metadata:
       labels:
-        app: intent-router-api
+        app: intent-assistant-demo
     spec:
-      terminationGracePeriodSeconds: 30
       containers:
-        - name: router-api
+        - name: assistant-demo
           image: python:3.12-slim
           imagePullPolicy: IfNotPresent
-          workingDir: /workspace
+          workingDir: /workspace/services/assistant-demo
           env:
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
-            - name: ROUTER_V4_ENV_FILE
-              value: /etc/intent-router/.env.local
-            - name: ROUTER_V4_SPEC_ROOT
-              value: /workspace/backend/services/router-v4-service/src/router_v4_service/default_specs
+            - name: ASSISTANT_DEMO_ROUTER_BASE_URL
+              value: http://intent-router-api.intent.svc.cluster.local:8000
+            - name: ASSISTANT_DEMO_TRANSFER_AGENT_BASE_URL
+              value: http://intent-transfer-agent-demo.intent.svc.cluster.local:8031
           command:
             - /bin/sh
             - -lc
           args:
             - |
               set -e
-              python -m pip install --no-cache-dir /workspace/backend/services/router-v4-service
-              python -m uvicorn router_v4_service.api.app:app --host 0.0.0.0 --port 8000
+              python -m pip install --no-cache-dir \
+                "fastapi>=0.115,<1.0" \
+                "httpx>=0.27,<1.0" \
+                "orjson>=3.10,<4.0" \
+                "pydantic>=2.8,<3.0" \
+                "uvicorn>=0.30,<1.0"
+              python -m uvicorn app:app --host 0.0.0.0 --port 8040
           ports:
-            - containerPort: 8000
+            - containerPort: 8040
               name: http
           resources:
             requests:
-              cpu: 250m
-              memory: 384Mi
+              cpu: 150m
+              memory: 192Mi
           startupProbe:
             httpGet:
               path: /health
               port: http
+            failureThreshold: 120
             periodSeconds: 5
-            timeoutSeconds: 1
-            failureThreshold: 180
           readinessProbe:
             httpGet:
               path: /health
@@ -58,37 +61,27 @@ spec:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
           volumeMounts:
             - name: repo
               mountPath: /workspace
-            - name: router-config
-              mountPath: /etc/intent-router/.env.local
-              subPath: .env.local
-              readOnly: true
       volumes:
         - name: repo
           hostPath:
             path: /mnt/intent-router
             type: Directory
-        - name: router-config
-          configMap:
-            name: intent-router-api-env
-            items:
-              - key: .env.local
-                path: .env.local
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: intent-router-api
+  name: intent-assistant-demo
   namespace: intent
 spec:
   selector:
-    app: intent-router-api
+    app: intent-assistant-demo
   ports:
     - name: http
-      port: 8000
+      port: 8040
       targetPort: http
   type: ClusterIP

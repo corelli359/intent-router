@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -13,8 +14,14 @@ from fastapi.responses import ORJSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-DEFAULT_ROUTER_BASE_URL = "http://127.0.0.1:8024"
-DEFAULT_TRANSFER_AGENT_BASE_URL = "http://127.0.0.1:8031"
+DEFAULT_ROUTER_BASE_URL = (
+    os.environ.get("ASSISTANT_DEMO_ROUTER_BASE_URL", "http://127.0.0.1:8024").rstrip("/")
+    or "http://127.0.0.1:8024"
+)
+DEFAULT_TRANSFER_AGENT_BASE_URL = (
+    os.environ.get("ASSISTANT_DEMO_TRANSFER_AGENT_BASE_URL", "http://127.0.0.1:8031").rstrip("/")
+    or "http://127.0.0.1:8031"
+)
 
 
 class AssistantTurnRequest(BaseModel):

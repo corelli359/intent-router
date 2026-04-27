@@ -4,7 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>意图识别链路观察</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      (function () {
+        var clusterPrefix = "/v4-demo";
+        var path = window.location.pathname || "/";
+        var prefix =
+          path === clusterPrefix || path.indexOf(clusterPrefix + "/") === 0 ? clusterPrefix : "";
+        window.__OBSERVER_ASSET_PREFIX__ = prefix;
+
+        var stylesheet = document.createElement("link");
+        stylesheet.rel = "stylesheet";
+        stylesheet.href = prefix + "/styles.css";
+        document.head.appendChild(stylesheet);
+      })();
+    </script>
   </head>
   <body>
     <main class="shell">
@@ -110,7 +123,12 @@
         </section>
       </section>
     </main>
-
-    <script src="./app.js"></script>
+    <script>
+      (function () {
+        var script = document.createElement("script");
+        script.src = (window.__OBSERVER_ASSET_PREFIX__ || "") + "/app.js";
+        document.body.appendChild(script);
+      })();
+    </script>
   </body>
 </html>

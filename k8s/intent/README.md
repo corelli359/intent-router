@@ -47,6 +47,13 @@ Ingress must expose these stable paths:
 - `/api/router/*` -> `intent-router-api`
 - `/api/router/v2/*` -> V2 router API inside the same `intent-router-api`
 
+V4 demo entry on this branch:
+
+- `/v4-demo` -> `intent-router-v4-observer-ui`
+- `/v4-demo/api/assistant/*` -> `intent-assistant-demo`
+- `/v4-demo/api/router/*` -> `intent-router-api` running `router-v4-service`
+- `/v4-demo/api/transfer-agent/*` -> `intent-transfer-agent-demo`
+
 Do not use `/` as chat root in the target model. Chat entry should be explicit under `/chat`.
 
 V2 note:
@@ -73,10 +80,9 @@ Reason:
 
 - Source is mounted into Minikube node at `/mnt/intent-router`.
 - Router runtime config is mounted from ConfigMap `intent-router-api-env` to `/etc/intent-router/.env.local`.
-- Router file-mode catalog is mounted from ConfigMap `intent-router-intent-catalog` to `/etc/intent-router/catalog/`.
 - The deploy script generates that ConfigMap from the repo-root `.env.local` on the mounted workspace.
-- The deploy script also exports the current sqlite intent snapshot to `k8s/intent/router-intent-catalog/` and regenerates the router catalog ConfigMap before rollout.
-- The repo now keeps a generated catalog ConfigMap snapshot at `k8s/intent/router-intent-catalog-configmap.yaml`.
+- On `v4-skill`, `intent-router-api` now starts `backend/services/router-v4-service` instead of the legacy router package.
+- On `v4-skill`, the Router V4 demo no longer depends on the legacy router intent catalog ConfigMap during Minikube rollout.
 - For non-Minikube target clusters with different external hosts or path prefixes, generate
   `prod_target/k8s/intent/*.yaml` via `scripts/build_prod_target.sh` and deploy those rendered manifests instead.
 - Pods now install only their own local service package on startup.

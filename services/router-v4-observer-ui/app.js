@@ -1,6 +1,31 @@
-const ASSISTANT_API_BASE = "http://127.0.0.1:8040";
-const ROUTER_API_BASE = "http://127.0.0.1:8024";
-const AGENT_API_BASE = "http://127.0.0.1:8031";
+const CLUSTER_DEMO_PREFIX = "/v4-demo";
+const LOCAL_ASSISTANT_API_BASE = "http://127.0.0.1:8040/api/assistant";
+const LOCAL_ROUTER_API_BASE = "http://127.0.0.1:8024/api/router";
+const LOCAL_AGENT_API_BASE = "http://127.0.0.1:8031/api/transfer-agent";
+
+function observerPrefix() {
+  const { pathname } = window.location;
+  if (pathname === CLUSTER_DEMO_PREFIX || pathname.startsWith(`${CLUSTER_DEMO_PREFIX}/`)) {
+    return CLUSTER_DEMO_PREFIX;
+  }
+  return "";
+}
+
+function isLocalObserver() {
+  return window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+}
+
+function resolveApiBase(localBase, clusterSuffix) {
+  if (isLocalObserver() && !OBSERVER_PREFIX) {
+    return localBase;
+  }
+  return `${window.location.origin}${OBSERVER_PREFIX}${clusterSuffix}`;
+}
+
+const OBSERVER_PREFIX = observerPrefix();
+const ASSISTANT_API_BASE = resolveApiBase(LOCAL_ASSISTANT_API_BASE, "/api/assistant");
+const ROUTER_API_BASE = resolveApiBase(LOCAL_ROUTER_API_BASE, "/api/router");
+const AGENT_API_BASE = resolveApiBase(LOCAL_AGENT_API_BASE, "/api/transfer-agent");
 
 const scenarioDefaults = {
   normal: "帮我给张三转账",
@@ -983,7 +1008,7 @@ async function startRun() {
   try {
     let assistantTurn = null;
     let streamedText = "";
-    await requestSse("/api/assistant/turn/stream", {
+    await requestSse("/turn/stream", {
       method: "POST",
       body: JSON.stringify(buildAssistantRequest({ sessionId, message }))
     }, {

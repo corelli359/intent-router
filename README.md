@@ -13,7 +13,9 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 - `backend/services/agents/forex-agent`: forex exchange agent source of truth
 - `backend/services/agents/fallback-agent`: fallback agent source of truth
 - `frontend/`: chat web, admin web, shared packages
+- `services/assistant-demo`: standalone assistant backend demo
 - `services/router-v4-observer-ui`: standalone Router V4 observer UI
+- `services/transfer-agent-demo`: standalone transfer execution agent demo
 - `prod_target/`: generated target-cluster frontend artifacts and rendered manifests
 - `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
@@ -103,6 +105,17 @@ Minimal request:
 ```
 
 Use `ROUTER_V4_SKILL_ROOT=/path/to/specs` to point the router service at an alternate Skill spec root with the same `agent.md` and `skills/*.md` layout.
+
+## V4 Demo Deployment
+
+The `v4-skill` branch also carries a cluster demo split into four services:
+
+- `services/router-v4-observer-ui`: assistant frontend
+- `services/assistant-demo`: assistant backend
+- `backend/services/router-v4-service`: router runtime, deployed under the existing Service name `intent-router-api`
+- `services/transfer-agent-demo`: transfer execution agent
+
+The Kubernetes ingress groups this demo under `/v4-demo`.
 
 ## Runtime and LLM Wiring
 

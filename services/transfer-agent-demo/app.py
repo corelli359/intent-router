@@ -15,7 +15,10 @@ from fastapi.responses import ORJSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-DEFAULT_ROUTER_BASE_URL = "http://127.0.0.1:8024"
+DEFAULT_ROUTER_BASE_URL = (
+    os.environ.get("TRANSFER_AGENT_DEMO_ROUTER_BASE_URL", "http://127.0.0.1:8024").rstrip("/")
+    or "http://127.0.0.1:8024"
+)
 SKILL_PATH = Path(__file__).resolve().parent / "skills" / "transfer.skill.md"
 
 

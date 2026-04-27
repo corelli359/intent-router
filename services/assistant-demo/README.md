@@ -27,3 +27,10 @@ curl -N -X POST http://127.0.0.1:8040/api/assistant/turn/stream \
 
 - Router V4: `http://127.0.0.1:8024`
 - Transfer Agent: `http://127.0.0.1:8031`
+
+可选环境变量：
+
+- `ASSISTANT_DEMO_ROUTER_BASE_URL`
+- `ASSISTANT_DEMO_TRANSFER_AGENT_BASE_URL`
+
+如果不传，默认回落到本地端口；部署到 K8s 时应改为集群内 Service 地址。
