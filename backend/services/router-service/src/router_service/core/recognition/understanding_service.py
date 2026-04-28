@@ -69,6 +69,7 @@ class IntentUnderstandingService:
         *,
         recent_messages: list[str],
         long_term_memory: list[str],
+        recommend_task: list[dict[str, Any]] | None = None,
         emit_events: bool,
     ) -> RecognitionResult:
         """Run recognition and optionally stream semantic progress events."""
@@ -93,6 +94,7 @@ class IntentUnderstandingService:
                 intents=self.intent_catalog.active_intents_by_code().values(),
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
+                recommend_task=recommend_task,
                 on_delta=publish_recognition_delta if emit_events else None,
             )
             if emit_events:
@@ -114,6 +116,7 @@ class IntentUnderstandingService:
         recent_messages: list[str],
         long_term_memory: list[str],
         recognition: RecognitionResult | None,
+        recommend_task: list[dict[str, Any]] | None = None,
         emit_events: bool,
     ) -> GraphBuildResult:
         """Run the optional unified graph-builder path when enabled."""
@@ -142,6 +145,7 @@ class IntentUnderstandingService:
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
                 recognition=recognition,
+                recommend_task=recommend_task,
                 on_delta=publish_graph_builder_delta if emit_events else None,
             )
             if emit_events:

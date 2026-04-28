@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from router_service.core.shared.domain import ChatMessage, Task
 
@@ -28,13 +28,19 @@ class ContextBuilder:
         session: SessionLike,
         task: Task | None,
         long_term_memory: list[str],
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[str] | None = None,
     ) -> dict[str, object]:
         """Assemble the base context payload used by recognizers and agents."""
+        recent_messages = current_display if current_display is not None else self.build_recent_messages(session)
+        recommend_task_value = recommend_task if recommend_task is not None else []
+
         base = {
             "session_id": session.session_id,
             "cust_id": session.cust_id,
-            "recent_messages": self.build_recent_messages(session),
+            "recent_messages": recent_messages,
             "long_term_memory": long_term_memory,
+            "recommend_task": recommend_task_value,
             "shared_slot_memory": dict(getattr(session, "shared_slot_memory", {}) or {}),
             "config_variables": (
                 session.upstream_config_variables()

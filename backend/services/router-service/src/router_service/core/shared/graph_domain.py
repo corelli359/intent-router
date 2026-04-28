@@ -335,6 +335,8 @@ class GraphSessionState(BaseModel):
     expires_at: datetime = Field(default_factory=lambda: utc_now() + SESSION_TTL)
     _upstream_config_variables: dict[str, Any] = PrivateAttr(default_factory=dict)
     _upstream_slots_data: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _recommend_task: list[dict[str, Any]] | None = PrivateAttr(default=None)
+    _current_display: list[dict[str, Any]] | None = PrivateAttr(default=None)
 
     def touch(self) -> None:
         """Refresh session timestamps and extend the expiry deadline."""
@@ -352,10 +354,14 @@ class GraphSessionState(BaseModel):
         *,
         config_variables: dict[str, Any] | None = None,
         slots_data: dict[str, Any] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[dict[str, Any]] | None = None,
     ) -> None:
         """Store request-scoped upstream context for this session turn."""
         self._upstream_config_variables = dict(config_variables or {})
         self._upstream_slots_data = dict(slots_data or {})
+        self._recommend_task = recommend_task
+        self._current_display = current_display
 
     def upstream_config_variables(self) -> dict[str, Any]:
         """Return the ordinary upstream config variables for the current turn."""
@@ -364,6 +370,14 @@ class GraphSessionState(BaseModel):
     def upstream_slots_data(self) -> dict[str, Any]:
         """Return the request-scoped `slots_data` hints for the current turn."""
         return dict(self._upstream_slots_data)
+
+    def recommend_task(self) -> list[dict[str, Any]] | None:
+        """Return the request-scoped recommend_task for the current turn."""
+        return self._recommend_task
+
+    def current_display(self) -> list[dict[str, Any]] | None:
+        """Return the request-scoped current_display for the current turn."""
+        return self._current_display
 
     def business_object(self, business_id: str | None) -> BusinessObjectState | None:
         """Return the business object with the given id when present."""

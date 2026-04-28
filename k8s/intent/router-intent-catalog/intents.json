@@ -625,7 +625,7 @@
         "转200给欧阳娜娜",
         "给我妈转两百"
       ],
-      "agent_url": "http://intent-appointment-agent.intent.svc.cluster.local:8000/api/agent/run",
+      "agent_url": "http://localhost:8003/api/agent/run",
       "is_leaf_intent": true,
       "parent_intent_code": "",
       "status": "active",

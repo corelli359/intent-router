@@ -169,6 +169,7 @@ class LLMIntentRecognizer:
         intents: Iterable[IntentDefinition],
         recent_messages: list[str],
         long_term_memory: list[str],
+        recommend_task: list[dict[str, Any]] | None = None,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RecognitionResult:
         """Run LLM-based recognition and bucket matches by configured thresholds."""
@@ -181,6 +182,7 @@ class LLMIntentRecognizer:
                 prompt=self.prompt,
                 variables={
                     "message": message,
+                    "recommend_task_json": json_dumps(recommend_task or []),
                     "recent_messages_json": json_dumps(recent_messages),
                     "long_term_memory_json": json_dumps(long_term_memory),
                     "intents_json": recognition_intents_json(active_intents),

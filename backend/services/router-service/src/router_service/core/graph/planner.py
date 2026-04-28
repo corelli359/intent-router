@@ -250,6 +250,7 @@ class SequentialIntentGraphPlanner:
         intents_by_code: dict[str, IntentDefinition],
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
     ) -> ExecutionGraphState:
         """Build a simple sequential graph in the order of recognized matches."""
         graph = ExecutionGraphState(
@@ -371,6 +372,7 @@ class LLMIntentGraphPlanner:
         intents_by_code: dict[str, IntentDefinition],
         recent_messages: list[str] | None,
         long_term_memory: list[str] | None,
+        recommend_task: list[dict[str, Any]] | None = None,
         diagnostic_message: str,
         diagnostic_details: dict[str, Any],
     ) -> ExecutionGraphState:
@@ -381,6 +383,7 @@ class LLMIntentGraphPlanner:
             intents_by_code=intents_by_code,
             recent_messages=recent_messages,
             long_term_memory=long_term_memory,
+            recommend_task=recommend_task,
         )
         graph.diagnostics = merge_diagnostics(
             graph.diagnostics,
@@ -403,6 +406,7 @@ class LLMIntentGraphPlanner:
         intents_by_code: dict[str, IntentDefinition],
         recent_messages: list[str] | None = None,
         long_term_memory: list[str] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
     ) -> ExecutionGraphState:
         """Plan an execution graph from recognized intents, with deterministic fallback."""
         if not matches:
@@ -419,6 +423,7 @@ class LLMIntentGraphPlanner:
                 prompt=self.prompt,
                 variables={
                     "message": message,
+                    "recommend_task_json": json_dumps(recommend_task or []),
                     "recent_messages_json": json_dumps(recent_messages or []),
                     "long_term_memory_json": json_dumps(long_term_memory or []),
                     "matched_intents_json": json_dumps(
@@ -444,6 +449,7 @@ class LLMIntentGraphPlanner:
                 intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
+                recommend_task=recommend_task,
                 diagnostic_message="图规划 LLM 失败，已降级到顺序规划器",
                 diagnostic_details={
                     "fallback": type(self.fallback).__name__,
@@ -464,6 +470,7 @@ class LLMIntentGraphPlanner:
                 intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
+                recommend_task=recommend_task,
             )
             fallback_graph.diagnostics = merge_diagnostics(
                 fallback_graph.diagnostics,

@@ -114,10 +114,12 @@ class GraphCompiler:
             exclude_current_turn_from_context=exclude_current_turn_from_context,
         ):
             graph: ExecutionGraphState | None = None
+            recommend_task = None
             if recognition is None and (recent_messages is None or long_term_memory is None):
                 context = build_session_context(session)
                 recent_messages = context["recent_messages"]
                 long_term_memory = context["long_term_memory"]
+                recommend_task = context.get("recommend_task")
             else:
                 recent_messages = recent_messages or []
                 long_term_memory = long_term_memory or []
@@ -139,6 +141,7 @@ class GraphCompiler:
                     recent_messages=recent_messages,
                     long_term_memory=long_term_memory,
                     recognition=recognition,
+                    recommend_task=recommend_task,
                     emit_events=emit_events,
                 )
                 recognition = build_result.recognition
@@ -149,6 +152,7 @@ class GraphCompiler:
                     content,
                     recent_messages=recent_messages,
                     long_term_memory=long_term_memory,
+                    recommend_task=recommend_task,
                     emit_events=emit_events,
                 )
 
@@ -197,6 +201,7 @@ class GraphCompiler:
                     intents_by_code=intents_by_code,
                     recent_messages=recent_messages,
                     long_term_memory=long_term_memory,
+                    recommend_task=recommend_task,
                 )
             diagnostics = merge_diagnostics(
                 diagnostics,
@@ -283,6 +288,7 @@ class GraphCompiler:
                 content,
                 recent_messages=recent_messages,
                 long_term_memory=context["long_term_memory"],
+                recommend_task=context.get("recommend_task"),
                 emit_events=emit_events,
             )
             logger.debug(
@@ -302,6 +308,7 @@ class GraphCompiler:
         intents_by_code: dict[str, IntentDefinition],
         recent_messages: list[str],
         long_term_memory: list[str],
+        recommend_task: list[dict[str, Any]] | None = None,
     ) -> ExecutionGraphState:
         """Choose between heavy planning and deterministic fallback planning."""
         use_heavy_planner = self._should_use_heavy_planner(
@@ -323,6 +330,7 @@ class GraphCompiler:
                 intents_by_code=intents_by_code,
                 recent_messages=recent_messages,
                 long_term_memory=long_term_memory,
+                recommend_task=recommend_task,
             )
             if planner is self.fallback_planner:
                 self._apply_single_node_confirmation_policy(graph=graph, intents_by_code=intents_by_code)
