@@ -23,6 +23,7 @@
 | S13 | 识别服务失败 | `/api/v1/message` `stream=true` | LLM/识别不可用 | 不推误导性 `intent_recognized`，直接失败帧 | 已覆盖 |
 | S14 | 旧 session 接口不可用 | 路由注册检查 | 不调用独立 session API | active router 中无 `/sessions` 生产入口 | 已覆盖 |
 | S15 | assistant-service 流式代理 | `/api/assistant/run/stream` | 助手服务转发 router SSE | 不重写 SSE frame，透传 `message/done` | 已覆盖 |
+| S16 | `recommendTask/currentDisplay` router 独用上下文 | `/api/v1/message` `stream=true` | 上游传推荐任务和展示历史 | 只影响 router 识别/规划 prompt，不透传给子智能体 | 已覆盖核心边界，需补流式等价 |
 
 ## 2. 测试目标
 
@@ -33,6 +34,7 @@
 5. Agent 给出业务结果后，Router 顶层必须先进入 `waiting_assistant_completion`；只有助手确认后才是 `completed`。
 6. 多任务图中，助手确认当前任务完成后，Router 必须继续调度后续 ready 节点。
 7. 多轮提槽、槽位覆盖、意图取消、意图切换、多意图图确认都必须有明确回归路径。
+8. `recommendTask/currentDisplay` 是 router 独用上下文，只能影响识别/规划，不能进入子智能体 `input_context`。
 
 不覆盖前端，不覆盖 admin。
 
@@ -51,7 +53,24 @@ pytest backend/tests/test_router_api_v2.py \
 当前基线结果：
 
 ```text
-42 passed
+43 passed
+```
+
+PR `recommendTask/currentDisplay` 相关扩展检查：
+
+```bash
+pytest backend/tests/test_prompt_templates.py \
+  backend/tests/test_llm_integration.py::test_llm_intent_recognizer_uses_registered_intent_catalog_payload \
+  backend/tests/test_llm_integration.py::test_llm_graph_planner_converts_structured_payload_to_execution_graph \
+  backend/tests/test_v2_graph_builder.py::test_unified_graph_builder_can_force_confirmation_from_intent_hints \
+  backend/tests/test_router_api_v2.py::test_v2_message_uses_recommend_task_and_current_display_only_for_router_context \
+  -q
+```
+
+当前扩展检查结果：
+
+```text
+12 passed
 ```
 
 可选语法检查：
@@ -574,6 +593,65 @@ POST /api/assistant/task/completion/stream
 - `backend/tests/test_assistant_service.py::test_assistant_service_proxies_router_stream_without_rewriting_events`
 - `backend/tests/test_assistant_service.py::test_assistant_service_proxies_router_task_completion_stream_without_rewriting_events`
 
+### TC-S15 `recommendTask/currentDisplay` 只影响 router 上下文
+
+目的：上游传入的推荐任务和当前展示历史，只能作为 router 识别/规划的辅助上下文，不能作为子智能体输入透传。
+
+请求：
+
+```json
+{
+  "sessionId": "assistant_tc_s15",
+  "txt": "给小明转账200",
+  "stream": true,
+  "recommendTask": [
+    {
+      "intentCode": "AG_TRANS",
+      "title": "给小明转账200",
+      "slotMemory": {
+        "payee_name": "小明",
+        "amount": "200"
+      }
+    }
+  ],
+  "currentDisplay": [
+    {
+      "role": "assistant",
+      "content": "推荐事项：给小明转账200"
+    }
+  ],
+  "config_variables": [
+    {"name": "custID", "value": "C0001"},
+    {"name": "sessionID", "value": "assistant_tc_s15"},
+    {"name": "currentDisplay", "value": "agent_display_passthrough"},
+    {"name": "agentSessionID", "value": "assistant_tc_s15"}
+  ]
+}
+```
+
+期望：
+
+- router 识别/规划 prompt 变量包含：
+  - `recommend_task_json`
+  - 带 `[CURRENT_DISPLAY]` 前缀的 `recent_messages`
+- 子智能体 `Task.input_context` 不包含 `recommend_task`。
+- 子智能体 `Task.input_context.recent_messages` 仍来自 router 自身会话历史，不被 `currentDisplay` 替换。
+- 原有 `config_variables.currentDisplay` 仍作为下游透传字段保留，值为 `agent_display_passthrough`。
+- SSE 仍按助手协议输出 `message` 和 `done`，且识别帧/业务帧结构不因新增字段变化。
+
+自动化覆盖：
+
+- `backend/tests/test_router_api_v2.py::test_v2_message_uses_recommend_task_and_current_display_only_for_router_context`
+- `backend/tests/test_llm_integration.py::test_llm_intent_recognizer_uses_registered_intent_catalog_payload`
+- `backend/tests/test_llm_integration.py::test_llm_graph_planner_converts_structured_payload_to_execution_graph`
+- `backend/tests/test_v2_graph_builder.py::test_unified_graph_builder_can_force_confirmation_from_intent_hints`
+- `backend/tests/test_prompt_templates.py`
+
+补充自动化要求：
+
+- 当前已覆盖上下文边界和 prompt 变量注入。
+- 还需要补一个 `stream=true` 等价端到端断言，确保新增字段与 SSE 输出顺序一起回归。
+
 ## 7. 非流式兼容对照
 
 非流式只验证协议兼容，不替代流式主回归。
@@ -595,7 +673,7 @@ POST /api/assistant/task/completion/stream
 
 一次回归通过需要同时满足：
 
-1. 自动化命令通过，当前基线为 `41 passed`。
+1. 自动化命令通过，当前基线为 `43 passed`。
 2. 所有 `stream=true` 主链路均以 `event: done` 收尾。
 3. 每个 `/api/v1/message` 流式请求在可识别场景下先推 `intent_recognized`。
 4. 多轮提槽使用同一 `sessionId`，槽位持续且可被后续用户输入覆盖。
@@ -604,3 +682,4 @@ POST /api/assistant/task/completion/stream
 7. 意图取消、意图切换、多意图图确认必须补齐流式自动化后才能算完整回归闭环。
 8. active router 代码中没有独立 session 入口复活。
 9. admin 相关代码不参与 router 回归。
+10. `recommendTask/currentDisplay` 不透传给子智能体，只作为 router 识别/规划上下文。

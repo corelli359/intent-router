@@ -188,6 +188,33 @@ class _TransferOnlyRecognizer:
         return RecognitionResult(primary=[], candidates=[])
 
 
+class _RequestContextRecordingRecognizer:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def recognize(
+        self,
+        message,
+        intents,
+        recent_messages,
+        long_term_memory,
+        recommend_task=None,
+        on_delta=None,
+    ):
+        del intents, long_term_memory, on_delta
+        self.calls.append(
+            {
+                "message": message,
+                "recent_messages": list(recent_messages),
+                "recommend_task": list(recommend_task or []),
+            }
+        )
+        return RecognitionResult(
+            primary=[IntentMatch(intent_code="AG_TRANS", confidence=0.97, reason="fixed transfer contract")],
+            candidates=[],
+        )
+
+
 class _RecognizerFailureRecognizer:
     async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
         del message, intents, recent_messages, long_term_memory, on_delta
@@ -1936,6 +1963,66 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
             "currentDisplay": "display_002",
             "agentSessionID": session_id,
         }
+
+    asyncio.run(run())
+
+
+def test_v2_message_uses_recommend_task_and_current_display_only_for_router_context() -> None:
+    async def run() -> None:
+        recognizer = _RequestContextRecordingRecognizer()
+        agent_client = _AssistantProtocolTransferAgentClient()
+        app, _ = _test_v2_app(
+            recognizer=recognizer,
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        recommend_task = [
+            {
+                "intentCode": "AG_TRANS",
+                "title": "给小明转账200",
+                "slotMemory": {"payee_name": "小明", "amount": "200"},
+            }
+        ]
+        current_display = [
+            {"role": "assistant", "content": "推荐事项：给小明转账200"},
+        ]
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": "router_only_context_demo",
+                    "txt": "给小明转账200",
+                    "stream": False,
+                    "recommendTask": recommend_task,
+                    "currentDisplay": current_display,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": "router_only_context_demo"},
+                        {"name": "currentDisplay", "value": "agent_display_passthrough"},
+                        {"name": "agentSessionID", "value": "router_only_context_demo"},
+                    ],
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "waiting_assistant_completion"
+        assert recognizer.calls == [
+            {
+                "message": "给小明转账200",
+                "recent_messages": ["[CURRENT_DISPLAY] assistant: 推荐事项：给小明转账200"],
+                "recommend_task": recommend_task,
+            }
+        ]
+        assert len(agent_client.tasks) == 1
+        task_context = agent_client.tasks[0].input_context
+        assert "recommend_task" not in task_context
+        assert task_context["recent_messages"] == ["user: 给小明转账200"]
+        assert task_context["config_variables"]["currentDisplay"] == "agent_display_passthrough"
 
     asyncio.run(run())
 

@@ -1532,7 +1532,7 @@ class GraphRouterOrchestrator:
         task: Task | None = None,
     ) -> dict[str, Any]:
         """Build the context payload sent to downstream agents for one graph node."""
-        context = self._build_session_context(session, task=task)
+        context = self._build_session_context(session, task=task, include_request_context=False)
         context.update(
             {
                 "graph": self.presenter.graph_payload(graph),
@@ -1546,18 +1546,31 @@ class GraphRouterOrchestrator:
         )
         return context
 
-    def _build_session_context(self, session: GraphSessionState, task: Task | None = None) -> dict[str, Any]:
+    def _build_session_context(
+        self,
+        session: GraphSessionState,
+        task: Task | None = None,
+        *,
+        include_request_context: bool = True,
+    ) -> dict[str, Any]:
         """Assemble recent messages plus long-term memory for recognition and agents."""
         long_term_memory = self.session_store.long_term_memory.recall(
             session.cust_id,
             limit=self.config.memory_recall_limit,
         )
-        recommend_task = session.recommend_task() if hasattr(session, "recommend_task") else None
+        recommend_task = (
+            session.recommend_task()
+            if include_request_context and hasattr(session, "recommend_task")
+            else None
+        )
         current_display = None
-        if hasattr(session, "current_display"):
+        if include_request_context and hasattr(session, "current_display"):
             current_display_raw = session.current_display()
             if current_display_raw is not None:
-                current_display = [f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in current_display_raw]
+                current_display = [
+                    f"[CURRENT_DISPLAY] {msg.get('role', 'user')}: {msg.get('content', '')}"
+                    for msg in current_display_raw
+                ]
         return self.context_builder.build_task_context(
             session,
             task=task,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -17,8 +18,11 @@ from router_service.core.recognition.recognizer import RecognitionResult  # noqa
 class _StaticLLMClient:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
+        self.variables: dict | None = None
 
     async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+        del prompt, model, on_delta
+        self.variables = dict(variables)
         return self.payload
 
 
@@ -219,37 +223,42 @@ def test_graph_draft_normalizer_drops_disallowed_history_slots() -> None:
 
 
 def test_unified_graph_builder_can_force_confirmation_from_intent_hints() -> None:
+    client = _StaticLLMClient(
+        {
+            "summary": "识别到 1 个高风险事项",
+            "needs_confirmation": False,
+            "primary_intents": [
+                {"intent_code": "transfer_money", "confidence": 0.97, "reason": "matched transfer intent"}
+            ],
+            "candidate_intents": [],
+            "nodes": [
+                {
+                    "intent_code": "transfer_money",
+                    "title": "给我媳妇儿转1000",
+                    "confidence": 0.97,
+                    "source_fragment": "给我媳妇儿转1000",
+                    "slot_memory": {"recipient_name": "我媳妇儿", "amount": "1000"},
+                }
+            ],
+            "edges": [],
+        }
+    )
     builder = LLMIntentGraphBuilder(
-        _StaticLLMClient(
-            {
-                "summary": "识别到 1 个高风险事项",
-                "needs_confirmation": False,
-                "primary_intents": [
-                    {"intent_code": "transfer_money", "confidence": 0.97, "reason": "matched transfer intent"}
-                ],
-                "candidate_intents": [],
-                "nodes": [
-                    {
-                        "intent_code": "transfer_money",
-                        "title": "给我媳妇儿转1000",
-                        "confidence": 0.97,
-                        "source_fragment": "给我媳妇儿转1000",
-                        "slot_memory": {"recipient_name": "我媳妇儿", "amount": "1000"},
-                    }
-                ],
-                "edges": [],
-            }
-        ),
+        client,
     )
 
     async def run() -> None:
+        recommend_task = [{"intentCode": "transfer_money", "title": "高风险转账"}]
         result = await builder.build(
             message="给我媳妇儿转1000",
             intents=[_transfer_intent(confirm_policy="always")],
             recent_messages=[],
             long_term_memory=[],
+            recommend_task=recommend_task,
         )
 
+        assert client.variables is not None
+        assert json.loads(client.variables["recommend_task_json"]) == recommend_task
         assert len(result.graph.nodes) == 1
         assert result.graph.status == GraphStatus.WAITING_CONFIRMATION
         assert result.graph.actions[0].code == "confirm_graph"

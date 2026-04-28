@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -41,6 +42,17 @@ RecentMessageSanitizer = Callable[[list[str]], list[str]]
 GraphPlanningPolicy = Literal["always", "never", "multi_intent_only", "auto"]
 
 logger = logging.getLogger(__name__)
+
+
+def _callable_supports_keyword(callable_obj: object, keyword: str) -> bool:
+    try:
+        parameters = inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return True
+    return keyword in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
 
 
 @dataclass(slots=True)
@@ -135,25 +147,39 @@ class GraphCompiler:
             )
 
             if self.understanding_service.has_graph_builder and self.planning_policy == "always":
+                build_kwargs: dict[str, Any] = {
+                    "recent_messages": recent_messages,
+                    "long_term_memory": long_term_memory,
+                    "recognition": recognition,
+                    "emit_events": emit_events,
+                }
+                if _callable_supports_keyword(
+                    self.understanding_service.build_graph_from_message,
+                    "recommend_task",
+                ):
+                    build_kwargs["recommend_task"] = recommend_task
                 build_result = await self.understanding_service.build_graph_from_message(
                     session,
                     content,
-                    recent_messages=recent_messages,
-                    long_term_memory=long_term_memory,
-                    recognition=recognition,
-                    recommend_task=recommend_task,
-                    emit_events=emit_events,
+                    **build_kwargs,
                 )
                 recognition = build_result.recognition
                 graph = build_result.graph
             elif recognition is None:
+                recognize_kwargs: dict[str, Any] = {
+                    "recent_messages": recent_messages,
+                    "long_term_memory": long_term_memory,
+                    "emit_events": emit_events,
+                }
+                if _callable_supports_keyword(
+                    self.understanding_service.recognize_message,
+                    "recommend_task",
+                ):
+                    recognize_kwargs["recommend_task"] = recommend_task
                 recognition = await self.understanding_service.recognize_message(
                     session,
                     content,
-                    recent_messages=recent_messages,
-                    long_term_memory=long_term_memory,
-                    recommend_task=recommend_task,
-                    emit_events=emit_events,
+                    **recognize_kwargs,
                 )
 
             recognition = recognition or RecognitionResult(primary=[], candidates=[], diagnostics=[])
@@ -283,13 +309,20 @@ class GraphCompiler:
                 recent_messages,
                 recommendation_context=recommendation_context,
             )
+            recognize_kwargs: dict[str, Any] = {
+                "recent_messages": recent_messages,
+                "long_term_memory": context["long_term_memory"],
+                "emit_events": emit_events,
+            }
+            if _callable_supports_keyword(
+                self.understanding_service.recognize_message,
+                "recommend_task",
+            ):
+                recognize_kwargs["recommend_task"] = context.get("recommend_task")
             recognition = await self.understanding_service.recognize_message(
                 session,
                 content,
-                recent_messages=recent_messages,
-                long_term_memory=context["long_term_memory"],
-                recommend_task=context.get("recommend_task"),
-                emit_events=emit_events,
+                **recognize_kwargs,
             )
             logger.debug(
                 "Recognize-only result (trace_id=%s, session_id=%s, primary_intents=%s, candidate_intents=%s)",
@@ -324,14 +357,16 @@ class GraphCompiler:
             use_heavy_planner=use_heavy_planner,
             match_count=len(matches),
         ):
-            graph = await planner.plan(
-                message=message,
-                matches=matches,
-                intents_by_code=intents_by_code,
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
-                recommend_task=recommend_task,
-            )
+            plan_kwargs: dict[str, Any] = {
+                "message": message,
+                "matches": matches,
+                "intents_by_code": intents_by_code,
+                "recent_messages": recent_messages,
+                "long_term_memory": long_term_memory,
+            }
+            if _callable_supports_keyword(planner.plan, "recommend_task"):
+                plan_kwargs["recommend_task"] = recommend_task
+            graph = await planner.plan(**plan_kwargs)
             if planner is self.fallback_planner:
                 self._apply_single_node_confirmation_policy(graph=graph, intents_by_code=intents_by_code)
             logger.debug(

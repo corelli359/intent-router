@@ -373,11 +373,15 @@ class GraphSessionState(BaseModel):
 
     def recommend_task(self) -> list[dict[str, Any]] | None:
         """Return the request-scoped recommend_task for the current turn."""
-        return self._recommend_task
+        if self._recommend_task is None:
+            return None
+        return [dict(item) for item in self._recommend_task]
 
     def current_display(self) -> list[dict[str, Any]] | None:
         """Return the request-scoped current_display for the current turn."""
-        return self._current_display
+        if self._current_display is None:
+            return None
+        return [dict(item) for item in self._current_display]
 
     def business_object(self, business_id: str | None) -> BusinessObjectState | None:
         """Return the business object with the given id when present."""

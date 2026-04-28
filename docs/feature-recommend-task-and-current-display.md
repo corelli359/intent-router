@@ -2,12 +2,12 @@
 
 ## 需求背景
 
-为了增强多意图识别和对话上下文理解能力，需要在 `/v1/message` 接口中增加两个新参数：
+为了增强多意图识别和对话上下文理解能力，需要在 `/api/v1/message` 接口中增加两个新参数：
 
 1. **`recommend_task`**: 应用推荐的任务列表，注入到提示词中用于支持多意图的识别与规划
-2. **`current_display`**: 应用展示的对话历史，用于替换提示词中的短期记忆
+2. **`current_display`**: 应用展示的对话历史，用于替换 router 识别/规划提示词中的短期记忆
 
-这两个参数是 router 独用的上下文参数，不透传给子智能体。
+这两个参数是 router 独用的上下文参数，不透传给子智能体；下游 agent 仍使用 router 自己的会话历史和原有 `config_variables`。
 
 ---
 
@@ -45,7 +45,7 @@
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `recommendTask` | `array` | 否 | 应用推荐的任务列表，直接注入到 LLM 提示词中 |
-| `currentDisplay` | `array` | 否 | 应用端记录的对话历史，替换 router 的短期记忆 |
+| `currentDisplay` | `array` | 否 | 应用端记录的对话历史，替换 router 识别/规划提示词中的短期记忆 |
 
 ---
 
@@ -77,7 +77,7 @@
 - `build_task_context()` 添加参数：
   - `recommend_task: list[dict[str, Any]] | None`
   - `current_display: list[str] | None`
-- 当 `current_display` 非空时，替换默认的 `recent_messages`
+- 当 `current_display` 非空时，为 router 识别/规划生成 `[CURRENT_DISPLAY] role: content` 形式的 `recent_messages`
 
 ### 4. 提示词模板
 
@@ -123,7 +123,7 @@
 
 - `LLMIntentGraphPlanner.plan()` 添加 `recommend_task` 参数
 - `SequentialIntentGraphPlanner.plan()` 添加 `recommend_task` 参数（兼容性）
-- `_fallback_plan()` 添加 `recommend_task` 参数
+- fallback planner 添加 `recommend_task` 兼容参数
 - LLM 调用添加变量：`"recommend_task_json": json_dumps(recommend_task or [])`
 
 ### 10. Builder
@@ -150,7 +150,7 @@
 │                              参数注入流程                                     │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-POST /v1/message
+POST /api/v1/message
   { recommendTask, currentDisplay }
             │
             ▼
@@ -180,7 +180,7 @@ ContextBuilder.build_task_context(
             ▼
 context = {
     "recommend_task": [...],
-    "recent_messages": current_display 或 build_recent_messages()
+    "recent_messages": [CURRENT_DISPLAY] 序列化结果 或 build_recent_messages()
 }
             │
             ▼

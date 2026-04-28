@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from router_service.core.shared.diagnostics import (
     RouterDiagnostic,
@@ -23,6 +25,17 @@ from router_service.core.graph.planner import TurnDecisionPayload, TurnInterpret
 
 
 logger = logging.getLogger(__name__)
+
+
+def _callable_supports_keyword(callable_obj: object, keyword: str) -> bool:
+    try:
+        parameters = inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return True
+    return keyword in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
 
 
 @dataclass(slots=True)
@@ -89,14 +102,16 @@ class IntentUnderstandingService:
                     return
                 await self.event_publisher.publish_recognition_delta(session, delta=delta)
 
-            recognition = await self.recognizer.recognize(
-                message=content,
-                intents=self.intent_catalog.active_intents_by_code().values(),
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
-                recommend_task=recommend_task,
-                on_delta=publish_recognition_delta if emit_events else None,
-            )
+            recognize_kwargs: dict[str, Any] = {
+                "message": content,
+                "intents": self.intent_catalog.active_intents_by_code().values(),
+                "recent_messages": recent_messages,
+                "long_term_memory": long_term_memory,
+                "on_delta": publish_recognition_delta if emit_events else None,
+            }
+            if _callable_supports_keyword(self.recognizer.recognize, "recommend_task"):
+                recognize_kwargs["recommend_task"] = recommend_task
+            recognition = await self.recognizer.recognize(**recognize_kwargs)
             if emit_events:
                 await self.event_publisher.publish_recognition_completed(session, recognition=recognition)
             logger.debug(
@@ -139,15 +154,17 @@ class IntentUnderstandingService:
 
             if self.graph_builder is None:
                 raise RuntimeError("graph_builder is not configured")
-            result = await self.graph_builder.build(
-                message=content,
-                intents=self.intent_catalog.active_intents_by_code().values(),
-                recent_messages=recent_messages,
-                long_term_memory=long_term_memory,
-                recognition=recognition,
-                recommend_task=recommend_task,
-                on_delta=publish_graph_builder_delta if emit_events else None,
-            )
+            build_kwargs: dict[str, Any] = {
+                "message": content,
+                "intents": self.intent_catalog.active_intents_by_code().values(),
+                "recent_messages": recent_messages,
+                "long_term_memory": long_term_memory,
+                "recognition": recognition,
+                "on_delta": publish_graph_builder_delta if emit_events else None,
+            }
+            if _callable_supports_keyword(self.graph_builder.build, "recommend_task"):
+                build_kwargs["recommend_task"] = recommend_task
+            result = await self.graph_builder.build(**build_kwargs)
             if emit_events:
                 await self.event_publisher.publish_graph_builder_completed(session, result=result)
             logger.debug(
