@@ -1002,6 +1002,7 @@ class GraphRouterOrchestrator:
             }
         )
         task = Task(
+            task_id=node.ensure_task_id(),
             session_id=session.session_id,
             intent_code=intent.intent_code,
             agent_url=intent.agent_url,
@@ -1213,7 +1214,7 @@ class GraphRouterOrchestrator:
     ) -> None:
         """Block the node in router space when required slots are still missing/ambiguous."""
         message = validation.prompt_message or "请补充当前事项所需信息"
-        node.task_id = None
+        node.ensure_task_id()
         node.touch(GraphNodeStatus.WAITING_USER_INPUT, blocking_reason=message)
         node.diagnostics = list(validation.diagnostics or [])
         graph.touch(GraphStatus.WAITING_USER_INPUT)
@@ -1255,7 +1256,7 @@ class GraphRouterOrchestrator:
             f"路由识别完成：事项「{node.title}」已具备执行条件，"
             "当前为 router_only 模式，未调用执行 agent"
         )
-        node.task_id = None
+        node.ensure_task_id()
         node.output_payload = {
             "router_only": True,
             "dispatch_ready": True,

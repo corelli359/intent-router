@@ -440,8 +440,8 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
         assert waiting_body["ok"] is True
         assert waiting_body["status"] == "waiting_user_input"
         assert waiting_body["completion_state"] == 0
-        assert waiting_body["current_task"] == "AG_TRANS#0"
-        assert waiting_body["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
+        assert waiting_body["current_task"].startswith("task_")
+        assert waiting_body["task_list"] == [{"name": waiting_body["current_task"], "status": "waiting"}]
         assert waiting_body["slot_memory"] == {"payee_name": "小明"}
         assert waiting_body["output"] == {}
 
@@ -575,8 +575,8 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
         waiting_payload = _non_recognition_payloads(waiting_message_payloads)[0]
         assert waiting_payload["status"] == "waiting_user_input"
         assert waiting_payload["completion_state"] == 0
-        assert waiting_payload["current_task"] == "AG_TRANS#0"
-        assert waiting_payload["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
+        assert waiting_payload["current_task"].startswith("task_")
+        assert waiting_payload["task_list"] == [{"name": waiting_payload["current_task"], "status": "waiting"}]
         assert waiting_payload["output"] == {}
 
         waiting_assistant_completion_frames = _parse_sse_frames(waiting_assistant_completion_text)

@@ -134,7 +134,7 @@ class GraphNodeState(BaseModel):
     position: int = 0
     source_fragment: str | None = None
     status: GraphNodeStatus = GraphNodeStatus.DRAFT
-    task_id: str | None = None
+    task_id: str | None = Field(default_factory=lambda: f"task_{uuid4().hex[:10]}")
     depends_on: list[str] = Field(default_factory=list)
     blocking_reason: str | None = None
     skip_reason_code: str | None = None
@@ -163,6 +163,12 @@ class GraphNodeState(BaseModel):
         self.blocking_reason = blocking_reason
         self.skip_reason_code = skip_reason_code
         self.updated_at = utc_now()
+
+    def ensure_task_id(self) -> str:
+        """Return the stable task-plane id for this node, creating one for legacy nodes."""
+        if self.task_id in (None, ""):
+            self.task_id = f"task_{uuid4().hex[:10]}"
+        return self.task_id
 
     def apply_completion_signal(self, *, source: str, signal: int) -> tuple[int, str]:
         """Apply one monotonic assistant-originated completion signal."""

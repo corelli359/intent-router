@@ -288,14 +288,13 @@ def _assistant_task_name(
     position: int | None = None,
 ) -> str:
     """Return the stable task identifier exposed to the assistant-facing protocol."""
+    del node_id
     if task_id not in (None, ""):
         return str(task_id)
     if intent_code not in (None, ""):
         if position is not None:
             return f"{intent_code}#{position}"
         return str(intent_code)
-    if node_id not in (None, ""):
-        return str(node_id)
     return "task"
 
 

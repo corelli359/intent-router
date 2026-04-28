@@ -1758,10 +1758,92 @@ def test_v2_router_message_assistant_protocol_waiting_response_for_missing_slots
         assert body["completion_reason"] == "router_waiting_user_input"
         assert body["message"] == "请提供金额"
         assert body["slot_memory"] == {"payee_name": "小明"}
-        assert body["current_task"] == "AG_TRANS#0"
-        assert body["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
+        assert body["current_task"].startswith("task_")
+        assert body["task_list"] == [{"name": body["current_task"], "status": "waiting"}]
         assert body["output"] == {}
         assert agent_client.tasks == []
+
+    asyncio.run(run())
+
+
+def test_v2_router_message_assistant_protocol_uses_unique_task_name_before_agent_dispatch() -> None:
+    async def run() -> None:
+        agent_client = _AssistantProtocolTransferAgentClient()
+        app, _ = _test_v2_app(
+            recognizer=_TransferOnlyRecognizer(),
+            intents=[_assistant_protocol_ag_trans_intent()],
+            understanding_validator=_MultiTurnOverrideTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = "assistant_unique_pre_task_name_demo"
+            first_waiting = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "给小明转账",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            )
+            first_ready = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "200",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            )
+            completion = await client.post(
+                "/api/v1/task/completion",
+                json={
+                    "sessionId": session_id,
+                    "taskId": first_ready.json()["current_task"],
+                    "completionSignal": 2,
+                    "stream": False,
+                },
+            )
+            second_waiting = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "给小红转账",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            )
+
+        assert first_waiting.status_code == 200
+        assert first_ready.status_code == 200
+        assert completion.status_code == 200
+        assert second_waiting.status_code == 200
+        first_waiting_body = first_waiting.json()
+        second_waiting_body = second_waiting.json()
+        assert first_waiting_body["status"] == "waiting_user_input"
+        assert second_waiting_body["status"] == "waiting_user_input"
+        assert first_waiting_body["current_task"].startswith("task_")
+        assert second_waiting_body["current_task"].startswith("task_")
+        assert first_waiting_body["current_task"] != second_waiting_body["current_task"]
+        assert first_waiting_body["task_list"] == [
+            {"name": first_waiting_body["current_task"], "status": "waiting"}
+        ]
+        assert second_waiting_body["task_list"] == [
+            {"name": second_waiting_body["current_task"], "status": "waiting"}
+        ]
+        assert first_ready.json()["current_task"] == first_waiting_body["current_task"]
 
     asyncio.run(run())
 
@@ -2284,8 +2366,8 @@ def test_v1_message_stream_assistant_protocol_waiting_then_completed() -> None:
         waiting_payload = _non_recognition_payloads(waiting_message_payloads)[0]
         assert waiting_payload["status"] == "waiting_user_input"
         assert waiting_payload["completion_state"] == 0
-        assert waiting_payload["current_task"] == "AG_TRANS#0"
-        assert waiting_payload["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
+        assert waiting_payload["current_task"].startswith("task_")
+        assert waiting_payload["task_list"] == [{"name": waiting_payload["current_task"], "status": "waiting"}]
         assert waiting_payload["message"] == "请提供金额"
         assert waiting_payload["output"] == {}
 
@@ -2456,7 +2538,17 @@ def test_v1_message_stream_assistant_protocol_emits_graph_level_pending_payload(
         state_payloads = _non_recognition_payloads(message_payloads)
         assert len(state_payloads) == 1
         assert json_response.status_code == 200
-        assert state_payloads[0] == json_response.json()
+        stream_payload = dict(state_payloads[0])
+        json_payload = json_response.json()
+        assert stream_payload["current_task"].startswith("task_")
+        assert json_payload["current_task"].startswith("task_")
+        assert stream_payload["task_list"] == [{"name": stream_payload["current_task"], "status": "waiting"}]
+        assert json_payload["task_list"] == [{"name": json_payload["current_task"], "status": "waiting"}]
+        stream_payload["current_task"] = "task_DYNAMIC"
+        json_payload["current_task"] = "task_DYNAMIC"
+        stream_payload["task_list"] = [{"name": "task_DYNAMIC", "status": "waiting"}]
+        json_payload["task_list"] = [{"name": "task_DYNAMIC", "status": "waiting"}]
+        assert stream_payload == json_payload
         assert set(state_payloads[0]) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS
         assert state_payloads[0]["status"] == "draft"
         assert state_payloads[0]["completion_state"] == 0
