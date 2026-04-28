@@ -26,26 +26,25 @@ Default assumptions:
 - list: `GET /api/admin/intents`
 - optional full CRUD paths can be overridden by flags
 
-### 2) Router SSE lifecycle validation
+### 2) Router assistant-protocol contract validation
 
 ```bash
-python scripts/verify_router_lifecycle.py --base-url "$INTENT_ROUTER_BASE_URL"
+python scripts/verify_router_assistant_contract.py --base-url "$INTENT_ROUTER_BASE_URL"
 ```
 
 Default assumptions:
 
-- events stream: `GET /api/router/v2/sessions/{session_id}/events` (SSE)
-- message submit: `POST /api/router/v2/sessions/{session_id}/messages`
+- message submit: `POST /api/v1/message`
+- task completion callback: `POST /api/v1/task/completion`
 - default scenario: transfer flow with first-turn partial slots, then follow-up slot补充
-- expected event sequence: `session.waiting_user_input -> node.completed`
 
 ### 3) One-shot launcher
 
 ```bash
-RUN_ROUTER_SSE_TEST=1 bash scripts/run_mvp_checks.sh
+RUN_ROUTER_CONTRACT_TEST=1 bash scripts/run_mvp_checks.sh
 ```
 
-If `RUN_ROUTER_SSE_TEST` is not `1`, the SSE check is skipped.
+If `RUN_ROUTER_CONTRACT_TEST` is not `1`, the router contract check is skipped.
 
 ### 4) Real LLM runtime smoke test
 
@@ -68,30 +67,17 @@ Pytest wrapper:
 RUN_REAL_LLM_TEST=1 pytest backend/tests/integration/test_real_llm_runtime_script.py
 ```
 
-### 5) Analyze-only understanding verification
+### 5) Router-only understanding verification
 
-This calls the router without dispatching intent agents, so you can inspect:
+This calls the production router contract without dispatching downstream agents, so you can inspect:
 
-- recognized primary intents
-- candidate intents
-- compiled graph
-- per-node slot memory
-- conditional edges
+- returned intent code
+- top-level slot memory
+- assistant-facing message
+- nested output payload
 
 ```bash
 python scripts/verify_router_understanding.py --base-url "$INTENT_ROUTER_BASE_URL"
-```
-
-Intent-only verification:
-
-```bash
-python scripts/verify_router_understanding.py --base-url "$INTENT_ROUTER_BASE_URL" --analysis-mode intent_only
-```
-
-Direct no-arg intent-only smoke script:
-
-```bash
-python scripts/analyze_intent_only.py
 ```
 
 Router file-mode now uses the business CSV `intent_table_from_updated_screenshot.csv` as the source-of-truth.
@@ -110,72 +96,22 @@ This sync step will:
 - archive the previous split catalog under `docs/archive/router-intent-catalog-pre-csv-switch`
 - rewrite the file-mode catalog used by the router ConfigMap
 
-Creative transfer multiturn intent+slot replay:
+Current direct router helpers:
 
 ```bash
-python scripts/verify_transfer_multiturn_dataset.py
+python scripts/jupyter_router_stream_test.py
+python scripts/run_router_perf_ladder.py --base-url "$INTENT_ROUTER_BASE_URL"
 ```
 
-Default dataset:
+Notes:
 
-- `docs/examples/transfer_money_multiturn_cases.csv`
-- answer fields come first, then `user_turn_*`, then the merged `dialogue_text`
-
-Standard multi-turn intent + slot verification suite:
-
-```bash
-python scripts/verify_multiturn_intent_slot_suite.py
-```
-
-This script now supports two modes.
-
-Interactive mode:
-
-- it creates a session
-- by default it waits for your terminal input and sends one real dialog turn at a time
-- validates the returned reply, current intent, current slots, and dialog stage
-- it does not call any removed analyze endpoint
-- it sends `executionMode=router_only`, so the router stops before downstream agent execution
-
-Scenario-suite mode:
-
-- use `INTENT_ROUTER_INTERACTIVE=0` or `--scenario ...`
-- runs fixed one-turn, two-turn, and three-turn contract cases
-- verifies each turn against the expected intent, stage, slot set, and assistant reply
-- verifies that the final turn has the complete required slots
+- legacy session-style verification scripts have been removed
+- current helper scripts only target `/api/v1/message` and `/api/v1/task/completion`
 
 Useful environment variables:
 
 - `INTENT_ROUTER_BASE_URL`
 - `INTENT_ROUTER_HOST_HEADER`
-- `INTENT_ROUTER_CUST_ID`
-- `INTENT_ROUTER_TIMEOUT_SECONDS`
-- `INTENT_ROUTER_INTERACTIVE`
-
-Recommended usage:
-
-- run the script directly, then type each user turn in the terminal
-- each turn prints only user input, assistant reply, current intent, current slots, and current stage
-- use this script when you want to validate the real multi-turn intent recognition + slot filling chain without running downstream agents
-
-List built-in scenario names:
-
-```bash
-python scripts/verify_multiturn_intent_slot_suite.py --list-scenarios
-```
-
-Run the full fixed scenario suite:
-
-```bash
-INTENT_ROUTER_INTERACTIVE=0 python scripts/verify_multiturn_intent_slot_suite.py
-```
-
-Run only a two-turn contract case such as "give name first, then amount":
-
-```bash
-INTENT_ROUTER_INTERACTIVE=0 python scripts/verify_multiturn_intent_slot_suite.py \
-  --scenario two_turn_name_then_amount
-```
 
 ### 6) Assistant-style router contract verification
 
@@ -297,4 +233,4 @@ python scripts/register_financial_intents.py --base-url "$INTENT_ROUTER_BASE_URL
 It only runs when:
 
 - `RUN_INTEGRATION=1`
-- and for SSE lifecycle test: `RUN_ROUTER_SSE_TEST=1`
+- and for router contract test: `RUN_ROUTER_CONTRACT_TEST=1`

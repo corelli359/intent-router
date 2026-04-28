@@ -1084,7 +1084,7 @@ export default function PerfTestsPage() {
                       <div className={styles.inlineMeta}>
                         <span>场景 {selectedCaseCategory}</span>
                         <span>发起 管理端服务</span>
-                        <span>接口 {selectedCase?.targetRoute ?? "/api/router/v2/sessions/{session_id}/messages"}</span>
+                        <span>接口 {selectedCase?.targetRoute ?? "/api/v1/message"}</span>
                       </div>
                     </div>
                     <button className={styles.inlineButton} onClick={() => setCaseEditorOpen((current) => !current)} type="button">

@@ -147,7 +147,6 @@ class GraphNodeState(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     _agent_output: dict[str, Any] = PrivateAttr(default_factory=dict)
-    _agent_completion_signal: int = PrivateAttr(default=0)
     _assistant_completion_signal: int = PrivateAttr(default=0)
     _completion_reason_override: str | None = PrivateAttr(default=None)
     _completion_finalized_by: str | None = PrivateAttr(default=None)
@@ -166,15 +165,12 @@ class GraphNodeState(BaseModel):
         self.updated_at = utc_now()
 
     def apply_completion_signal(self, *, source: str, signal: int) -> tuple[int, str]:
-        """Apply one monotonic completion signal from either agent or assistant."""
+        """Apply one monotonic assistant-originated completion signal."""
         if signal not in {0, 1, 2}:
             raise ValueError(f"Unsupported completion signal: {signal}")
-        if source == "agent":
-            self._agent_completion_signal = max(self._agent_completion_signal, signal)
-        elif source == "assistant":
-            self._assistant_completion_signal = max(self._assistant_completion_signal, signal)
-        else:
+        if source != "assistant":
             raise ValueError(f"Unsupported completion source: {source}")
+        self._assistant_completion_signal = max(self._assistant_completion_signal, signal)
         state, reason, finalized_by = self._resolve_completion_state()
         self._completion_reason_override = reason
         if finalized_by is not None:
@@ -182,10 +178,9 @@ class GraphNodeState(BaseModel):
         return state, reason
 
     def completion_override(self) -> tuple[int, str] | None:
-        """Return the router-computed completion override when any side has signaled."""
+        """Return the router-computed completion override when assistant has signaled."""
         if (
-            self._agent_completion_signal == 0
-            and self._assistant_completion_signal == 0
+            self._assistant_completion_signal == 0
             and self._completion_reason_override is None
         ):
             return None
@@ -196,15 +191,9 @@ class GraphNodeState(BaseModel):
         return state, reason
 
     def _resolve_completion_state(self) -> tuple[int, str, str | None]:
-        """Resolve the unified completion state from agent/assistant-side signals."""
-        if self._agent_completion_signal >= 2:
-            return 2, "agent_final_done", "agent"
+        """Resolve completion state from assistant confirmation only."""
         if self._assistant_completion_signal >= 2:
             return 2, "assistant_final_done", "assistant"
-        if self._agent_completion_signal >= 1 and self._assistant_completion_signal >= 1:
-            return 2, "joint_done", "joint"
-        if self._agent_completion_signal >= 1:
-            return 1, "agent_partial_done", None
         if self._assistant_completion_signal >= 1:
             return 1, "assistant_partial_done", None
         return 0, self._completion_reason_override or "running", None

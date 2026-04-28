@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import urllib.request
 from typing import Any
 
@@ -29,6 +30,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Verify router router-only mode.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="Router base URL.")
     parser.add_argument("--host-header", default=None, help="Optional Host header for ingress routing.")
+    parser.add_argument("--cust-id", default="cust_demo", help="custId used in the router request payload.")
     parser.add_argument(
         "--message",
         default="帮我查一下余额，如果大于1000，就给小红转200，如果还大于1000，就再给小明转200",
@@ -37,22 +39,23 @@ def main() -> int:
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
-    status, body = _request(
-        method="POST",
-        url=f"{base_url}/api/router/v2/sessions",
-        payload={},
-        host_header=args.host_header,
-    )
-    if status != 201:
-        raise RuntimeError(f"create session failed: status={status}, body={body}")
-    session_id = json.loads(body)["session_id"]
+    session_id = f"verify_understanding_{int(time.time() * 1000)}"
 
     status, body = _request(
         method="POST",
-        url=f"{base_url}/api/router/v2/sessions/{session_id}/messages",
+        url=f"{base_url}/api/v1/message",
         payload={
-            "content": args.message,
+            "sessionId": session_id,
+            "txt": args.message,
+            "custId": args.cust_id,
             "executionMode": "router_only",
+            "stream": False,
+            "config_variables": [
+                {"name": "custID", "value": args.cust_id},
+                {"name": "sessionID", "value": session_id},
+                {"name": "currentDisplay", "value": "router_only_debug"},
+                {"name": "agentSessionID", "value": session_id},
+            ],
         },
         host_header=args.host_header,
     )
@@ -60,21 +63,15 @@ def main() -> int:
         raise RuntimeError(f"route failed: status={status}, body={body}")
 
     payload = json.loads(body)
-    snapshot = payload.get("snapshot") or {}
-    current_graph = snapshot.get("current_graph") or {}
-    pending_graph = snapshot.get("pending_graph") or {}
-    active_graph = current_graph if current_graph else pending_graph
-    nodes = active_graph.get("nodes") or []
-
     print(
         json.dumps(
             {
                 "session_id": session_id,
-                "graph_status": active_graph.get("status"),
-                "assistant_reply": ((snapshot.get("messages") or [{}])[-1]).get("content"),
-                "intents": [node.get("intent_code") for node in nodes if isinstance(node, dict)],
-                "slot_memory": (nodes[0].get("slot_memory") if nodes and isinstance(nodes[0], dict) else {}),
-                "shared_slot_memory": snapshot.get("shared_slot_memory") or {},
+                "status": payload.get("status"),
+                "assistant_reply": payload.get("message"),
+                "intent_code": payload.get("intent_code"),
+                "slot_memory": payload.get("slot_memory") or {},
+                "output": payload.get("output") or {},
             },
             ensure_ascii=False,
             indent=2,

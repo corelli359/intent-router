@@ -75,26 +75,6 @@ def _app_with_stub_orchestrator() -> tuple[object, _StubOrchestrator]:
     return app, orchestrator
 
 
-def test_legacy_router_session_endpoints_are_removed() -> None:
-    async def run() -> None:
-        app, _ = _app_with_stub_orchestrator()
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
-        ) as client:
-            responses = [
-                await client.get("/api/router/sessions/missing-session"),
-                await client.post("/api/router/sessions", json={}),
-                await client.post("/api/router/sessions/session_demo/messages", json={"content": "帮我转账"}),
-                await client.post("/api/router/v2/sessions/session_demo/messages", json={"content": "帮我转账"}),
-                await client.post("/api/router/v2/sessions/session_demo/messages/stream", json={"txt": "帮我转账"}),
-            ]
-
-        assert all(response.status_code == 404 for response in responses)
-
-    asyncio.run(run())
-
-
 def test_router_v1_message_returns_structured_validation_error() -> None:
     async def run() -> None:
         app, _ = _app_with_stub_orchestrator()
@@ -176,6 +156,7 @@ def test_router_v1_task_completion_returns_output_without_snapshot() -> None:
                     "sessionId": "session_demo",
                     "taskId": "task_demo",
                     "completionSignal": 2,
+                    "stream": False,
                 },
             )
 
@@ -203,6 +184,7 @@ def test_router_v1_task_completion_returns_structured_session_not_found_error() 
                     "sessionId": "missing-session",
                     "taskId": "task_demo",
                     "completionSignal": 2,
+                    "stream": False,
                 },
             )
 

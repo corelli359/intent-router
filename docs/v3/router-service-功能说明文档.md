@@ -29,39 +29,9 @@ Router 当前可归纳为 9 组功能：
 
 ## 3. 对外接口
 
-### 3.1 Session 接口
+### 3.1 消息接口
 
-1. `POST /api/router/sessions`
-2. `POST /api/router/v2/sessions`
-
-能力：
-
-1. 创建 session
-2. 允许调用方显式传入 `cust_id`
-3. 允许调用方显式传入 `session_id`
-
-### 3.2 快照接口
-
-1. `GET /api/router/sessions/{session_id}`
-2. `GET /api/router/v2/sessions/{session_id}`
-
-能力：
-
-1. 返回当前 session 快照
-2. 暴露：
-   - `messages`
-   - `candidate_intents`
-   - `last_diagnostics`
-   - `shared_slot_memory`
-   - `current_graph`
-   - `pending_graph`
-   - `active_node_id`
-
-### 3.3 消息接口
-
-1. `POST /api/router/sessions/{session_id}/messages`
-2. `POST /api/router/v2/sessions/{session_id}/messages`
-3. `POST /api/v1/message`
+1. `POST /api/v1/message`
 
 能力：
 
@@ -72,48 +42,27 @@ Router 当前可归纳为 9 组功能：
 5. 选择 `executionMode=execute|router_only`
 6. 生产 SSE 主链路统一走 `/api/v1/message` + `stream=true`
 
-### 3.4 动作接口
+### 3.2 任务完成回调接口
 
-1. `POST /api/router/sessions/{session_id}/actions`
-2. `POST /api/router/v2/sessions/{session_id}/actions`
-3. `POST /api/router/sessions/{session_id}/actions/stream`
-4. `POST /api/router/v2/sessions/{session_id}/actions/stream`
-
-支持动作：
-
-1. `confirm_graph`
-2. `cancel_graph`
-3. `cancel_node`
-
-### 3.5 事件订阅接口
-
-1. `GET /api/router/sessions/{session_id}/events`
-2. `GET /api/router/v2/sessions/{session_id}/events`
+1. `POST /api/v1/task/completion`
 
 能力：
 
-1. 独立订阅 session 级事件流
-2. 初始会发送 heartbeat
+1. 由助手确认当前任务完成态
+2. 支持 `stream=true|false`
+3. 在多任务图中，助手确认后再继续执行后续任务
 
-### 3.6 对外功能接口图
+### 3.3 对外功能接口图
 
 ```mermaid
 flowchart LR
     caller["Frontend / Caller"]
-    create["POST /sessions"]
-    snapshot["GET /sessions/{id}"]
-    message["POST /sessions/{id}/messages"]
     stream["POST /api/v1/message"]
-    action["POST /sessions/{id}/actions"]
-    events["GET /sessions/{id}/events"]
+    completion["POST /api/v1/task/completion"]
     router["router-service runtime"]
 
-    caller --> create --> router
-    caller --> snapshot --> router
-    caller --> message --> router
     caller --> stream --> router
-    caller --> action --> router
-    caller --> events --> router
+    caller --> completion --> router
 ```
 
 ## 4. 关键配置开关

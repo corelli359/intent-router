@@ -102,6 +102,7 @@ class TaskCompletionRequest(BaseModel):
     session_id: str = Field(alias="sessionId", min_length=1)
     task_id: str = Field(alias="taskId", min_length=1)
     completion_signal: int = Field(alias="completionSignal", ge=1, le=2)
+    stream: bool = True
 
 
 def _resolve_session_cust_id(
@@ -408,9 +409,9 @@ def _assistant_completion_fields(
         if explicit_reason not in (None, ""):
             return explicit_state, str(explicit_reason)
         if explicit_state == 2 and status == "completed":
-            return 2, "completed"
+            return 2, "assistant_final_done"
         if explicit_state == 1 and status == "waiting_assistant_completion":
-            return 1, "agent_partial_done"
+            return 1, "assistant_partial_done"
         return explicit_state, "running"
 
     if isinstance(node_status, GraphNodeStatus):
@@ -428,7 +429,7 @@ def _assistant_completion_fields(
         status in {"waiting_assistant_completion"}
         or node_status_value == GraphNodeStatus.WAITING_ASSISTANT_COMPLETION.value
     ):
-        return 1, "agent_partial_done"
+        return 1, "assistant_confirmation_required"
     if status in {"ready_for_dispatch"} or node_status_value == GraphNodeStatus.READY_FOR_DISPATCH.value:
         return 0, "router_ready_for_dispatch"
     if status in {"running", "dispatching"} or node_status_value == GraphNodeStatus.RUNNING.value:
@@ -965,6 +966,128 @@ def _assistant_message_stream_response(
         },
     )
 
+
+async def _assistant_task_completion_json_response(
+    *,
+    request: TaskCompletionRequest,
+    orchestrator: GraphRouterOrchestrator,
+) -> dict[str, Any]:
+    """Process one assistant task-completion callback and return the non-stream v0.4 payload."""
+    serialized_handler = getattr(orchestrator, "handle_task_completion_serialized", None)
+    if callable(serialized_handler):
+        serialized_response = await serialized_handler(
+            session_id=request.session_id,
+            task_id=request.task_id,
+            completion_signal=request.completion_signal,
+            serializer=lambda session: _assistant_response_envelope_for_task(session, request.task_id),
+            emit_events=False,
+        )
+        return _assistant_response_dict(serialized_response)
+    live_handler = getattr(orchestrator, "handle_task_completion", None)
+    if callable(live_handler):
+        await live_handler(
+            session_id=request.session_id,
+            task_id=request.task_id,
+            completion_signal=request.completion_signal,
+            emit_events=False,
+        )
+        session = _resolve_live_session(orchestrator, request.session_id)
+        return _assistant_response_dict(_assistant_response_envelope_for_task(session, request.task_id))
+    raise RuntimeError("router task completion handler is unavailable")
+
+
+def _assistant_task_completion_stream_response(
+    *,
+    request: TaskCompletionRequest,
+    http_request: Request,
+    orchestrator: GraphRouterOrchestrator,
+    broker: EventBroker,
+) -> StreamingResponse:
+    """Stream router events produced by an assistant task-completion callback."""
+
+    async def event_generator():
+        queue = broker.register(request.session_id)
+        processing_task = asyncio.create_task(
+            orchestrator.handle_task_completion(
+                session_id=request.session_id,
+                task_id=request.task_id,
+                completion_signal=request.completion_signal,
+                emit_events=True,
+            )
+        )
+        try:
+            while True:
+                if await http_request.is_disconnected():
+                    break
+                if processing_task.done() and queue.empty():
+                    try:
+                        await processing_task
+                    except KeyError:
+                        yield _encode_sse(
+                            "message",
+                            _assistant_sse_payload(
+                                ok=False,
+                                payload=_assistant_output_template(
+                                    status="failed",
+                                    completion_state=2,
+                                    completion_reason="router_error",
+                                    message="Router task not found",
+                                    error_code=RouterErrorCode.ROUTER_TASK_NOT_FOUND,
+                                    details={
+                                        "session_id": request.session_id,
+                                        "task_id": request.task_id,
+                                    },
+                                ),
+                            ),
+                        )
+                    except ValueError as exc:
+                        yield _encode_sse(
+                            "message",
+                            _assistant_sse_payload(ok=False, payload=_assistant_bad_request_output(str(exc))),
+                        )
+                    except Exception as exc:
+                        yield _encode_sse(
+                            "message",
+                            _assistant_sse_payload(
+                                ok=False,
+                                payload=_assistant_output_template(
+                                    status="failed",
+                                    completion_state=2,
+                                    completion_reason="router_error",
+                                    message=str(exc),
+                                    error_code=RouterErrorCode.ROUTER_INTERNAL_ERROR,
+                                ),
+                            ),
+                        )
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+                payload = _assistant_output_from_event(event)
+                if payload is None:
+                    continue
+                yield _encode_sse("message", _assistant_sse_payload(ok=True, payload=payload))
+        finally:
+            broker.unregister(request.session_id, queue)
+            if not processing_task.done():
+                processing_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await processing_task
+            if not await http_request.is_disconnected():
+                yield _encode_done_sse()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @public_router.post("/v1/message", response_model=None)
 async def post_protocol_message(
     request: ProtocolMessageRequest,
@@ -997,31 +1120,23 @@ async def post_protocol_message(
 @public_router.post("/v1/task/completion", response_model=None)
 async def post_task_completion(
     request: TaskCompletionRequest,
+    http_request: Request,
     orchestrator: GraphRouterOrchestrator = Depends(get_orchestrator),
-) -> dict[str, Any]:
-    """Advance one task's unified completion state through the fixed assistant callback API."""
+    broker: EventBroker = Depends(get_event_broker),
+) -> StreamingResponse | dict[str, Any]:
+    """Advance one task's completion state through the assistant callback API."""
     try:
-        serialized_handler = getattr(orchestrator, "handle_task_completion_serialized", None)
-        if callable(serialized_handler):
-            serialized_response = await serialized_handler(
-                session_id=request.session_id,
-                task_id=request.task_id,
-                completion_signal=request.completion_signal,
-                serializer=lambda session: _assistant_response_envelope_for_task(session, request.task_id),
-                emit_events=False,
+        if request.stream:
+            return _assistant_task_completion_stream_response(
+                request=request,
+                http_request=http_request,
+                orchestrator=orchestrator,
+                broker=broker,
             )
-            return _assistant_response_dict(serialized_response)
-        live_handler = getattr(orchestrator, "handle_task_completion", None)
-        if callable(live_handler):
-            await live_handler(
-                session_id=request.session_id,
-                task_id=request.task_id,
-                completion_signal=request.completion_signal,
-                emit_events=False,
-            )
-            session = _resolve_live_session(orchestrator, request.session_id)
-            return _assistant_response_dict(_assistant_response_envelope_for_task(session, request.task_id))
-        raise RuntimeError("router task completion handler is unavailable")
+        return await _assistant_task_completion_json_response(
+            request=request,
+            orchestrator=orchestrator,
+        )
     except KeyError as exc:
         missing_key = str(exc.args[0]) if exc.args else ""
         if missing_key == request.session_id:

@@ -48,17 +48,18 @@ def test_admin_intent_validation_script() -> None:
     _run(cmd, os.environ.copy())
 
 
-def test_router_lifecycle_validation_script() -> None:
+def test_router_contract_validation_script() -> None:
     if not _integration_enabled():
         pytest.skip("Set RUN_INTEGRATION=1 to run integration script checks.")
-    if os.getenv("RUN_ROUTER_SSE_TEST") != "1":
-        pytest.skip("Set RUN_ROUTER_SSE_TEST=1 to run SSE lifecycle validation.")
+    if os.getenv("RUN_ROUTER_CONTRACT_TEST") != "1":
+        pytest.skip("Set RUN_ROUTER_CONTRACT_TEST=1 to run router contract validation.")
 
     base_url = os.getenv("INTENT_ROUTER_BASE_URL", "http://127.0.0.1:8000")
     cmd = [
         sys.executable,
-        str(SCRIPTS_DIR / "verify_router_lifecycle.py"),
+        str(SCRIPTS_DIR / "verify_router_assistant_contract.py"),
         "--base-url",
         base_url,
+        "--strict-demo",
     ]
     _run(cmd, os.environ.copy())

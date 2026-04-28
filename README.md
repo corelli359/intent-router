@@ -199,7 +199,7 @@ instead of rebuilding Next.js inside the cluster.
 
 To verify intent recognition and slot filling without dispatching downstream agents, call:
 
-- `POST /api/router/v2/sessions/{session_id}/messages` with `"executionMode": "router_only"`
+- `POST /api/v1/message` with `"executionMode": "router_only"` and a caller-provided `sessionId`
 
 Helper script:
 

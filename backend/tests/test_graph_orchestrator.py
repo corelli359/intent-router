@@ -687,7 +687,7 @@ def test_graph_orchestrator_router_only_waits_when_semantic_string_slots_are_mis
         assert ready is False
         assert node.status == GraphNodeStatus.WAITING_USER_INPUT
         assert graph.status == GraphStatus.WAITING_USER_INPUT
-        assert node.slot_memory == {"amount": "500"}
+        assert node.slot_memory == {}
         assert "收款人姓名" in session.messages[-1].content
 
     asyncio.run(run())

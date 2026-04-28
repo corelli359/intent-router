@@ -35,19 +35,9 @@ class _MockRouterTarget:
         }
         self.delay_seconds = delay_seconds
         self.calls: list[tuple[str, str]] = []
-        self._session_counter = 0
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         self.calls.append((request.url.host, request.url.path))
-        if request.url.path == "/api/router/v2/sessions":
-            self._session_counter += 1
-            return httpx.Response(
-                201,
-                json={
-                    "session_id": f"session-{self._session_counter}",
-                    "cust_id": "perf_test_cust",
-                },
-            )
         if request.url.path == "/api/v1/message":
             if self.delay_seconds > 0:
                 await asyncio.sleep(self.delay_seconds)
@@ -109,7 +99,7 @@ def _build_perf_service(
 ) -> PerfTestService:
     settings = Settings(
         perf_test_target_base_url="http://router-api-test.intent.svc.cluster.local:8000",
-        perf_test_session_create_path="/api/router/v2/sessions",
+        perf_test_session_create_path="",
         perf_test_message_path_template="/api/v1/message",
         perf_test_request_timeout_seconds=2.0,
     )
@@ -186,7 +176,6 @@ def test_perf_service_executes_duration_ladder_and_uses_internal_target_url() ->
         assert completed.step_results[0].status == PerfTestStepStatus.COMPLETED
         assert completed.error_samples == []
 
-        assert any(path == "/api/router/v2/sessions" for _, path in target.calls)
         assert any(path == "/api/v1/message" for _, path in target.calls)
         assert {host for host, _ in target.calls} == {"router-api-test.intent.svc.cluster.local"}
 

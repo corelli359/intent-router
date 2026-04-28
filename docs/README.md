@@ -5,17 +5,21 @@
 - `v3/router-service-需求说明文档.md`
 - `v3/router-service-功能说明文档.md`
 - `v3/router-service-架构设计文档.md`
-- `v3/router-service-skill驱动架构演进方案.md`
-- `v3/deepagent与router-service对比调研.md`
 - `v3/router-service-通信协议规范.md`
-- `v3/router-service-助手对接接口文档-v0.4.md`
-- `v3/router-service-流式协议补充草案.md`
-- `v3/router-service-助手完成态回调接口设计-v0.3.md`
-- `v3/router-service-短期记忆统一修复与回归说明-v0.4.md`
-- `v3/router-service-短期记忆现状与传递证明-v0.3.md`
-- `v3/router-service-LLM架构定位说明.md`
-- `v3/router-service-用户故事文档.md`
-- `v3/router-service-用户旅程文档.md`
+- `v3/router-service-助手对接接口文档-v0.5.md`
+
+`v3/archive/` 已归档的阶段性文档：
+
+- `v3/archive/router-service-助手对接接口文档-v0.4.md`
+- `v3/archive/router-service-助手对接接口文档-v0.3.md`
+- `v3/archive/router-service-流式协议补充草案.md`
+- `v3/archive/router-service-短期记忆统一修复与回归说明-v0.4.md`
+- `v3/archive/router-service-短期记忆现状与传递证明-v0.3.md`
+- `v3/archive/router-service-用户故事文档.md`
+- `v3/archive/router-service-用户旅程文档.md`
+- `v3/archive/router-service-skill驱动架构演进方案.md`
+- `v3/archive/router-service-LLM架构定位说明.md`
+- `v3/archive/deepagent与router-service对比调研.md`
 
 `v2/` 历史与基础文档：
 
@@ -33,6 +37,9 @@
 
 - `v3/`
   当前生效的主文档目录，只保留最新版本。
+
+- `v3/archive/`
+  `v3` 目录下已被替代的历史版本、阶段性设计稿、过程分析和补充说明。
 
 - `v2/`
   既有方案、评审、调研、回归和历史设计文档。

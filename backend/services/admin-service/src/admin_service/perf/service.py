@@ -292,38 +292,42 @@ class PerfTestService:
         started = perf_counter()
         request_timeout = (timeout_ms / 1000) if timeout_ms is not None else None
         try:
-            session_response = await client.post(
-                self._settings.perf_test_session_create_path,
-                json=case.session_request,
-                timeout=request_timeout,
-            )
-            session_payload = self._json_or_none(session_response)
-            session_id = session_payload.get("session_id") if isinstance(session_payload, dict) else None
-            if session_response.status_code != case.expectations.session_status_code:
-                return _RequestExecutionResult(
-                    request_number=request_number,
-                    success=False,
-                    latency_ms=(perf_counter() - started) * 1000,
-                    finished_counter=perf_counter(),
-                    status_code=session_response.status_code,
-                    error_type="session_status_mismatch",
-                    error_message=(
-                        f"expected session status {case.expectations.session_status_code}, "
-                        f"got {session_response.status_code}"
-                    ),
-                    response_excerpt=self._response_excerpt(session_response),
+            session_id = self._new_perf_session_id()
+            session_create_path = self._settings.perf_test_session_create_path.strip()
+            if session_create_path:
+                session_response = await client.post(
+                    session_create_path,
+                    json=self._build_session_create_payload(case=case, session_id=session_id),
+                    timeout=request_timeout,
                 )
-            if not session_id:
-                return _RequestExecutionResult(
-                    request_number=request_number,
-                    success=False,
-                    latency_ms=(perf_counter() - started) * 1000,
-                    finished_counter=perf_counter(),
-                    status_code=session_response.status_code,
-                    error_type="session_id_missing",
-                    error_message="session create response did not include session_id",
-                    response_excerpt=self._response_excerpt(session_response),
-                )
+                session_payload = self._json_or_none(session_response)
+                resolved_session_id = session_payload.get("session_id") if isinstance(session_payload, dict) else None
+                if session_response.status_code != case.expectations.session_status_code:
+                    return _RequestExecutionResult(
+                        request_number=request_number,
+                        success=False,
+                        latency_ms=(perf_counter() - started) * 1000,
+                        finished_counter=perf_counter(),
+                        status_code=session_response.status_code,
+                        error_type="session_status_mismatch",
+                        error_message=(
+                            f"expected session status {case.expectations.session_status_code}, "
+                            f"got {session_response.status_code}"
+                        ),
+                        response_excerpt=self._response_excerpt(session_response),
+                    )
+                if not isinstance(resolved_session_id, str) or not resolved_session_id:
+                    return _RequestExecutionResult(
+                        request_number=request_number,
+                        success=False,
+                        latency_ms=(perf_counter() - started) * 1000,
+                        finished_counter=perf_counter(),
+                        status_code=session_response.status_code,
+                        error_type="session_id_missing",
+                        error_message="session create response did not include session_id",
+                        response_excerpt=self._response_excerpt(session_response),
+                    )
+                session_id = resolved_session_id
 
             message_payload = self._build_message_request_payload(
                 case=case,
@@ -705,6 +709,16 @@ class PerfTestService:
                 return f"missing expected response fragments: {', '.join(missing)}"
         return None
 
+    def _build_session_create_payload(
+        self,
+        *,
+        case: PerfTestCaseDefinition,
+        session_id: str,
+    ) -> dict[str, Any]:
+        payload = dict(case.session_request)
+        payload.setdefault("session_id", session_id)
+        return payload
+
     def _build_message_request_payload(
         self,
         *,
@@ -714,6 +728,9 @@ class PerfTestService:
         payload = dict(case.message_request)
         payload["sessionId"] = session_id
         payload.setdefault("stream", False)
+        cust_id = case.session_request.get("cust_id")
+        if isinstance(cust_id, str) and cust_id and "custId" not in payload and "cust_id" not in payload:
+            payload["custId"] = cust_id
         return payload
 
     def _extract_output_message(self, output: Any) -> str:
@@ -758,6 +775,9 @@ class PerfTestService:
 
     def _build_run_id(self) -> str:
         return f"perf_{uuid4().hex[:12]}"
+
+    def _new_perf_session_id(self) -> str:
+        return f"perf_session_{uuid4().hex[:16]}"
 
     def _utcnow(self) -> datetime:
         return datetime.now(UTC)

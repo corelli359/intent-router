@@ -291,6 +291,8 @@ class GraphRouterOrchestrator:
             signal=completion_signal,
         )
         if completion_state < 2:
+            await self._refresh_graph_state(session, graph)
+            await self._emit_graph_progress(session)
             return
 
         if task is not None and task.status in {
@@ -320,10 +322,25 @@ class GraphRouterOrchestrator:
                 event="node.completed",
                 message="任务完成态已由助手确认",
                 ishandover=True,
+                payload={
+                    "agent_output": dict(getattr(node, "_agent_output", {}) or {}),
+                },
                 source="assistant",
             )
         await self._refresh_graph_state(session, graph)
         await self._emit_graph_progress(session)
+        if graph.status not in {
+            GraphStatus.COMPLETED,
+            GraphStatus.PARTIALLY_COMPLETED,
+            GraphStatus.FAILED,
+            GraphStatus.CANCELLED,
+            GraphStatus.WAITING_USER_INPUT,
+            GraphStatus.WAITING_CONFIRMATION,
+            GraphStatus.WAITING_CONFIRMATION_NODE,
+            GraphStatus.WAITING_ASSISTANT_COMPLETION,
+            GraphStatus.READY_FOR_DISPATCH,
+        }:
+            await self._drain_graph(session, graph.source_message)
 
     async def handle_user_message(
         self,
@@ -1060,16 +1077,9 @@ class GraphRouterOrchestrator:
         node.slot_memory = dict(task.slot_memory)
         node.output_payload = dict(chunk.payload)
         node._agent_output = dict(getattr(chunk, "output", {}) or {})
-        explicit_completion_state = node._agent_output.get("completion_state")
-        if isinstance(explicit_completion_state, bool):
-            explicit_completion_state = int(explicit_completion_state)
-        if isinstance(explicit_completion_state, int) and explicit_completion_state in {0, 1, 2}:
-            apply_completion_signal = getattr(node, "apply_completion_signal", None)
-            if callable(apply_completion_signal):
-                apply_completion_signal(source="agent", signal=explicit_completion_state)
 
         effective_task_status = raw_task_status
-        if explicit_completion_state == 1 and raw_task_status == TaskStatus.COMPLETED:
+        if raw_task_status == TaskStatus.COMPLETED:
             effective_task_status = TaskStatus.WAITING_ASSISTANT_COMPLETION
 
         task.touch(effective_task_status)

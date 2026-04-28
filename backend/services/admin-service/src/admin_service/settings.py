@@ -97,8 +97,7 @@ class Settings(BaseModel):
         max_length=2048,
     )
     perf_test_session_create_path: str = Field(
-        default="/api/router/v2/sessions",
-        min_length=1,
+        default="",
         max_length=512,
     )
     perf_test_message_path_template: str = Field(
@@ -153,7 +152,7 @@ class Settings(BaseModel):
             ),
             perf_test_session_create_path=os.getenv(
                 "ADMIN_PERF_TEST_SESSION_CREATE_PATH",
-                "/api/router/v2/sessions",
+                "",
             ),
             perf_test_message_path_template=os.getenv(
                 "ADMIN_PERF_TEST_MESSAGE_PATH_TEMPLATE",

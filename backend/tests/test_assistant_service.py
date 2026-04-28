@@ -15,7 +15,13 @@ ASSISTANT_SRC = BACKEND_ROOT / "services" / "assistant-service" / "src"
 if str(ASSISTANT_SRC) not in sys.path:
     sys.path.insert(0, str(ASSISTANT_SRC))
 
-from assistant_service.app import AssistantRunRequest, RouterForwardService, create_app, get_router_forward_service  # noqa: E402
+from assistant_service.app import (  # noqa: E402
+    AssistantRunRequest,
+    AssistantTaskCompletionRequest,
+    RouterForwardService,
+    create_app,
+    get_router_forward_service,
+)
 from tests.test_router_api_v2 import (  # noqa: E402
     _AssistantProtocolTransferAgentClient,
     _ContractTransferUnderstandingValidator,
@@ -125,6 +131,78 @@ def test_assistant_service_forwards_non_stream_request_to_router() -> None:
     asyncio.run(run())
 
 
+def test_assistant_service_forwards_non_stream_task_completion_to_router() -> None:
+    async def run() -> None:
+        router_app = FastAPI()
+        received: dict[str, object] = {}
+
+        @router_app.post("/api/v1/task/completion")
+        async def router_task_completion(payload: dict[str, object]) -> dict[str, object]:
+            received["payload"] = payload
+            return {
+                "ok": True,
+                "current_task": "task_001",
+                "task_list": [{"name": "task_001", "status": "completed"}],
+                "status": "completed",
+                "intent_code": "AG_TRANS",
+                "completion_state": 2,
+                "completion_reason": "assistant_final_done",
+                "slot_memory": {"payee_name": "小明", "amount": "200"},
+                "message": "执行图已完成",
+                "output": {},
+            }
+
+        router_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=router_app),
+            base_url="http://router.test",
+        )
+        service = RouterForwardService(
+            router_base_url="http://router.test",
+            http_client=router_client,
+        )
+        app = create_app()
+        app.dependency_overrides[get_router_forward_service] = lambda: service
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://assistant.test",
+        ) as client:
+            response = await client.post(
+                "/api/assistant/task/completion",
+                json=AssistantTaskCompletionRequest(
+                    sessionId="session_assistant_001",
+                    taskId="task_001",
+                    completionSignal=2,
+                ).model_dump(mode="json", by_alias=True),
+            )
+
+        await router_client.aclose()
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "current_task": "task_001",
+            "task_list": [{"name": "task_001", "status": "completed"}],
+            "status": "completed",
+            "intent_code": "AG_TRANS",
+            "completion_state": 2,
+            "completion_reason": "assistant_final_done",
+            "slot_memory": {"payee_name": "小明", "amount": "200"},
+            "message": "执行图已完成",
+            "output": {},
+        }
+        assert received == {
+            "payload": {
+                "sessionId": "session_assistant_001",
+                "taskId": "task_001",
+                "completionSignal": 2,
+                "stream": False,
+            },
+        }
+
+    asyncio.run(run())
+
+
 def test_assistant_service_proxies_router_stream_without_rewriting_events() -> None:
     async def run() -> None:
         router_app = FastAPI()
@@ -211,6 +289,81 @@ def test_assistant_service_proxies_router_stream_without_rewriting_events() -> N
     asyncio.run(run())
 
 
+def test_assistant_service_proxies_router_task_completion_stream_without_rewriting_events() -> None:
+    async def run() -> None:
+        router_app = FastAPI()
+        received: dict[str, object] = {}
+        expected_stream = (
+            b"event: message\n"
+            b'data: {"ok":true,"status":"completed","completion_state":2,"completion_reason":"assistant_final_done"}\n\n'
+            b"event: done\n"
+            b"data: [DONE]\n\n"
+        )
+
+        @router_app.post("/api/v1/task/completion")
+        async def router_task_completion_stream(payload: dict[str, object]) -> StreamingResponse:
+            received["payload"] = payload
+
+            async def event_generator():
+                yield expected_stream
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        router_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=router_app),
+            base_url="http://router.test",
+        )
+        service = RouterForwardService(
+            router_base_url="http://router.test",
+            http_client=router_client,
+        )
+        app = create_app()
+        app.dependency_overrides[get_router_forward_service] = lambda: service
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://assistant.test",
+        ) as client:
+            async with client.stream(
+                "POST",
+                "/api/assistant/task/completion/stream",
+                json=AssistantTaskCompletionRequest(
+                    sessionId="session_assistant_002",
+                    taskId="task_002",
+                    completionSignal=2,
+                ).model_dump(mode="json", by_alias=True),
+            ) as response:
+                body = await response.aread()
+                headers = dict(response.headers)
+                status_code = response.status_code
+
+        await router_client.aclose()
+
+        assert status_code == 200
+        assert headers["content-type"].startswith("text/event-stream")
+        assert headers["cache-control"] == "no-cache"
+        assert headers["x-accel-buffering"] == "no"
+        assert body == expected_stream
+        assert received == {
+            "payload": {
+                "sessionId": "session_assistant_002",
+                "taskId": "task_002",
+                "completionSignal": 2,
+                "stream": True,
+            },
+        }
+
+    asyncio.run(run())
+
+
 def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
     async def run() -> None:
         agent_client = _AssistantProtocolTransferAgentClient()
@@ -224,12 +377,7 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
             transport=httpx.ASGITransport(app=router_app),
             base_url="http://router.test",
         )
-        session_id = (
-            await router_client.post(
-                "/api/router/v2/sessions",
-                json={"sessionId": "assistant_e2e_001", "custId": "C0001"},
-            )
-        ).json()["session_id"]
+        session_id = "assistant_e2e_001"
         service = RouterForwardService(
             router_base_url="http://router.test",
             http_client=router_client,
@@ -255,7 +403,7 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
                     ],
                 ).model_dump(mode="json", by_alias=True),
             )
-            completed = await client.post(
+            waiting_assistant_completion = await client.post(
                 "/api/assistant/run",
                 json=AssistantRunRequest(
                     sessionId=session_id,
@@ -270,8 +418,6 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
                 ).model_dump(mode="json", by_alias=True),
             )
 
-        await router_client.aclose()
-
         assert waiting.status_code == 200
         waiting_body = waiting.json()
         assert waiting_body["ok"] is True
@@ -282,12 +428,47 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
         assert waiting_body["slot_memory"] == {"payee_name": "小明"}
         assert waiting_body["output"] == {}
 
+        assert waiting_assistant_completion.status_code == 200
+        waiting_assistant_completion_body = waiting_assistant_completion.json()
+        assert waiting_assistant_completion_body["ok"] is True
+        assert waiting_assistant_completion_body["status"] == "waiting_assistant_completion"
+        assert waiting_assistant_completion_body["completion_state"] == 1
+        assert waiting_assistant_completion_body["completion_reason"] == "assistant_confirmation_required"
+        assert waiting_assistant_completion_body["intent_code"] == "AG_TRANS"
+        assert waiting_assistant_completion_body["message"] == "执行图等待助手确认完成态"
+        assert waiting_assistant_completion_body["output"]["data"] == [
+            {
+                "isSubAgent": "True",
+                "typIntent": "mbpTransfer",
+                "answer": "||200|小明|",
+            }
+        ]
+        assert waiting_assistant_completion_body["task_list"] == [
+            {"name": waiting_assistant_completion_body["current_task"], "status": "waiting"}
+        ]
+        assert waiting_assistant_completion_body["output"]["completion_state"] == 2
+        assert waiting_assistant_completion_body["output"]["completion_reason"] == "agent_final_done"
+
+        completion_request = AssistantTaskCompletionRequest(
+            sessionId=session_id,
+            taskId=waiting_assistant_completion_body["current_task"],
+            completionSignal=2,
+        ).model_dump(mode="json", by_alias=True)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://assistant.test",
+        ) as client:
+            completed = await client.post(
+                "/api/assistant/task/completion",
+                json=completion_request,
+            )
+
         assert completed.status_code == 200
         completed_body = completed.json()
         assert completed_body["ok"] is True
         assert completed_body["status"] == "completed"
         assert completed_body["completion_state"] == 2
-        assert completed_body["completion_reason"] == "agent_final_done"
+        assert completed_body["completion_reason"] == "assistant_final_done"
         assert completed_body["intent_code"] == "AG_TRANS"
         assert completed_body["message"] == "执行图已完成"
         assert completed_body["output"]["data"] == [
@@ -298,7 +479,7 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
             }
         ]
         assert completed_body["task_list"] == [
-            {"name": completed_body["current_task"], "status": "completed"}
+            {"name": waiting_assistant_completion_body["current_task"], "status": "completed"}
         ]
         assert len(agent_client.tasks) == 1
         assert agent_client.tasks[0].input_context["config_variables"] == {
@@ -307,6 +488,8 @@ def test_assistant_service_end_to_end_non_stream_with_real_router_app() -> None:
             "currentDisplay": "transfer_confirm",
             "agentSessionID": session_id,
         }
+
+        await router_client.aclose()
 
     asyncio.run(run())
 
@@ -324,12 +507,7 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
             transport=httpx.ASGITransport(app=router_app),
             base_url="http://router.test",
         )
-        session_id = (
-            await router_client.post(
-                "/api/router/v2/sessions",
-                json={"sessionId": "assistant_e2e_stream_001", "custId": "C0001"},
-            )
-        ).json()["session_id"]
+        session_id = "assistant_e2e_stream_001"
         service = RouterForwardService(
             router_base_url="http://router.test",
             http_client=router_client,
@@ -369,9 +547,7 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
                     ],
                 ).model_dump(mode="json", by_alias=True),
             ) as response:
-                completed_text = "".join([chunk async for chunk in response.aiter_text()])
-
-        await router_client.aclose()
+                waiting_assistant_completion_text = "".join([chunk async for chunk in response.aiter_text()])
 
         waiting_frames = _parse_sse_frames(waiting_text)
         assert waiting_frames[-1] == ("done", "[DONE]")
@@ -383,18 +559,49 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
         assert waiting_payload["task_list"] == [{"name": "AG_TRANS#0", "status": "waiting"}]
         assert waiting_payload["output"] == {}
 
+        waiting_assistant_completion_frames = _parse_sse_frames(waiting_assistant_completion_text)
+        assert waiting_assistant_completion_frames[-1] == ("done", "[DONE]")
+        waiting_assistant_completion_payload = json.loads(waiting_assistant_completion_frames[0][1])
+        assert waiting_assistant_completion_frames[0][0] == "message"
+        assert waiting_assistant_completion_payload["status"] == "waiting_assistant_completion"
+        assert waiting_assistant_completion_payload["completion_state"] == 1
+        assert waiting_assistant_completion_payload["completion_reason"] == "assistant_confirmation_required"
+        assert waiting_assistant_completion_payload["message"] == "执行图等待助手确认完成态"
+        assert waiting_assistant_completion_payload["output"]["message"] == "已向小明转账 200 CNY，转账成功"
+        assert waiting_assistant_completion_payload["output"]["data"][0]["answer"] == "||200|小明|"
+        assert waiting_assistant_completion_payload["task_list"] == [
+            {"name": waiting_assistant_completion_payload["current_task"], "status": "waiting"}
+        ]
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://assistant.test",
+        ) as client:
+            async with client.stream(
+                "POST",
+                "/api/assistant/task/completion/stream",
+                json=AssistantTaskCompletionRequest(
+                    sessionId=session_id,
+                    taskId=waiting_assistant_completion_payload["current_task"],
+                    completionSignal=2,
+                ).model_dump(mode="json", by_alias=True),
+            ) as response:
+                completed_text = "".join([chunk async for chunk in response.aiter_text()])
+
+        await router_client.aclose()
+
         completed_frames = _parse_sse_frames(completed_text)
         assert completed_frames[-1] == ("done", "[DONE]")
         completed_payload = json.loads(completed_frames[0][1])
         assert completed_frames[0][0] == "message"
         assert completed_payload["status"] == "completed"
         assert completed_payload["completion_state"] == 2
-        assert completed_payload["completion_reason"] == "agent_final_done"
+        assert completed_payload["completion_reason"] == "assistant_final_done"
         assert completed_payload["message"] == "执行图已完成"
         assert completed_payload["output"]["message"] == "已向小明转账 200 CNY，转账成功"
         assert completed_payload["output"]["data"][0]["answer"] == "||200|小明|"
         assert completed_payload["task_list"] == [
-            {"name": completed_payload["current_task"], "status": "completed"}
+            {"name": waiting_assistant_completion_payload["current_task"], "status": "completed"}
         ]
 
     asyncio.run(run())

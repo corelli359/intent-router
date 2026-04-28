@@ -146,7 +146,7 @@
 1. `backend/services/router-service/README.md`
 2. `docs/v3/router-service-架构设计文档.md`
 3. `docs/v3/router-service-功能说明文档.md`
-4. `docs/v3/router-service-LLM架构定位说明.md`
+4. `docs/v3/archive/router-service-LLM架构定位说明.md`
 5. `docs/v3/router-service-通信协议规范.md`
 6. `backend/services/router-service/src/router_service/api/dependencies.py`
 7. `backend/services/router-service/src/router_service/api/routes/sessions.py`

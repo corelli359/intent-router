@@ -216,7 +216,7 @@ waiting / blocked turn 走轻量识别时，现在也会带上：
 
 1. 本轮修复相关单测全部通过
 2. 当前生产入口 `/api/v1/message` 的本地 API 回归通过
-3. 旧的 `/api/router/v2/sessions/*` 历史接口不作为本轮生产回归口径
+3. 旧的历史会话接口已移除，不作为本轮生产回归口径
 
 ### 7.2 已部署 `router-api-test` 外网回归
 

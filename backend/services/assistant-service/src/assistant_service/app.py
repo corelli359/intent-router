@@ -31,6 +31,16 @@ class AssistantRunRequest(BaseModel):
     cust_id: str | None = Field(default=None, alias="custId")
 
 
+class AssistantTaskCompletionRequest(BaseModel):
+    """Assistant-to-router task completion confirmation contract."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(alias="sessionId")
+    task_id: str = Field(alias="taskId")
+    completion_signal: int = Field(alias="completionSignal", ge=1, le=2)
+
+
 class RouterForwardService:
     """Thin HTTP forwarder from the assistant layer into the router."""
 
@@ -46,6 +56,17 @@ class RouterForwardService:
 
     def _router_payload(self, request: AssistantRunRequest, *, stream: bool) -> dict[str, Any]:
         """Build the shared router payload while selecting the router-side response mode."""
+        payload = request.model_dump(mode="json", by_alias=True, exclude_none=True)
+        payload["stream"] = stream
+        return payload
+
+    def _router_task_completion_payload(
+        self,
+        request: AssistantTaskCompletionRequest,
+        *,
+        stream: bool,
+    ) -> dict[str, Any]:
+        """Build one router completion-callback payload while selecting response mode."""
         payload = request.model_dump(mode="json", by_alias=True, exclude_none=True)
         payload["stream"] = stream
         return payload
@@ -76,6 +97,46 @@ class RouterForwardService:
                 "POST",
                 f"{self.router_base_url}/api/v1/message",
                 json=self._router_payload(request, stream=True),
+                headers={"Accept": "text/event-stream"},
+            ),
+            stream=True,
+        )
+        if response.status_code >= 400:
+            raw_body = await response.aread()
+            await response.aclose()
+            try:
+                body: Any = response.json()
+            except ValueError:
+                body = raw_body.decode("utf-8", errors="replace")
+            raise HTTPException(status_code=response.status_code, detail=body)
+        return response
+
+    async def complete_task(self, request: AssistantTaskCompletionRequest) -> dict[str, Any]:
+        """Forward one assistant completion callback into the router completion endpoint."""
+        response = await self.http_client.post(
+            f"{self.router_base_url}/api/v1/task/completion",
+            json=self._router_task_completion_payload(request, stream=False),
+        )
+        try:
+            body = response.json()
+        except ValueError:
+            body = {
+                "ok": False,
+                "error": response.text,
+            }
+        if response.status_code >= 400:
+            raise HTTPException(status_code=response.status_code, detail=body)
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=502, detail="router response must be a JSON object")
+        return body
+
+    async def complete_task_stream(self, request: AssistantTaskCompletionRequest) -> httpx.Response:
+        """Open one streaming assistant completion callback against the router SSE endpoint."""
+        response = await self.http_client.send(
+            self.http_client.build_request(
+                "POST",
+                f"{self.router_base_url}/api/v1/task/completion",
+                json=self._router_task_completion_payload(request, stream=True),
                 headers={"Accept": "text/event-stream"},
             ),
             stream=True,
@@ -144,6 +205,27 @@ def create_app() -> FastAPI:
         service: RouterForwardService = Depends(get_router_forward_service),
     ) -> StreamingResponse:
         response = await service.stream(request)
+        media_type = response.headers.get("content-type", "text/event-stream").split(";", maxsplit=1)[0]
+        return StreamingResponse(
+            _proxy_stream(response),
+            status_code=response.status_code,
+            media_type=media_type,
+            headers=_stream_response_headers(response),
+        )
+
+    @app.post("/api/assistant/task/completion")
+    async def complete_assistant_task(
+        request: AssistantTaskCompletionRequest,
+        service: RouterForwardService = Depends(get_router_forward_service),
+    ) -> dict[str, Any]:
+        return await service.complete_task(request)
+
+    @app.post("/api/assistant/task/completion/stream")
+    async def complete_assistant_task_stream(
+        request: AssistantTaskCompletionRequest,
+        service: RouterForwardService = Depends(get_router_forward_service),
+    ) -> StreamingResponse:
+        response = await service.complete_task_stream(request)
         media_type = response.headers.get("content-type", "text/event-stream").split(";", maxsplit=1)[0]
         return StreamingResponse(
             _proxy_stream(response),

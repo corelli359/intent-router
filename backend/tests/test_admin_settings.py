@@ -17,7 +17,7 @@ def test_settings_from_env_reads_admin_values(monkeypatch) -> None:
         "ADMIN_PERF_TEST_TARGET_BASE_URL",
         "http://router-api-test.intent.svc.cluster.local:8000",
     )
-    monkeypatch.setenv("ADMIN_PERF_TEST_SESSION_CREATE_PATH", "/api/router/v2/sessions")
+    monkeypatch.setenv("ADMIN_PERF_TEST_SESSION_CREATE_PATH", "")
     monkeypatch.setenv(
         "ADMIN_PERF_TEST_MESSAGE_PATH_TEMPLATE",
         "/api/v1/message",
@@ -36,6 +36,6 @@ def test_settings_from_env_reads_admin_values(monkeypatch) -> None:
     assert settings.default_llm_model == "router-model"
     assert settings.llm_headers == {"x-test-header": "abc"}
     assert settings.perf_test_target_base_url == "http://router-api-test.intent.svc.cluster.local:8000"
-    assert settings.perf_test_session_create_path == "/api/router/v2/sessions"
+    assert settings.perf_test_session_create_path == ""
     assert settings.perf_test_message_path_template == "/api/v1/message"
     assert settings.perf_test_request_timeout_seconds == 18.0

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -30,28 +31,6 @@ def _request_json(
     except urllib.error.HTTPError as exc:
         body_text = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {exc.code} calling {url}: {body_text}") from exc
-
-
-def _create_session(
-    *,
-    base_url: str,
-    timeout_seconds: float,
-    host_header: str | None,
-    session_id: str | None,
-    cust_id: str | None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    if session_id:
-        payload["session_id"] = session_id
-    if cust_id:
-        payload["cust_id"] = cust_id
-    return _request_json(
-        method="POST",
-        url=f"{base_url}/api/router/v2/sessions",
-        payload=payload,
-        timeout_seconds=timeout_seconds,
-        host_header=host_header,
-    )
 
 
 def _assistant_request_payload(
@@ -206,8 +185,10 @@ def _strict_demo_check(
             raise AssertionError(f"turn 2 expected ok=true in execute mode, got: {response}")
         if kind != "handover":
             raise AssertionError(f"turn 2 expected handover in execute mode, got: {response}")
-        if response.get("completion_state") != 2:
-            raise AssertionError(f"turn 2 expected completion_state=2 in execute mode, got: {response}")
+        if response.get("status") != "waiting_assistant_completion":
+            raise AssertionError(f"turn 2 expected waiting_assistant_completion in execute mode, got: {response}")
+        if response.get("completion_state") != 1:
+            raise AssertionError(f"turn 2 expected completion_state=1 in execute mode, got: {response}")
 
 
 def _print_json_block(title: str, payload: dict[str, Any]) -> None:
@@ -246,7 +227,7 @@ def main() -> int:
     parser.add_argument(
         "--session-id",
         default=None,
-        help="Optional fixed session_id to create. Defaults to router-generated id.",
+        help="Optional fixed sessionId. Defaults to a local generated id.",
     )
     parser.add_argument(
         "--agent-session-id",
@@ -292,18 +273,8 @@ def main() -> int:
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
-    session_create = _create_session(
-        base_url=base_url,
-        timeout_seconds=args.timeout_seconds,
-        host_header=args.host_header,
-        session_id=args.session_id,
-        cust_id=args.cust_id,
-    )
-    session_id = str(session_create["session_id"])
+    session_id = args.session_id or f"verify_assistant_contract_{int(time.time() * 1000)}"
     agent_session_id = args.agent_session_id or session_id
-
-    if args.output_mode == "transcript":
-        _print_json_block("session.create.response", session_create)
 
     turn_results: list[dict[str, Any]] = []
     turn_specs = [
@@ -353,7 +324,7 @@ def main() -> int:
                     "contract_ok": True,
                     "base_url": base_url,
                     "execution_mode": args.execution_mode,
-                    "session": session_create,
+                    "sessionId": session_id,
                     "turns": turn_results,
                 },
                 ensure_ascii=False,

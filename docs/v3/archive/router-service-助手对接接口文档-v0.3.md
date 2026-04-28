@@ -698,16 +698,14 @@ if output["completion_state"] == 1:
 
 如果要证明上下文缓存和 session 级短期记忆，再使用：
 
-`scripts/demo_router_context_cache_api.py`
+`scripts/verify_router_assistant_contract.py`
 
 该脚本会直连真实 Router，串联：
 
 1. 第一轮 `给小明转账`，证明 Router 在当前任务中记住 `payee_name=小明`
 2. 第二轮只输入 `200`，证明 Router 不依赖上游 `slots_data` 也能复用上一轮槽位
 3. 必要时调用 `/api/v1/task/completion` 收口任务
-4. 读取开发调试快照 `GET /api/router/v2/sessions/{sessionId}`，证明 `current_graph/pending_graph` 已释放，`shared_slot_memory` 仍保留 `payee_name` 和 `amount`
-
-注意：第 4 步只是开发侧证明短期记忆，不是助手生产对接必须调用的接口。
+4. 如需开发侧验证短期记忆，请直接检查 router 内存态或日志，不再依赖旧会话快照接口。
 
 ---
 
