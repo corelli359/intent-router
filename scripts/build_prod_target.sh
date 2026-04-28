@@ -11,7 +11,6 @@ NAMESPACE="${NAMESPACE:-intent}"
 INGRESS_HOST="${INGRESS_HOST:-intent-router.kkrrc-359.top}"
 MOUNT_ROOT="${TARGET_MOUNT_ROOT:-/mnt/intent-router}"
 ROUTER_API_ORIGIN="${ROUTER_API_ORIGIN:-http://intent-router-api.${NAMESPACE}.svc.cluster.local:8000}"
-ADMIN_API_ORIGIN="${ADMIN_API_ORIGIN:-http://intent-admin-api.${NAMESPACE}.svc.cluster.local:8000}"
 
 normalize_path() {
   local raw="${1:-}"
@@ -29,9 +28,7 @@ normalize_path() {
 }
 
 CHAT_BASE_PATH="$(normalize_path "${CHAT_BASE_PATH:-/chat}")"
-ADMIN_BASE_PATH="$(normalize_path "${ADMIN_BASE_PATH:-/admin}")"
 ROUTER_API_EXTERNAL_PATH="$(normalize_path "${ROUTER_API_EXTERNAL_PATH:-/api/router}")"
-ADMIN_API_EXTERNAL_PATH="$(normalize_path "${ADMIN_API_EXTERNAL_PATH:-/api/admin}")"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -78,23 +75,10 @@ build_chat_web() {
   copy_app_bundle "chat-web"
 }
 
-build_admin_web() {
-  (
-    cd "${FRONTEND_DIR}"
-    NEXT_TELEMETRY_DISABLED=1 \
-    INTENT_ADMIN_BASE_PATH="${ADMIN_BASE_PATH}" \
-    INTENT_ADMIN_API_ORIGIN="${ADMIN_API_ORIGIN}" \
-    NEXT_PUBLIC_ADMIN_BASE_URL="${ADMIN_BASE_PATH}/api/admin" \
-    npm run build --workspace @intent-router/admin-web
-  )
-  copy_app_bundle "admin-web"
-}
-
 copy_backend_manifests() {
   mkdir -p "${TARGET_K8S_DIR}"
   cp "${SOURCE_K8S_DIR}/namespace.yaml" "${TARGET_K8S_DIR}/"
   cp "${SOURCE_K8S_DIR}/router-api.yaml" "${TARGET_K8S_DIR}/"
-  cp "${SOURCE_K8S_DIR}/admin-api.yaml" "${TARGET_K8S_DIR}/"
   cp "${SOURCE_K8S_DIR}/order-agent.yaml" "${TARGET_K8S_DIR}/"
   cp "${SOURCE_K8S_DIR}/appointment-agent.yaml" "${TARGET_K8S_DIR}/"
   cp "${SOURCE_K8S_DIR}/credit-card-repayment-agent.yaml" "${TARGET_K8S_DIR}/"
@@ -214,13 +198,6 @@ spec:
     - host: ${INGRESS_HOST}
       http:
         paths:
-          - path: ${ADMIN_BASE_PATH}
-            pathType: Prefix
-            backend:
-              service:
-                name: intent-admin-web
-                port:
-                  number: 3001
           - path: ${CHAT_BASE_PATH}
             pathType: Prefix
             backend:
@@ -294,17 +271,14 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - router-api.yaml
-  - admin-api.yaml
   - order-agent.yaml
   - appointment-agent.yaml
   - credit-card-repayment-agent.yaml
   - gas-bill-agent.yaml
   - forex-agent.yaml
   - chat-web.yaml
-  - admin-web.yaml
   - ingress-web.yaml
   - ingress-router-api.yaml
-  - ingress-admin-api.yaml
 EOF
 }
 
@@ -313,11 +287,8 @@ render_build_metadata() {
 NAMESPACE=${NAMESPACE}
 INGRESS_HOST=${INGRESS_HOST}
 CHAT_BASE_PATH=${CHAT_BASE_PATH}
-ADMIN_BASE_PATH=${ADMIN_BASE_PATH}
 ROUTER_API_EXTERNAL_PATH=${ROUTER_API_EXTERNAL_PATH}
-ADMIN_API_EXTERNAL_PATH=${ADMIN_API_EXTERNAL_PATH}
 ROUTER_API_ORIGIN=${ROUTER_API_ORIGIN}
-ADMIN_API_ORIGIN=${ADMIN_API_ORIGIN}
 TARGET_MOUNT_ROOT=${MOUNT_ROOT}
 BUILD_AT_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
@@ -329,10 +300,8 @@ main() {
   mkdir -p "${TARGET_DIR}"
 
   build_chat_web
-  build_admin_web
   copy_backend_manifests
   render_web_deployment "chat-web" "intent-chat-web" "3000" "${CHAT_BASE_PATH}" "${TARGET_K8S_DIR}/chat-web.yaml"
-  render_web_deployment "admin-web" "intent-admin-web" "3001" "${ADMIN_BASE_PATH}" "${TARGET_K8S_DIR}/admin-web.yaml"
   render_web_ingress
   render_api_ingress \
     "intent-router-router-api" \
@@ -340,20 +309,12 @@ main() {
     "/api/router" \
     "intent-router-api" \
     "${TARGET_K8S_DIR}/ingress-router-api.yaml"
-  render_api_ingress \
-    "intent-router-admin-api" \
-    "${ADMIN_API_EXTERNAL_PATH}" \
-    "/api/admin" \
-    "intent-admin-api" \
-    "${TARGET_K8S_DIR}/ingress-admin-api.yaml"
   render_kustomization
   render_build_metadata
 
   echo "prod_target generated at ${TARGET_DIR}"
   echo "chat base path: ${CHAT_BASE_PATH}"
-  echo "admin base path: ${ADMIN_BASE_PATH}"
   echo "router api path: ${ROUTER_API_EXTERNAL_PATH}"
-  echo "admin api path: ${ADMIN_API_EXTERNAL_PATH}"
 }
 
 main "$@"

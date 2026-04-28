@@ -28,12 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--env-file",
         default=str(ROOT / ".env.local"),
-        help="Optional dotenv file used to resolve ADMIN_DATABASE_URL.",
+        help="Optional dotenv file used to resolve ROUTER_INTENT_CATALOG_DATABASE_URL.",
     )
     parser.add_argument(
         "--database-url",
         default=None,
-        help="Explicit database URL. Defaults to ROUTER_INTENT_CATALOG_DATABASE_URL or ADMIN_DATABASE_URL.",
+        help="Explicit database URL. Defaults to ROUTER_INTENT_CATALOG_DATABASE_URL.",
     )
     return parser.parse_args()
 

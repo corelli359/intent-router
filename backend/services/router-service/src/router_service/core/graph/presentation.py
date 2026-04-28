@@ -260,6 +260,10 @@ class GraphEventPublisher:
                     "cust_id": session.cust_id,
                     "primary": [match.model_dump() for match in recognition.primary],
                     "candidates": [match.model_dump() for match in recognition.candidates],
+                    "diagnostics": [
+                        item.model_dump(mode="json")
+                        for item in (recognition.diagnostics or [])
+                    ],
                 },
             )
         )

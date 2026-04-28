@@ -82,9 +82,7 @@ def get_intent_repository() -> IntentRepository:
         )
     if settings.repository_backend in {"database", "postgres"}:
         if not settings.database_url:
-            raise RuntimeError(
-                "ROUTER_INTENT_CATALOG_DATABASE_URL or ADMIN_DATABASE_URL is required when backend=database"
-            )
+            raise RuntimeError("ROUTER_INTENT_CATALOG_DATABASE_URL is required when backend=database")
         return DatabaseIntentRepository(settings.database_url)
     raise RuntimeError(f"Unsupported repository backend: {settings.repository_backend}")
 
@@ -326,16 +324,6 @@ def get_intent_catalog(request: Request) -> RepositoryIntentCatalog:
 def get_orchestrator(request: Request) -> GraphRouterOrchestrator:
     """FastAPI dependency returning the graph router orchestrator."""
     return get_router_runtime(request).orchestrator
-
-
-def get_event_broker_v2(request: Request) -> EventBroker:
-    """Compatibility alias for the V2 event broker dependency."""
-    return get_event_broker(request)
-
-
-def get_orchestrator_v2(request: Request) -> GraphRouterOrchestrator:
-    """Compatibility alias for the V2 orchestrator dependency."""
-    return get_orchestrator(request)
 
 
 async def close_router_runtime(runtime: RouterRuntime) -> None:

@@ -34,25 +34,9 @@ def _integration_enabled() -> bool:
     return os.getenv("RUN_INTEGRATION") == "1"
 
 
-def test_admin_intent_validation_script() -> None:
+def test_router_assistant_contract_script() -> None:
     if not _integration_enabled():
         pytest.skip("Set RUN_INTEGRATION=1 to run integration script checks.")
-
-    base_url = os.getenv("INTENT_ROUTER_BASE_URL", "http://127.0.0.1:8000")
-    cmd = [
-        sys.executable,
-        str(SCRIPTS_DIR / "verify_admin_intents.py"),
-        "--base-url",
-        base_url,
-    ]
-    _run(cmd, os.environ.copy())
-
-
-def test_router_contract_validation_script() -> None:
-    if not _integration_enabled():
-        pytest.skip("Set RUN_INTEGRATION=1 to run integration script checks.")
-    if os.getenv("RUN_ROUTER_CONTRACT_TEST") != "1":
-        pytest.skip("Set RUN_ROUTER_CONTRACT_TEST=1 to run router contract validation.")
 
     base_url = os.getenv("INTENT_ROUTER_BASE_URL", "http://127.0.0.1:8000")
     cmd = [
@@ -61,5 +45,19 @@ def test_router_contract_validation_script() -> None:
         "--base-url",
         base_url,
         "--strict-demo",
+    ]
+    _run(cmd, os.environ.copy())
+
+
+def test_router_v1_regression_script() -> None:
+    if not _integration_enabled():
+        pytest.skip("Set RUN_INTEGRATION=1 to run integration script checks.")
+
+    base_url = os.getenv("INTENT_ROUTER_BASE_URL", "http://127.0.0.1:8000")
+    cmd = [
+        sys.executable,
+        str(SCRIPTS_DIR / "run_router_v1_regression_suite.py"),
+        "--base-url",
+        base_url,
     ]
     _run(cmd, os.environ.copy())

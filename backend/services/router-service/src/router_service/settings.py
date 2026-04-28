@@ -158,10 +158,8 @@ class Settings(BaseModel):
             app_name=os.getenv("ROUTER_API_APP_NAME", "Intent Router API"),
             env=os.getenv("ROUTER_API_ENV", "dev"),
             router_log_level=os.getenv("ROUTER_LOG_LEVEL", "WARNING"),
-            repository_backend=os.getenv("ROUTER_INTENT_CATALOG_BACKEND", os.getenv("ADMIN_REPOSITORY_BACKEND", "memory")),
-            database_url=os.getenv("ROUTER_INTENT_CATALOG_DATABASE_URL")
-            or os.getenv("ADMIN_DATABASE_URL")
-            or os.getenv("ADMIN_POSTGRES_DSN"),
+            repository_backend=os.getenv("ROUTER_INTENT_CATALOG_BACKEND", "memory"),
+            database_url=os.getenv("ROUTER_INTENT_CATALOG_DATABASE_URL"),
             router_intent_catalog_file=os.getenv("ROUTER_INTENT_CATALOG_FILE"),
             router_intent_field_catalog_file=os.getenv("ROUTER_INTENT_FIELD_CATALOG_FILE"),
             router_intent_slot_schema_file=os.getenv("ROUTER_INTENT_SLOT_SCHEMA_FILE"),

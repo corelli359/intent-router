@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: intent
 resources:
   - namespace.yaml
-  - ../../admin-api.yaml
   - ../../order-agent.yaml
   - ../../appointment-agent.yaml
   - ../../credit-card-repayment-agent.yaml
@@ -22,5 +21,4 @@ configMapGenerator:
       - ../../router-intent-catalog/slot-schemas.json
       - ../../router-intent-catalog/graph-build-hints.json
 patchesStrategicMerge:
-  - patch-admin-api-perf-target.yaml
   - patch-agents-scale-zero.yaml

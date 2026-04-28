@@ -28,7 +28,6 @@ export interface MessagePayload {
 
 export interface ApiClientOptions {
   routerBaseUrl?: string;
-  adminBaseUrl?: string;
 }
 
 export interface MessageStreamHandlers {
@@ -333,8 +332,7 @@ interface BackendPerfRun {
 }
 
 const defaultOptions: Required<ApiClientOptions> = {
-  routerBaseUrl: process.env.NEXT_PUBLIC_ROUTER_BASE_URL ?? "/api/router",
-  adminBaseUrl: process.env.NEXT_PUBLIC_ADMIN_BASE_URL ?? "/api/admin"
+  routerBaseUrl: process.env.NEXT_PUBLIC_ROUTER_BASE_URL ?? "/api/router"
 };
 
 async function readError(response: Response): Promise<string> {
@@ -1048,158 +1046,5 @@ export class IntentRouterApiClient {
       },
       handlers
     );
-  }
-
-  async listIntents(): Promise<IntentDefinition[]> {
-    const response = await fetch(`${this.options.adminBaseUrl}/intents`);
-    const payload = await response.json();
-    return (payload.items as BackendIntent[]).map(mapIntent);
-  }
-
-  async createIntent(intent: IntentInput): Promise<IntentDefinition> {
-    const response = await fetch(`${this.options.adminBaseUrl}/intents`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(toIntentPayload(intent))
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    return mapIntent((await response.json()) as BackendIntent);
-  }
-
-  async updateIntent(intentCode: string, intent: IntentInput): Promise<IntentDefinition> {
-    const response = await fetch(`${this.options.adminBaseUrl}/intents/${encodeURIComponent(intentCode)}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(toIntentPayload(intent))
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    return mapIntent((await response.json()) as BackendIntent);
-  }
-
-  async activateIntent(intentCode: string): Promise<IntentDefinition> {
-    const response = await fetch(
-      `${this.options.adminBaseUrl}/intents/${encodeURIComponent(intentCode)}/activate`,
-      {
-        method: "POST"
-      }
-    );
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    return mapIntent((await response.json()) as BackendIntent);
-  }
-
-  async deactivateIntent(intentCode: string): Promise<IntentDefinition> {
-    const response = await fetch(
-      `${this.options.adminBaseUrl}/intents/${encodeURIComponent(intentCode)}/deactivate`,
-      {
-        method: "POST"
-      }
-    );
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    return mapIntent((await response.json()) as BackendIntent);
-  }
-
-  async listPerfTestCases(): Promise<PerfTestCase[]> {
-    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/cases`);
-    if (!response.ok) {
-      throw new Error(await readError(response));
-    }
-    const payload = await response.json();
-    return getArrayPayload<BackendPerfCase>(payload, ["items", "cases"]).map(mapPerfCase);
-  }
-
-  async listPerfTestRuns(): Promise<PerfTestRunSummary[]> {
-    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs`);
-    if (!response.ok) {
-      throw new Error(await readError(response));
-    }
-    const payload = await response.json();
-    return getArrayPayload<BackendPerfRun>(payload, ["items", "runs"]).map(mapPerfRunSummary);
-  }
-
-  async createPerfTestRun(input: PerfTestRunCreateInput): Promise<PerfTestRunSummary> {
-    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        case_id: input.caseId,
-        ladder_steps: input.ladderSteps.map((step) => ({
-          name: step.name,
-          concurrency: step.concurrency,
-          duration_sec: step.durationSec,
-          warmup_sec: step.warmupSec,
-          request_limit: step.requestLimit,
-          cooldown_sec: step.cooldownSec,
-          timeout_ms: step.timeoutMs
-        })),
-        case_override: input.caseOverride
-          ? {
-              session_request: input.caseOverride.sessionRequest,
-              message_request: input.caseOverride.messageRequest,
-              expectations: input.caseOverride.expectations
-                ? {
-                    session_status_code: input.caseOverride.expectations.sessionStatusCode,
-                    message_status_code: input.caseOverride.expectations.messageStatusCode,
-                    required_graph_status: input.caseOverride.expectations.requiredGraphStatus,
-                    required_message_contains: input.caseOverride.expectations.requiredMessageContains,
-                    required_primary_intent_code: input.caseOverride.expectations.requiredPrimaryIntentCode,
-                    required_slot_keys: input.caseOverride.expectations.requiredSlotKeys,
-                    required_slot_values: input.caseOverride.expectations.requiredSlotValues
-                  }
-                : undefined
-            }
-          : undefined
-      })
-    });
-    if (!response.ok) {
-      throw new Error(await readError(response));
-    }
-    const payload = await response.json();
-    const run = getObjectPayload<BackendPerfRun>(payload, ["item", "run"]);
-    if (!run) {
-      throw new Error("压测任务创建成功，但返回体缺少 run 信息");
-    }
-    return mapPerfRunSummary(run);
-  }
-
-  async cancelPerfTestRun(runId: string): Promise<PerfTestRunDetail> {
-    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs/${encodeURIComponent(runId)}/cancel`, {
-      method: "POST"
-    });
-    if (!response.ok) {
-      throw new Error(await readError(response));
-    }
-    const payload = await response.json();
-    const run = getObjectPayload<BackendPerfRun>(payload, ["item", "run"]);
-    if (!run) {
-      throw new Error("压测任务取消成功，但返回体缺少 run 信息");
-    }
-    return mapPerfRunDetail(run);
-  }
-
-  async getPerfTestRun(runId: string): Promise<PerfTestRunDetail> {
-    const response = await fetch(`${this.options.adminBaseUrl}/perf-tests/runs/${encodeURIComponent(runId)}`);
-    if (!response.ok) {
-      throw new Error(await readError(response));
-    }
-    const payload = await response.json();
-    const run = getObjectPayload<BackendPerfRun>(payload, ["item", "run"]);
-    if (!run) {
-      throw new Error("压测任务详情返回格式不正确");
-    }
-    return mapPerfRunDetail(run);
   }
 }

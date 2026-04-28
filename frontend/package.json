@@ -8,10 +8,8 @@
   ],
   "scripts": {
     "dev:chat": "npm run dev --workspace @intent-router/chat-web",
-    "dev:admin": "npm run dev --workspace @intent-router/admin-web",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   }
 }
-

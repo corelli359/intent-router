@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 from router_service.core.graph.orchestrator import GraphRouterOrchestrator, GraphRouterOrchestratorConfig
 from router_service.core.shared.domain import IntentDefinition, Task, TaskStatus
 from router_service.core.shared.graph_domain import (
+    GraphEdge,
+    GraphEdgeType,
     ExecutionGraphState,
     GraphNodeState,
     GraphNodeStatus,
@@ -60,6 +62,21 @@ class _SpyUnderstandingValidator:
             prompt_message=None,
             diagnostics=[],
         )
+
+
+class _NoopAgentClient:
+    def __init__(self) -> None:
+        self.cancelled: list[tuple[str, str, str | None]] = []
+
+    async def stream(self, task: Task, user_input: str):
+        if False:
+            yield task, user_input
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        self.cancelled.append((session_id, task_id, agent_url))
+
+    async def close(self) -> None:
+        return None
 
 
 def test_graph_orchestrator_drain_guard_fails_non_converging_graph() -> None:
@@ -239,6 +256,84 @@ def test_graph_orchestrator_drain_graph_accepts_waiting_assistant_completion_wit
         orchestrator._emit_graph_progress.assert_awaited_once()
         orchestrator._publish_session_state.assert_not_awaited()
         mock_warning.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_handle_task_completion_drains_ready_downstream_node_after_assistant_confirmation() -> None:
+    async def run() -> None:
+        agent_client = _NoopAgentClient()
+        orchestrator = GraphRouterOrchestrator(
+            publish_event=lambda event: None,
+            agent_client=agent_client,
+        )
+        session = orchestrator.session_store.create(
+            cust_id="cust_assistant_continue",
+            session_id="session_assistant_continue",
+        )
+        graph = ExecutionGraphState(source_message="先转账再查余额", status=GraphStatus.RUNNING)
+        first = GraphNodeState(
+            intent_code="AG_TRANS",
+            title="转账",
+            confidence=0.95,
+            position=0,
+            status=GraphNodeStatus.WAITING_ASSISTANT_COMPLETION,
+        )
+        first_task = Task(
+            session_id=session.session_id,
+            intent_code=first.intent_code,
+            agent_url="http://agent.example.com/transfer",
+            intent_name="转账",
+            intent_description="执行转账",
+            confidence=0.95,
+            status=TaskStatus.WAITING_ASSISTANT_COMPLETION,
+        )
+        first_task.touch(TaskStatus.WAITING_ASSISTANT_COMPLETION)
+        first.task_id = first_task.task_id
+        second = GraphNodeState(
+            intent_code="query_account_balance",
+            title="查余额",
+            confidence=0.91,
+            position=1,
+            status=GraphNodeStatus.BLOCKED,
+        )
+        graph.nodes.extend([first, second])
+        graph.edges.append(
+            GraphEdge(
+                source_node_id=first.node_id,
+                target_node_id=second.node_id,
+                relation_type=GraphEdgeType.SEQUENTIAL,
+            )
+        )
+        session.tasks.append(first_task)
+        session.attach_business(graph, router_only_mode=False, pending=False)
+
+        dispatched_nodes: list[str] = []
+
+        async def run_node(
+            session_arg: GraphSessionState,
+            graph_arg: ExecutionGraphState,
+            node_arg: GraphNodeState,
+            seed_input: str,
+        ) -> None:
+            del session_arg, graph_arg, seed_input
+            dispatched_nodes.append(node_arg.node_id)
+            node_arg.touch(GraphNodeStatus.COMPLETED)
+
+        orchestrator._run_node = AsyncMock(side_effect=run_node)
+
+        await orchestrator.handle_task_completion(
+            session_id=session.session_id,
+            task_id=first_task.task_id,
+            completion_signal=2,
+        )
+
+        assert first.status == GraphNodeStatus.COMPLETED
+        assert second.status == GraphNodeStatus.COMPLETED
+        assert dispatched_nodes == [second.node_id]
+        assert agent_client.cancelled == [
+            (session.session_id, first_task.task_id, "http://agent.example.com/transfer")
+        ]
 
     asyncio.run(run())
 
@@ -663,6 +758,20 @@ def test_graph_orchestrator_router_only_waits_when_semantic_string_slots_are_mis
             publish_event=lambda event: None,
             intent_catalog=_SingleIntentCatalog(intent),
         )
+        orchestrator.understanding_validator.validate_node = AsyncMock(
+            return_value=UnderstandingValidationResult(
+                slot_memory={"amount": "500"},
+                slot_bindings=[],
+                history_slot_keys=[],
+                missing_required_slots=["payee_name"],
+                ambiguous_slot_keys=[],
+                invalid_slot_keys=[],
+                needs_confirmation=False,
+                can_dispatch=False,
+                prompt_message="请提供收款人姓名",
+                diagnostics=[],
+            )
+        )
         orchestrator._publish_node_state = AsyncMock()
         orchestrator._publish_graph_state = AsyncMock()
 
@@ -687,7 +796,7 @@ def test_graph_orchestrator_router_only_waits_when_semantic_string_slots_are_mis
         assert ready is False
         assert node.status == GraphNodeStatus.WAITING_USER_INPUT
         assert graph.status == GraphStatus.WAITING_USER_INPUT
-        assert node.slot_memory == {}
+        assert node.slot_memory == {"amount": "500"}
         assert "收款人姓名" in session.messages[-1].content
 
     asyncio.run(run())

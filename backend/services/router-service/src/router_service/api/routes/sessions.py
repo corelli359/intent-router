@@ -630,6 +630,37 @@ def _assistant_output_from_graph_payload(
     )
 
 
+def _assistant_output_from_recognition_event(event: TaskEvent) -> dict[str, Any] | None:
+    """Build one assistant-facing SSE frame once recognition has a stable result."""
+    payload = dict(event.payload or {})
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, list):
+        for item in diagnostics:
+            if not isinstance(item, dict):
+                continue
+            if item.get("code") == "RECOGNIZER_LLM_FAILED":
+                return None
+
+    primary = payload.get("primary")
+    primary = primary if isinstance(primary, list) else []
+    candidates = payload.get("candidates")
+    candidates = candidates if isinstance(candidates, list) else []
+    first_primary = next((item for item in primary if isinstance(item, dict)), None)
+    intent_code = str(first_primary.get("intent_code") or "") if first_primary is not None else ""
+    return _assistant_output_template(
+        status="running",
+        intent_code=intent_code,
+        completion_state=0,
+        completion_reason="intent_recognized",
+        message=event.message or ("意图识别完成" if intent_code else "暂未识别到明确意图"),
+        output={
+            "stage": "intent_recognition",
+            "primary": primary,
+            "candidates": candidates,
+        },
+    )
+
+
 def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     """Translate one internal router task event into the assistant-facing v0.4 SSE payload."""
     payload = dict(event.payload or {})
@@ -638,6 +669,8 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
         agent_output = {}
 
     allowed_events = {
+        "recognition.completed",
+        "graph_builder.completed",
         "graph.unrecognized",
         "graph.proposed",
         "graph.waiting_confirmation",
@@ -652,6 +685,9 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     }
     if event.event not in allowed_events:
         return None
+
+    if event.event in {"recognition.completed", "graph_builder.completed"}:
+        return _assistant_output_from_recognition_event(event)
 
     graph_payload = payload.get("graph")
     graph_payload = graph_payload if isinstance(graph_payload, dict) else None

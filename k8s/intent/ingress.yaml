@@ -24,13 +24,6 @@ spec:
                 name: intent-router-api
                 port:
                   number: 8000
-          - path: /api/admin
-            pathType: Prefix
-            backend:
-              service:
-                name: intent-admin-api
-                port:
-                  number: 8000
           - path: /api/assistant
             pathType: Prefix
             backend:
@@ -38,13 +31,6 @@ spec:
                 name: intent-assistant-service
                 port:
                   number: 8000
-          - path: /admin
-            pathType: Prefix
-            backend:
-              service:
-                name: intent-admin-web
-                port:
-                  number: 3001
           - path: /chat
             pathType: Prefix
             backend:

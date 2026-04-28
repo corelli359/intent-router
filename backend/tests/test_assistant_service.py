@@ -46,6 +46,23 @@ def _parse_sse_frames(raw_text: str) -> list[tuple[str, str]]:
     return frames
 
 
+def _message_payloads(raw_text: str) -> list[dict[str, object]]:
+    return [
+        json.loads(data)
+        for event, data in _parse_sse_frames(raw_text)
+        if event == "message"
+    ]
+
+
+def _is_recognition_payload(payload: dict[str, object]) -> bool:
+    output = payload.get("output")
+    return isinstance(output, dict) and output.get("stage") == "intent_recognition"
+
+
+def _non_recognition_payloads(payloads: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [payload for payload in payloads if not _is_recognition_payload(payload)]
+
+
 def test_assistant_service_forwards_non_stream_request_to_router() -> None:
     async def run() -> None:
         router_app = FastAPI()
@@ -551,8 +568,11 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
 
         waiting_frames = _parse_sse_frames(waiting_text)
         assert waiting_frames[-1] == ("done", "[DONE]")
-        waiting_payload = json.loads(waiting_frames[0][1])
-        assert waiting_frames[0][0] == "message"
+        waiting_message_payloads = _message_payloads(waiting_text)
+        recognition_payload = waiting_message_payloads[0]
+        assert recognition_payload["completion_reason"] == "intent_recognized"
+        assert recognition_payload["intent_code"] == "AG_TRANS"
+        waiting_payload = _non_recognition_payloads(waiting_message_payloads)[0]
         assert waiting_payload["status"] == "waiting_user_input"
         assert waiting_payload["completion_state"] == 0
         assert waiting_payload["current_task"] == "AG_TRANS#0"
@@ -592,8 +612,7 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
 
         completed_frames = _parse_sse_frames(completed_text)
         assert completed_frames[-1] == ("done", "[DONE]")
-        completed_payload = json.loads(completed_frames[0][1])
-        assert completed_frames[0][0] == "message"
+        completed_payload = _non_recognition_payloads(_message_payloads(completed_text))[0]
         assert completed_payload["status"] == "completed"
         assert completed_payload["completion_state"] == 2
         assert completed_payload["completion_reason"] == "assistant_final_done"

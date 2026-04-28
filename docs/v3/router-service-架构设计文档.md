@@ -26,7 +26,6 @@
 当前目标拓扑为：
 
 ```text
-Admin Web -> Admin API
 Chat Web  -> Router API
 Router API -> Intent Agents
 Router API -> LLM provider / fake LLM
@@ -39,11 +38,9 @@ flowchart LR
     subgraph client["Client / Upstream"]
         chat["Chat Web / App"]
         rec["Recommendation Upstream"]
-        adminweb["Admin Web"]
     end
 
-    subgraph control["Intent Control Plane"]
-        adminapi["Admin API"]
+    subgraph control["Router Runtime"]
         router["router-service"]
     end
 
@@ -54,8 +51,6 @@ flowchart LR
         agentn["Intent Agent N"]
     end
 
-    adminweb --> adminapi
-    adminapi --> catalog
     chat --> router
     rec --> router
     router -. refresh intent catalog .-> catalog
@@ -66,13 +61,11 @@ flowchart LR
 
 ### 3.3 服务边界
 
-1. `admin-service`
-   - 目录治理和配置管理
-2. `router-service`
+1. `router-service`
    - 运行时理解、编排、补槽、调度
-3. `*-agent`
+2. `*-agent`
    - 单意图业务执行
-4. `fake-llm-service`
+3. `fake-llm-service`
    - 压测/性能环境下的可控 LLM 替身
 
 ## 4. 逻辑分层
@@ -392,7 +385,7 @@ sequenceDiagram
     participant Valid as UnderstandingValidator
     participant Agent as StreamingAgentClient
 
-    User->>API: POST /sessions/{id}/messages
+    User->>API: POST /api/v1/message (body.sessionId)
     API->>Orch: handle_user_message(_serialized)
     Orch->>Store: acquire session lock
     Orch->>Flow: handle_user_message()

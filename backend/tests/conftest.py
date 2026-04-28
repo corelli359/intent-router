@@ -7,7 +7,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_PATHS = [
     REPO_ROOT / "backend",
-    REPO_ROOT / "backend" / "services" / "admin-service" / "src",
     REPO_ROOT / "backend" / "services" / "router-service" / "src",
     REPO_ROOT / "backend" / "services" / "fake-llm-service" / "src",
     REPO_ROOT / "backend" / "services" / "agents" / "account-balance-agent" / "src",

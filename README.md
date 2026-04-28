@@ -4,7 +4,6 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 
 ## Project Structure
 
-- `backend/services/admin-service`: admin service source of truth
 - `backend/services/router-service`: router service source of truth
 - `backend/services/agents/account-balance-agent`: account balance agent source of truth
 - `backend/services/agents/transfer-money-agent`: transfer money agent source of truth
@@ -12,7 +11,7 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 - `backend/services/agents/gas-bill-agent`: gas bill payment agent source of truth
 - `backend/services/agents/forex-agent`: forex exchange agent source of truth
 - `backend/services/agents/fallback-agent`: fallback agent source of truth
-- `frontend/`: chat web, admin web, shared packages
+- `frontend/`: chat web and shared packages
 - `prod_target/`: generated target-cluster frontend artifacts and rendered manifests
 - `docs/`: product and architecture docs
 - `k8s/`: deployment manifests
@@ -21,11 +20,8 @@ Intent Router MVP for intent registration, intent recognition, task dispatching,
 
 ## Target Service Topology
 
-The target architecture separates control plane and runtime plane:
+The target architecture separates router runtime and business agents:
 
-- `admin-api` service:
-  - owns intent registry CRUD and activation
-  - single replica by default
 - `router-api` service:
   - owns session/message ingress, intent recognition, and agent dispatch
   - can scale to multiple replicas
@@ -43,7 +39,7 @@ Critical boundary:
 Current phase note:
 
 - This branch has completed the physical backend split.
-- `admin_service` and `router_service` are the canonical service packages.
+- `router_service` is the canonical router package.
 - Built-in agents now have canonical per-service source trees under `backend/services/agents/*-agent/src`.
 - Services are physically isolated; there is no shared legacy `backend/src` package, shared contracts package, or aggregate agent shim package.
 
@@ -51,14 +47,12 @@ Current phase note:
 
 Required ingress path conventions:
 
-- `/admin` -> Admin Web
 - `/chat` -> Chat Web
 - `/chat/v2` -> Chat Web V2 entry
-- `/api/admin/*` -> Admin API
 - `/api/router/*` -> Router API
 - `/api/router/v2/*` -> Router API V2 entry
 
-This keeps UI routes and API routes explicit, and avoids mixing admin and chat traffic.
+This keeps UI routes and API routes explicit.
 
 ## V2 Dynamic Graph Runtime
 
@@ -86,7 +80,7 @@ Minimum runtime env:
    - `ROUTER_LLM_API_KEY`
    - `ROUTER_LLM_MODEL`
    - one catalog backend mode:
-     - `ROUTER_INTENT_CATALOG_BACKEND=database` plus `ROUTER_INTENT_CATALOG_DATABASE_URL` or `ADMIN_DATABASE_URL`
+     - `ROUTER_INTENT_CATALOG_BACKEND=database` plus `ROUTER_INTENT_CATALOG_DATABASE_URL`
      - or `ROUTER_INTENT_CATALOG_BACKEND=file` plus `ROUTER_INTENT_CATALOG_FILE`
 3. Set recognizer backend with `ROUTER_RECOGNIZER_BACKEND=llm`.
 
@@ -96,11 +90,8 @@ Supported `agent_url`:
 
 Intent lifecycle:
 
-- New intent defaults to `inactive`.
-- Admin activates/deactivates intents explicitly.
-- Router recognizes only active non-fallback intents.
+- Router recognizes only active non-fallback intents from the configured catalog.
 - Fallback intent is excluded from recognizer candidates and dispatched only when no match is selected.
-- Shared field semantics can now be managed in Admin under `/api/admin/fields`; intent registration may reference these global fields through `slot_schema[].field_code`.
 - When `ROUTER_INTENT_CATALOG_BACKEND=file`, router loads intents, domains, field catalogs, and slot schemas directly from the mounted JSON file and does not depend on admin/sqlite at runtime.
 
 ## Deployment Requirements
@@ -114,7 +105,7 @@ Rationale:
 
 - predictable scheduling and memory pressure control
 - safer multi-replica router scaling
-- cleaner SLO isolation between admin and router workloads
+- cleaner SLO isolation between router and agent workloads
 
 ## Local Development
 
@@ -124,11 +115,10 @@ Install repo-level test tooling:
 python -m pip install -e .[dev]
 ```
 
-Run admin/router as independently installable services:
+Run router as an independently installable service:
 
 ```bash
-python -m pip install -e backend/services/admin-service -e backend/services/router-service
-python -m uvicorn admin_service.api.app:app --reload --port 8011
+python -m pip install -e backend/services/router-service
 python -m uvicorn router_service.api.app:app --reload --port 8012
 ```
 
@@ -164,7 +154,6 @@ Run frontends:
 cd frontend
 npm install
 npm run dev:chat
-npm run dev:admin
 ```
 
 Chat entries after startup:
@@ -186,23 +175,20 @@ Common overrides:
 ```bash
 INGRESS_HOST=test.example.com \
 CHAT_BASE_PATH=/intent-test/chat \
-ADMIN_BASE_PATH=/intent-test/admin \
 ROUTER_API_EXTERNAL_PATH=/intent-test/api/router \
-ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
 ./scripts/build_prod_target.sh
 ```
 
-The generated web deployments run directly from `prod_target/chat-web` and `prod_target/admin-web`
-instead of rebuilding Next.js inside the cluster.
+The generated web deployment runs directly from `prod_target/chat-web` instead of rebuilding Next.js inside the cluster.
 
 ## Router-Only Verification
 
 To verify intent recognition and slot filling without dispatching downstream agents, call:
 
-- `POST /api/v1/message` with `"executionMode": "router_only"` and a caller-provided `sessionId`
+- `POST /api/v1/message` with `sessionId` in the request body and `"executionMode": "router_only"`
 
 Helper script:
 
 ```bash
-python scripts/verify_router_understanding.py --base-url http://127.0.0.1:8000
+python scripts/verify_router_assistant_contract.py --base-url http://127.0.0.1:8000 --strict-demo
 ```

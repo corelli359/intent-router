@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Register or update the builtin finance intents used by the V2 router runtime."""
+"""Build builtin finance intent payloads used by router catalog export scripts."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
-import urllib.error
-import urllib.request
+from pathlib import Path
 from typing import Any
 
 
@@ -30,35 +28,6 @@ COMMON_CONTEXT_MAPPING = {
     "conversation.recentMessages": "$context.recent_messages",
     "conversation.longTermMemory": "$context.long_term_memory",
 }
-
-
-def _http_json(
-    method: str,
-    url: str,
-    payload: dict[str, Any] | None = None,
-    *,
-    host_header: str | None = None,
-) -> tuple[int, Any]:
-    data: bytes | None = None
-    headers = {"Accept": "application/json"}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    if host_header:
-        headers["Host"] = host_header
-
-    request = urllib.request.Request(url=url, method=method, headers=headers, data=data)
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            raw = response.read().decode("utf-8").strip()
-            return response.status, json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8").strip()
-        try:
-            parsed = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            parsed = {"raw": raw}
-        return exc.code, parsed
 
 
 def _field(
@@ -818,49 +787,27 @@ def build_payloads() -> list[dict[str, Any]]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Register builtin finance intents.")
-    parser.add_argument("--base-url", default="http://127.0.0.1")
-    parser.add_argument("--host-header", default=None, help="Optional Host header, useful for ingress routing.")
-    parser.add_argument("--activate", action="store_true", help="Activate intents after upsert.")
+    parser = argparse.ArgumentParser(description="Print builtin finance intent payloads as JSON.")
+    parser.add_argument(
+        "--output-json",
+        default=None,
+        help="Optional output path. Defaults to stdout.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    base_url = args.base_url.rstrip("/")
-
-    for payload in build_payloads():
-        intent_code = payload["intent_code"]
-        detail_url = f"{base_url}/api/admin/intents/{intent_code}"
-        status, body = _http_json("GET", detail_url, host_header=args.host_header)
-        if status == 404:
-            create_url = f"{base_url}/api/admin/intents"
-            status, body = _http_json("POST", create_url, payload, host_header=args.host_header)
-        elif status == 200:
-            status, body = _http_json("PUT", detail_url, payload, host_header=args.host_header)
-        else:
-            print(f"[FAIL] inspect {intent_code}: status={status}, body={body}")
-            return 1
-
-        if status not in {200, 201}:
-            print(f"[FAIL] upsert {intent_code}: status={status}, body={body}")
-            return 1
-        print(f"[OK] upsert {intent_code}: status={status}")
-
-        if args.activate:
-            activate_url = f"{base_url}/api/admin/intents/{intent_code}/activate"
-            activate_status, activate_body = _http_json(
-                "POST",
-                activate_url,
-                host_header=args.host_header,
-            )
-            if activate_status not in {200, 204}:
-                print(f"[FAIL] activate {intent_code}: status={activate_status}, body={activate_body}")
-                return 1
-            print(f"[OK] activate {intent_code}: status={activate_status}")
-
+    payload = json.dumps(build_payloads(), ensure_ascii=False, indent=2)
+    if args.output_json:
+        output_path = Path(args.output_json).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(payload + "\n", encoding="utf-8")
+        print(f"[OK] wrote builtin finance intent payloads: {output_path}")
+        return 0
+    print(payload)
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

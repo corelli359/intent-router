@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import httpx
 
 from router_service.api.app import create_router_app
-from router_service.api.dependencies import get_orchestrator, get_orchestrator_v2
+from router_service.api.dependencies import get_orchestrator
 from router_service.core.shared.diagnostics import RouterDiagnostic, RouterDiagnosticCode
 from router_service.core.shared.graph_domain import GraphRouterSnapshot
 from router_service.core.support.agent_barrier import AgentBarrierTriggeredError
@@ -71,8 +71,12 @@ def _app_with_stub_orchestrator() -> tuple[object, _StubOrchestrator]:
     orchestrator = _StubOrchestrator()
     app = create_router_app()
     app.dependency_overrides[get_orchestrator] = lambda: orchestrator
-    app.dependency_overrides[get_orchestrator_v2] = lambda: orchestrator
     return app, orchestrator
+
+
+def test_legacy_router_session_endpoints_are_removed() -> None:
+    app, _ = _app_with_stub_orchestrator()
+    assert all("/sessions" not in getattr(route, "path", "") for route in app.routes)
 
 
 def test_router_v1_message_returns_structured_validation_error() -> None:
@@ -208,7 +212,6 @@ def test_router_api_returns_structured_agent_barrier_error() -> None:
     async def run() -> None:
         app = create_router_app()
         app.dependency_overrides[get_orchestrator] = lambda: _AgentBarrierOrchestrator()
-        app.dependency_overrides[get_orchestrator_v2] = lambda: _AgentBarrierOrchestrator()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",

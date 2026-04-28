@@ -114,7 +114,6 @@ minikube_cmd ssh --profile "${MINIKUBE_PROFILE}" "
 manifests=(
   namespace.yaml
   router-api.yaml
-  admin-api.yaml
   order-agent.yaml
   appointment-agent.yaml
   credit-card-repayment-agent.yaml
@@ -122,7 +121,6 @@ manifests=(
   forex-agent.yaml
   fallback-agent.yaml
   chat-web.yaml
-  admin-web.yaml
   ingress.yaml
 )
 
@@ -132,15 +130,13 @@ done
 
 for deployment in \
   intent-router-api \
-  intent-admin-api \
   intent-order-agent \
   intent-appointment-agent \
   intent-credit-card-agent \
   intent-gas-bill-agent \
   intent-forex-agent \
   intent-fallback-agent \
-  intent-chat-web \
-  intent-admin-web
+  intent-chat-web
 do
   node_kubectl -n "${NAMESPACE}" rollout restart deployment/"${deployment}"
   node_kubectl -n "${NAMESPACE}" rollout status deployment/"${deployment}" --timeout=20m
@@ -151,4 +147,3 @@ echo
 echo "Ingress:"
 node_kubectl -n "${NAMESPACE}" get ingress
 echo "Chat:  http://${INGRESS_HOST}/chat"
-echo "Admin: http://${INGRESS_HOST}/admin"

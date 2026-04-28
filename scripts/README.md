@@ -14,39 +14,15 @@ export INTENT_ROUTER_BASE_URL=http://127.0.0.1:8000
 
 ## Scripts
 
-### 1) Admin intent validation
+### 1) One-shot launcher
 
 ```bash
-python scripts/verify_admin_intents.py --base-url "$INTENT_ROUTER_BASE_URL"
+bash scripts/run_mvp_checks.sh
 ```
 
-Default assumptions:
+The launcher runs the current `/api/v1/message` and `/api/v1/task/completion` checks.
 
-- create: `POST /api/admin/intents`
-- list: `GET /api/admin/intents`
-- optional full CRUD paths can be overridden by flags
-
-### 2) Router assistant-protocol contract validation
-
-```bash
-python scripts/verify_router_assistant_contract.py --base-url "$INTENT_ROUTER_BASE_URL"
-```
-
-Default assumptions:
-
-- message submit: `POST /api/v1/message`
-- task completion callback: `POST /api/v1/task/completion`
-- default scenario: transfer flow with first-turn partial slots, then follow-up slot补充
-
-### 3) One-shot launcher
-
-```bash
-RUN_ROUTER_CONTRACT_TEST=1 bash scripts/run_mvp_checks.sh
-```
-
-If `RUN_ROUTER_CONTRACT_TEST` is not `1`, the router contract check is skipped.
-
-### 4) Real LLM runtime smoke test
+### 2) Real LLM runtime smoke test
 
 This test reads router runtime env from the explicit file pointed to by `ROUTER_ENV_FILE`.
 If `ROUTER_ENV_FILE` is unset, the script defaults it to the repo-root `.env.local`.
@@ -65,19 +41,6 @@ Pytest wrapper:
 
 ```bash
 RUN_REAL_LLM_TEST=1 pytest backend/tests/integration/test_real_llm_runtime_script.py
-```
-
-### 5) Router-only understanding verification
-
-This calls the production router contract without dispatching downstream agents, so you can inspect:
-
-- returned intent code
-- top-level slot memory
-- assistant-facing message
-- nested output payload
-
-```bash
-python scripts/verify_router_understanding.py --base-url "$INTENT_ROUTER_BASE_URL"
 ```
 
 Router file-mode now uses the business CSV `intent_table_from_updated_screenshot.csv` as the source-of-truth.
@@ -99,13 +62,13 @@ This sync step will:
 Current direct router helpers:
 
 ```bash
-python scripts/jupyter_router_stream_test.py
-python scripts/run_router_perf_ladder.py --base-url "$INTENT_ROUTER_BASE_URL"
+python scripts/jupyter_assistant_stream_test.py
+python scripts/run_router_v1_regression_suite.py --base-url "$INTENT_ROUTER_BASE_URL"
 ```
 
 Notes:
 
-- legacy session-style verification scripts have been removed
+- legacy session-style verification scripts have been archived
 - current helper scripts only target `/api/v1/message` and `/api/v1/task/completion`
 
 Useful environment variables:
@@ -113,7 +76,7 @@ Useful environment variables:
 - `INTENT_ROUTER_BASE_URL`
 - `INTENT_ROUTER_HOST_HEADER`
 
-### 6) Assistant-style router contract verification
+### 3) Assistant-style router contract verification
 
 This script bypasses `assistant-service` and calls Router directly with the
 assistant-facing request shape:
@@ -155,7 +118,7 @@ This script checks:
   - handover result
   - failed result
 
-### 7) Focused `/api/v1/message` regression suite
+### 4) Focused `/api/v1/message` regression suite
 
 This script targets the current production router entry:
 
@@ -186,12 +149,11 @@ python scripts/run_router_v1_regression_suite.py \
   --case-id multi_turn_override_payee_before_amount
 ```
 
-### 8) Build target-cluster frontend artifacts
+### 5) Build target-cluster frontend artifacts
 
 This generates:
 
 - `prod_target/chat-web`
-- `prod_target/admin-web`
 - `prod_target/k8s/intent/*.yaml`
 
 ```bash
@@ -203,15 +165,13 @@ Example with external prefixes:
 ```bash
 INGRESS_HOST=test.example.com \
 CHAT_BASE_PATH=/intent-test/chat \
-ADMIN_BASE_PATH=/intent-test/admin \
 ROUTER_API_EXTERNAL_PATH=/intent-test/api/router \
-ADMIN_API_EXTERNAL_PATH=/intent-test/api/admin \
 ./scripts/build_prod_target.sh
 ```
 
-### 9) Register additional financial intents
+### 6) Export additional financial intents
 
-This upserts the extra V2 financial intents used by the multi-agent runtime:
+These scripts export or sync the extra V2 financial intents used by the multi-agent runtime:
 
 - `query_credit_card_repayment`
 - `pay_gas_bill`
@@ -223,9 +183,8 @@ The script now points these intents to dedicated K8s services:
 - `pay_gas_bill` -> `intent-gas-bill-agent`
 - `exchange_forex` -> `intent-forex-agent`
 
-```bash
-python scripts/register_financial_intents.py --base-url "$INTENT_ROUTER_BASE_URL" --activate
-```
+Use `scripts/export_router_intent_catalog.py` for a file catalog export, or
+`scripts/sync_financial_intents_to_db.py` when the router catalog backend is sqlite.
 
 ## Pytest integration wrapper
 
@@ -233,4 +192,3 @@ python scripts/register_financial_intents.py --base-url "$INTENT_ROUTER_BASE_URL
 It only runs when:
 
 - `RUN_INTEGRATION=1`
-- and for router contract test: `RUN_ROUTER_CONTRACT_TEST=1`

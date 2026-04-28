@@ -227,7 +227,7 @@ def main() -> int:
     parser.add_argument(
         "--session-id",
         default=None,
-        help="Optional fixed sessionId. Defaults to a local generated id.",
+        help="Optional fixed sessionId. Defaults to a generated assistant-style id.",
     )
     parser.add_argument(
         "--agent-session-id",
@@ -273,7 +273,7 @@ def main() -> int:
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
-    session_id = args.session_id or f"verify_assistant_contract_{int(time.time() * 1000)}"
+    session_id = args.session_id or f"assistant_contract_{int(time.time() * 1000)}"
     agent_session_id = args.agent_session_id or session_id
 
     turn_results: list[dict[str, Any]] = []

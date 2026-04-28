@@ -4,14 +4,12 @@ This document describes the target deployment model for namespace `intent`.
 
 ## Target Topology
 
-Control plane and runtime plane are deployed separately:
+Runtime services are deployed separately:
 
-- `intent-admin-api` (Admin API, single replica by default)
 - `intent-router-api` (Router API, scalable replicas)
 - `intent-order-agent`
 - `intent-appointment-agent`
 - `intent-chat-web`
-- `intent-admin-web`
 - `intent-router` ingress
 
 Current agent split:
@@ -40,10 +38,8 @@ Key boundary:
 
 Ingress must expose these stable paths:
 
-- `/admin` -> `intent-admin-web`
 - `/chat` -> `intent-chat-web`
 - `/chat/v2` -> V2 chat page inside the same `intent-chat-web`
-- `/api/admin/*` -> `intent-admin-api`
 - `/api/router/*` -> `intent-router-api`
 - `/api/router/v2/*` -> V2 router API inside the same `intent-router-api`
 
@@ -83,14 +79,14 @@ Reason:
 - Deployment startup no longer depends on `backend/src` or the monorepo root package.
 - New financial agents are deployed one by one instead of piggybacking on the legacy two-agent topology.
 - If cluster resources become tight later, the deployment script is the place to stop after the last healthy standalone rollout.
-- Router can read active intent registry either from admin-owned storage or from the mounted JSON catalog file, and refreshes cache periodically.
+- Router can read active intent registry from the mounted JSON catalog file, and refreshes cache periodically.
 - Ingress should keep sticky affinity for SSE sessions when router is scaled.
 
 ## Perf Overlay
 
 - `scripts/minikube_deploy_intent.sh` still deploys the default manifests one file at a time. It does not apply overlays.
 - The perf-only deployment lives at `k8s/intent/overlays/perf` and should be applied separately with `kubectl apply -k k8s/intent/overlays/perf`.
-- The perf overlay is intended to be applied on top of the normal `intent` namespace deployment. It adds `router-api-test`, points `intent-admin-api` at `http://router-api-test.intent.svc.cluster.local:8000`, and scales all agent deployments in that namespace to `0`.
+- The perf overlay is intended to be applied on top of the normal `intent` namespace deployment. It adds `router-api-test` and scales all agent deployments in that namespace to `0`.
 - The perf overlay also adds `intent-fake-llm`, and `router-api-test` calls it through `ROUTER_LLM_API_BASE_URL=http://intent-fake-llm.intent.svc.cluster.local:8000/v1`.
 - `router-api-test` still mounts the intent catalog from an overlay-generated ConfigMap, so it does not depend on `.env.local` for the perf target itself.
 - The normal deployment path stays unchanged until you explicitly apply the perf overlay. A practical sequence is: deploy the base stack first, then apply the overlay before running ladder tests.

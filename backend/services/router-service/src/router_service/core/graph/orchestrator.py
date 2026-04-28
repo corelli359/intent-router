@@ -204,10 +204,6 @@ class GraphRouterOrchestrator:
             session_business_limit=self.config.session_business_limit,
         )
 
-    def create_session(self, cust_id: str, session_id: str | None = None) -> GraphSessionState:
-        """Create a new graph session in the backing session store."""
-        return self.session_store.create(cust_id=cust_id, session_id=session_id)
-
     def snapshot(self, session_id: str) -> GraphRouterSnapshot:
         """Build a deep-enough read snapshot safe for API exposure."""
         session = self.session_store.get(session_id)
@@ -274,7 +270,7 @@ class GraphRouterOrchestrator:
         task_id: str,
         completion_signal: int,
         emit_events: bool,
-    ) -> None:
+    ) -> bool:
         """Apply one assistant-originated completion signal to a live task/node."""
         if completion_signal not in {1, 2}:
             raise ValueError(f"Unsupported completionSignal: {completion_signal}")
@@ -293,7 +289,7 @@ class GraphRouterOrchestrator:
         if completion_state < 2:
             await self._refresh_graph_state(session, graph)
             await self._emit_graph_progress(session)
-            return
+            return False
 
         if task is not None and task.status in {
             TaskStatus.DISPATCHING,
@@ -329,18 +325,7 @@ class GraphRouterOrchestrator:
             )
         await self._refresh_graph_state(session, graph)
         await self._emit_graph_progress(session)
-        if graph.status not in {
-            GraphStatus.COMPLETED,
-            GraphStatus.PARTIALLY_COMPLETED,
-            GraphStatus.FAILED,
-            GraphStatus.CANCELLED,
-            GraphStatus.WAITING_USER_INPUT,
-            GraphStatus.WAITING_CONFIRMATION,
-            GraphStatus.WAITING_CONFIRMATION_NODE,
-            GraphStatus.WAITING_ASSISTANT_COMPLETION,
-            GraphStatus.READY_FOR_DISPATCH,
-        }:
-            await self._drain_graph(session, graph.source_message)
+        return True
 
     async def handle_user_message(
         self,
@@ -423,12 +408,14 @@ class GraphRouterOrchestrator:
         with self.event_publisher.event_scope(emit_events):
             async with self.session_store.session_lock(session_id):
                 session = self.session_store.get(session_id)
-                await self._apply_task_completion_signal(
+                completion_finalized = await self._apply_task_completion_signal(
                     session,
                     task_id=task_id,
                     completion_signal=completion_signal,
                     emit_events=emit_events,
                 )
+                if completion_finalized and session.current_graph is not None:
+                    await self._drain_graph(session, session.current_graph.source_message)
                 snapshot = self._finalize_handover_business(session)
                 if snapshot is None:
                     snapshot = self._build_session_dump(session)
@@ -447,12 +434,14 @@ class GraphRouterOrchestrator:
         with self.event_publisher.event_scope(emit_events):
             async with self.session_store.session_lock(session_id):
                 session = self.session_store.get(session_id)
-                await self._apply_task_completion_signal(
+                completion_finalized = await self._apply_task_completion_signal(
                     session,
                     task_id=task_id,
                     completion_signal=completion_signal,
                     emit_events=emit_events,
                 )
+                if completion_finalized and session.current_graph is not None:
+                    await self._drain_graph(session, session.current_graph.source_message)
                 serialized = self._finalize_handover_business_with(session, serializer)
                 if serialized is None:
                     serialized = serializer(session)
