@@ -8,7 +8,7 @@
 
 | ID | 场景 | 主接口 | 用户路径 | 必验状态 / SSE 帧 | 自动化现状 |
 |---|---|---|---|---|---|
-| S01 | 意图识别后立即推流 | `/api/v1/message` `stream=true` | `给小明转账` | 首个业务前置帧为 `intent_recognized`，`output.stage=intent_recognition` | 已覆盖 |
+| S01 | 意图识别后立即推流 | `/api/v1/message` `stream=true` | `给小明转账` | 首个业务前置帧为 `intent_recognized`，顶层 `stage=intent_recognition` | 已覆盖 |
 | S02 | 多轮提槽：首轮缺金额 | `/api/v1/message` `stream=true` | `给小明转账` | 识别帧后返回 `waiting_user_input`，保留 `payee_name=小明` | 已覆盖 |
 | S03 | 多轮提槽：补金额后等待助手确认 | `/api/v1/message` `stream=true` | 同一 `sessionId` 继续发 `200` | 返回 `waiting_assistant_completion`，不是 `completed` | 已覆盖 |
 | S04 | 多轮槽位覆盖 / 纠错 | `/api/v1/message` `stream=true` | `我要转账` -> `小刚` -> `小红吧` -> `200` | 最终槽位必须是 `payee_name=小红, amount=200` | 已有非流覆盖，需补流式 |
@@ -51,7 +51,7 @@ pytest backend/tests/test_router_api_v2.py \
 当前基线结果：
 
 ```text
-41 passed
+42 passed
 ```
 
 可选语法检查：
@@ -73,14 +73,14 @@ python -m compileall -q backend/services/router-service/src \
 识别结果帧：
 
 ```text
-payload.output.stage == "intent_recognition"
+payload.stage == "intent_recognition"
 payload.completion_reason == "intent_recognized"
 ```
 
 业务状态帧：
 
 ```text
-payload.output.stage != "intent_recognition"
+payload.stage != "intent_recognition"
 ```
 
 结束帧：
@@ -172,11 +172,12 @@ curl -N http://127.0.0.1:8000/api/v1/message \
   "intent_code": "AG_TRANS",
   "completion_state": 0,
   "completion_reason": "intent_recognized",
-  "output": {
-    "stage": "intent_recognition",
+  "stage": "intent_recognition",
+  "details": {
     "primary": [{"intent_code": "AG_TRANS"}],
     "candidates": []
-  }
+  },
+  "output": {}
 }
 ```
 

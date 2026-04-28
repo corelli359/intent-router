@@ -93,7 +93,39 @@ POST /api/v1/task/completion
 }
 ```
 
-### 3.3 当前版本的核心状态
+### 3.3 意图识别帧
+
+意图识别完成后的 SSE 帧用顶层 `stage` 标识，不占用 `output`：
+
+```json
+{
+  "ok": true,
+  "status": "running",
+  "intent_code": "AG_TRANS",
+  "completion_state": 0,
+  "completion_reason": "intent_recognized",
+  "stage": "intent_recognition",
+  "details": {
+    "primary": [{"intent_code": "AG_TRANS"}],
+    "candidates": []
+  },
+  "output": {}
+}
+```
+
+### 3.4 `task_list` 生命周期
+
+`task_list[].name` 是助手后续可回传的任务标识，当前为 `task_xxx`。`task_list[].status` 是任务生命周期粗状态，只使用：
+
+- `waiting`
+- `running`
+- `completed`
+- `failed`
+- `cancelled`
+
+当前轮的细状态看顶层 `status` 和 `completion_reason`，例如 `waiting_user_input`、`waiting_assistant_completion`。
+
+### 3.5 当前版本的核心状态
 
 | 场景 | 顶层 `status` | 顶层 `completion_state` | 顶层 `completion_reason` |
 |---|---|---:|---|

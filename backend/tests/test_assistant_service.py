@@ -55,8 +55,7 @@ def _message_payloads(raw_text: str) -> list[dict[str, object]]:
 
 
 def _is_recognition_payload(payload: dict[str, object]) -> bool:
-    output = payload.get("output")
-    return isinstance(output, dict) and output.get("stage") == "intent_recognition"
+    return payload.get("stage") == "intent_recognition"
 
 
 def _non_recognition_payloads(payloads: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -572,6 +571,9 @@ def test_assistant_service_end_to_end_stream_with_real_router_app() -> None:
         recognition_payload = waiting_message_payloads[0]
         assert recognition_payload["completion_reason"] == "intent_recognized"
         assert recognition_payload["intent_code"] == "AG_TRANS"
+        assert recognition_payload["stage"] == "intent_recognition"
+        assert recognition_payload["output"] == {}
+        assert recognition_payload["details"]["primary"][0]["intent_code"] == "AG_TRANS"
         waiting_payload = _non_recognition_payloads(waiting_message_payloads)[0]
         assert waiting_payload["status"] == "waiting_user_input"
         assert waiting_payload["completion_state"] == 0

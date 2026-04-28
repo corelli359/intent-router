@@ -35,7 +35,7 @@ class MessageExecutionMode(StrEnum):
 
 
 class AssistantOutputResponse(BaseModel):
-    """Assistant-facing v0.4 response envelope."""
+    """Assistant-facing v0.5 response envelope."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -457,7 +457,7 @@ def _assistant_output_template(
     stage: str | None = None,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the stable assistant-facing v0.4 payload shared by JSON and SSE responses."""
+    """Build the stable assistant-facing v0.5 payload shared by JSON and SSE responses."""
     response_payload: dict[str, Any] = {
         "current_task": current_task,
         "task_list": list(task_list or []),
@@ -484,7 +484,7 @@ def _assistant_output_from_node(
     graph: ExecutionGraphState | None,
     message: str,
 ) -> dict[str, Any]:
-    """Build the assistant-facing v0.4 payload from live graph/node runtime objects."""
+    """Build the assistant-facing v0.5 payload from live graph/node runtime objects."""
     agent_output = dict(getattr(node, "_agent_output", {}) or {})
     slot_memory = dict(node.slot_memory)
     status = _assistant_effective_status(
@@ -652,8 +652,9 @@ def _assistant_output_from_recognition_event(event: TaskEvent) -> dict[str, Any]
         completion_state=0,
         completion_reason="intent_recognized",
         message=event.message or ("意图识别完成" if intent_code else "暂未识别到明确意图"),
-        output={
-            "stage": "intent_recognition",
+        output={},
+        stage="intent_recognition",
+        details={
             "primary": primary,
             "candidates": candidates,
         },
@@ -661,7 +662,7 @@ def _assistant_output_from_recognition_event(event: TaskEvent) -> dict[str, Any]
 
 
 def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
-    """Translate one internal router task event into the assistant-facing v0.4 SSE payload."""
+    """Translate one internal router task event into the assistant-facing v0.5 SSE payload."""
     payload = dict(event.payload or {})
     agent_output = payload.get("agent_output")
     if not isinstance(agent_output, dict):
@@ -751,7 +752,7 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
 
 
 def _assistant_output_payload(session: object) -> dict[str, Any]:
-    """Build the assistant-facing v0.4 payload from live router/session state."""
+    """Build the assistant-facing v0.5 payload from live router/session state."""
     graph = _response_graph(session)
     node = _response_node(session)
     if node is None:
@@ -831,7 +832,7 @@ async def _assistant_message_json_response(
     cust_id: str | None,
     orchestrator: GraphRouterOrchestrator,
 ) -> dict[str, Any]:
-    """Process one assistant-protocol turn and always return v0.4 top-level fields without snapshots."""
+    """Process one assistant-protocol turn and always return v0.5 top-level fields without snapshots."""
     resolved_cust_id = _resolve_session_cust_id(orchestrator, session_id, cust_id)
     upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(config_variables)
     try:
@@ -1007,7 +1008,7 @@ async def _assistant_task_completion_json_response(
     request: TaskCompletionRequest,
     orchestrator: GraphRouterOrchestrator,
 ) -> dict[str, Any]:
-    """Process one assistant task-completion callback and return the non-stream v0.4 payload."""
+    """Process one assistant task-completion callback and return the non-stream v0.5 payload."""
     serialized_handler = getattr(orchestrator, "handle_task_completion_serialized", None)
     if callable(serialized_handler):
         serialized_response = await serialized_handler(

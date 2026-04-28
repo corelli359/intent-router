@@ -88,8 +88,7 @@ def _message_payloads(raw_text: str) -> list[dict[str, object]]:
 
 
 def _is_recognition_payload(payload: dict[str, object]) -> bool:
-    output = payload.get("output")
-    return isinstance(output, dict) and output.get("stage") == "intent_recognition"
+    return payload.get("stage") == "intent_recognition"
 
 
 def _non_recognition_payloads(payloads: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -2361,8 +2360,9 @@ def test_v1_message_stream_assistant_protocol_waiting_then_completed() -> None:
         assert recognition_payload["completion_reason"] == "intent_recognized"
         assert recognition_payload["intent_code"] == "AG_TRANS"
         assert recognition_payload["message"] == "意图识别完成: AG_TRANS"
-        assert recognition_payload["output"]["stage"] == "intent_recognition"
-        assert recognition_payload["output"]["primary"][0]["intent_code"] == "AG_TRANS"
+        assert recognition_payload["stage"] == "intent_recognition"
+        assert recognition_payload["details"]["primary"][0]["intent_code"] == "AG_TRANS"
+        assert recognition_payload["output"] == {}
         waiting_payload = _non_recognition_payloads(waiting_message_payloads)[0]
         assert waiting_payload["status"] == "waiting_user_input"
         assert waiting_payload["completion_state"] == 0
@@ -2534,7 +2534,8 @@ def test_v1_message_stream_assistant_protocol_emits_graph_level_pending_payload(
         message_payloads = _message_payloads(stream_text)
         recognition_payload = message_payloads[0]
         assert recognition_payload["completion_reason"] == "intent_recognized"
-        assert recognition_payload["output"]["stage"] == "intent_recognition"
+        assert recognition_payload["stage"] == "intent_recognition"
+        assert recognition_payload["output"] == {}
         state_payloads = _non_recognition_payloads(message_payloads)
         assert len(state_payloads) == 1
         assert json_response.status_code == 200
@@ -2593,7 +2594,9 @@ def test_v1_message_stream_assistant_protocol_preserves_agent_workflow_frames() 
         message_payloads = _message_payloads(stream_text)
         recognition_payload = message_payloads[0]
         assert recognition_payload["completion_reason"] == "intent_recognized"
-        assert recognition_payload["output"]["primary"][0]["intent_code"] == "AG_TRANS"
+        assert recognition_payload["stage"] == "intent_recognition"
+        assert recognition_payload["details"]["primary"][0]["intent_code"] == "AG_TRANS"
+        assert recognition_payload["output"] == {}
         state_payloads = _non_recognition_payloads(message_payloads)
         assert [payload["output"]["node_id"] for payload in state_payloads] == [
             "validate_payee",
@@ -2607,10 +2610,16 @@ def test_v1_message_stream_assistant_protocol_preserves_agent_workflow_frames() 
         assert state_payloads[0]["status"] == "running"
         assert state_payloads[0]["completion_state"] == 0
         assert state_payloads[0]["message"] == ""
+        assert state_payloads[0]["task_list"] == [
+            {"name": state_payloads[0]["current_task"], "status": "running"}
+        ]
         assert state_payloads[1]["status"] == "waiting_assistant_completion"
         assert state_payloads[1]["completion_state"] == 1
         assert state_payloads[1]["completion_reason"] == "assistant_confirmation_required"
         assert state_payloads[1]["message"] == "执行图等待助手确认完成态"
+        assert state_payloads[1]["task_list"] == [
+            {"name": state_payloads[1]["current_task"], "status": "waiting"}
+        ]
         assert state_payloads[1]["output"]["data"][0]["answer"] == "||200|小明|"
 
     asyncio.run(run())
