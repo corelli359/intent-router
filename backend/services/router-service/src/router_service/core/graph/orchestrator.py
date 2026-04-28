@@ -340,6 +340,8 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         upstream_config_variables: dict[str, Any] | None = None,
         upstream_slots_data: dict[str, Any] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[dict[str, Any]] | None = None,
         return_snapshot: bool = True,
         emit_events: bool = True,
     ) -> GraphRouterSnapshot | None:
@@ -375,6 +377,10 @@ class GraphRouterOrchestrator:
                             message_flow_kwargs["upstream_config_variables"] = upstream_config_variables
                         if upstream_slots_data is not None:
                             message_flow_kwargs["upstream_slots_data"] = upstream_slots_data
+                        if recommend_task is not None:
+                            message_flow_kwargs["recommend_task"] = recommend_task
+                        if current_display is not None:
+                            message_flow_kwargs["current_display"] = current_display
                         await self.message_flow.handle_user_message(
                             session_id,
                             cust_id,
@@ -461,6 +467,8 @@ class GraphRouterOrchestrator:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         upstream_config_variables: dict[str, Any] | None = None,
         upstream_slots_data: dict[str, Any] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[dict[str, Any]] | None = None,
         emit_events: bool = False,
     ) -> SerializedResponseT:
         """Process one user message and serialize the response while the session is still locked."""
@@ -495,6 +503,10 @@ class GraphRouterOrchestrator:
                             message_flow_kwargs["upstream_config_variables"] = upstream_config_variables
                         if upstream_slots_data is not None:
                             message_flow_kwargs["upstream_slots_data"] = upstream_slots_data
+                        if recommend_task is not None:
+                            message_flow_kwargs["recommend_task"] = recommend_task
+                        if current_display is not None:
+                            message_flow_kwargs["current_display"] = current_display
                         await self.message_flow.handle_user_message(
                             session_id,
                             cust_id,
@@ -662,6 +674,7 @@ class GraphRouterOrchestrator:
         *,
         recent_messages: list[str],
         long_term_memory: list[str],
+        recommend_task: list[dict[str, Any]] | None = None,
         emit_events: bool,
     ) -> Any:
         """Delegate message recognition into the understanding service."""
@@ -670,6 +683,7 @@ class GraphRouterOrchestrator:
             content,
             recent_messages=recent_messages,
             long_term_memory=long_term_memory,
+            recommend_task=recommend_task,
             emit_events=emit_events,
         )
 
@@ -681,6 +695,7 @@ class GraphRouterOrchestrator:
         recent_messages: list[str],
         long_term_memory: list[str],
         recognition: RecognitionResult | None,
+        recommend_task: list[dict[str, Any]] | None = None,
         emit_events: bool,
     ) -> GraphBuildResult:
         """Delegate unified graph building into the understanding service."""
@@ -690,6 +705,7 @@ class GraphRouterOrchestrator:
             recent_messages=recent_messages,
             long_term_memory=long_term_memory,
             recognition=recognition,
+            recommend_task=recommend_task,
             emit_events=emit_events,
         )
 
@@ -1516,7 +1532,7 @@ class GraphRouterOrchestrator:
         task: Task | None = None,
     ) -> dict[str, Any]:
         """Build the context payload sent to downstream agents for one graph node."""
-        context = self._build_session_context(session, task=task)
+        context = self._build_session_context(session, task=task, include_request_context=False)
         context.update(
             {
                 "graph": self.presenter.graph_payload(graph),
@@ -1530,13 +1546,38 @@ class GraphRouterOrchestrator:
         )
         return context
 
-    def _build_session_context(self, session: GraphSessionState, task: Task | None = None) -> dict[str, Any]:
+    def _build_session_context(
+        self,
+        session: GraphSessionState,
+        task: Task | None = None,
+        *,
+        include_request_context: bool = True,
+    ) -> dict[str, Any]:
         """Assemble recent messages plus long-term memory for recognition and agents."""
         long_term_memory = self.session_store.long_term_memory.recall(
             session.cust_id,
             limit=self.config.memory_recall_limit,
         )
-        return self.context_builder.build_task_context(session, task=task, long_term_memory=long_term_memory)
+        recommend_task = (
+            session.recommend_task()
+            if include_request_context and hasattr(session, "recommend_task")
+            else None
+        )
+        current_display = None
+        if include_request_context and hasattr(session, "current_display"):
+            current_display_raw = session.current_display()
+            if current_display_raw is not None:
+                current_display = [
+                    f"[CURRENT_DISPLAY] {msg.get('role', 'user')}: {msg.get('content', '')}"
+                    for msg in current_display_raw
+                ]
+        return self.context_builder.build_task_context(
+            session,
+            task=task,
+            long_term_memory=long_term_memory,
+            recommend_task=recommend_task,
+            current_display=current_display,
+        )
 
     def _recent_messages_without_current_turn(
         self,

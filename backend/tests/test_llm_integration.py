@@ -104,6 +104,13 @@ def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
                 candidate_threshold=0.6,
             ),
         ]
+        recommend_task = [
+            {
+                "intentCode": "pay_bill",
+                "title": "缴电费",
+                "slotMemory": {"amount": 100},
+            }
+        ]
         llm_client = FakeLangChainClient(
             recognition_response=IntentRecognitionPayload(
                 matches=[
@@ -127,10 +134,12 @@ def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
             intents=intents,
             recent_messages=["user: 你好"],
             long_term_memory=["常用收款人：张三"],
+            recommend_task=recommend_task,
         )
 
         assert llm_client.last_recognition_call is not None
         assert llm_client.last_recognition_call["model"] == "recognizer-model"
+        assert json.loads(llm_client.last_recognition_call["variables"]["recommend_task_json"]) == recommend_task
         first_intent_payload = json.loads(llm_client.last_recognition_call["variables"]["intents_json"])[0]
         assert "agent_url" not in first_intent_payload
         assert "request_schema" not in first_intent_payload
@@ -1331,7 +1340,12 @@ def test_streaming_agent_client_closes_owned_http_pool() -> None:
 
 def test_llm_graph_planner_converts_structured_payload_to_execution_graph() -> None:
     class FakePlannerClient:
+        def __init__(self) -> None:
+            self.variables: dict[str, Any] | None = None
+
         async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, model, on_delta
+            self.variables = dict(variables)
             return {
                 "summary": "识别到 2 个事项，先查余额，再转账",
                 "needs_confirmation": True,
@@ -1361,7 +1375,9 @@ def test_llm_graph_planner_converts_structured_payload_to_execution_graph() -> N
             }
 
     async def run() -> None:
-        planner = LLMIntentGraphPlanner(FakePlannerClient(), model="graph-planner-model")
+        client = FakePlannerClient()
+        planner = LLMIntentGraphPlanner(client, model="graph-planner-model")
+        recommend_task = [{"intentCode": "transfer_money", "title": "给张三转账"}]
         intents = {
             "query_account_balance": IntentDefinition(
                 intent_code="query_account_balance",
@@ -1387,8 +1403,11 @@ def test_llm_graph_planner_converts_structured_payload_to_execution_graph() -> N
             intents_by_code=intents,
             recent_messages=[],
             long_term_memory=[],
+            recommend_task=recommend_task,
         )
 
+        assert client.variables is not None
+        assert json.loads(client.variables["recommend_task_json"]) == recommend_task
         assert graph.summary == "识别到 2 个事项，先查余额，再转账"
         assert [node.intent_code for node in graph.nodes] == ["query_account_balance", "transfer_money"]
         assert graph.nodes[1].slot_memory == {"recipient_name": "张三", "amount": "200"}

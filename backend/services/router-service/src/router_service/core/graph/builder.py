@@ -477,6 +477,7 @@ class LLMIntentGraphBuilder:
         recent_messages: list[str],
         long_term_memory: list[str],
         recognition: RecognitionResult | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
         on_delta: AsyncDeltaCallback | None = None,
     ) -> GraphBuildResult:
         """Build a graph from one message, degrading to legacy recognize+plan when needed."""
@@ -494,6 +495,7 @@ class LLMIntentGraphBuilder:
                 prompt=self.prompt,
                 variables={
                     "message": message,
+                    "recommend_task_json": json_dumps(recommend_task or []),
                     "recent_messages_json": json_dumps(recent_messages),
                     "long_term_memory_json": json_dumps(long_term_memory),
                     "recognition_hint_json": json_dumps(

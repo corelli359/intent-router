@@ -35,6 +35,7 @@ def test_recognizer_prompt_explicitly_prevents_single_action_over_split() -> Non
 
     messages = prompt.format_messages(
         message="我要给我弟弟转500",
+        recommend_task_json="[]",
         recent_messages_json="[]",
         long_term_memory_json="[]",
         intents_json="[]",
@@ -45,6 +46,7 @@ def test_recognizer_prompt_explicitly_prevents_single_action_over_split() -> Non
     assert "routing_examples" in messages[0].content
     assert "field_catalog" in messages[0].content
     assert "我要给我弟弟转500" in messages[1].content
+    assert "推荐任务(JSON)" in messages[1].content
     assert "已注册意图清单" in messages[1].content
 
 
@@ -93,6 +95,7 @@ def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
 
     messages = prompt.format_messages(
         message="帮我查一下余额，如果超过5000，就跟我媳妇儿转1000",
+        recommend_task_json="[]",
         recent_messages_json="[]",
         long_term_memory_json="[]",
         matched_intents_json="[]",
@@ -103,6 +106,7 @@ def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
     assert "field_catalog、slot_schema 和 graph_build_hints" in messages[0].content
     assert "field_code、role、semantic_definition" in messages[0].content
     assert "条件阈值只能进入 edge.condition.right_value" in messages[0].content
+    assert "推荐任务(JSON)" in messages[1].content
     assert "summary" in messages[1].content
     assert '"slot_memory": {}' in messages[1].content
     assert '"slot_bindings"' in messages[1].content
@@ -158,6 +162,7 @@ def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
 
     messages = prompt.format_messages(
         message="帮我查一下余额，如果超过5000，就给我媳妇儿转1000",
+        recommend_task_json="[]",
         recent_messages_json="[]",
         long_term_memory_json='["历史上收款人常见为我媳妇儿"]',
         recognition_hint_json="null",
@@ -170,6 +175,7 @@ def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
     assert "field_catalog" in messages[0].content
     assert "请尽量输出 node.slot_bindings" in messages[0].content
     assert "条件阈值只能进入 edge.condition.right_value" in messages[0].content
+    assert "推荐任务(JSON)" in messages[1].content
     assert '"primary_intents"' in messages[1].content
     assert '"candidate_intents"' in messages[1].content
     assert '"edges"' in messages[1].content
@@ -184,6 +190,7 @@ def test_v2_graph_planner_prompt_requires_tail_payee_and_amount_on_same_node() -
 
     messages = prompt.format_messages(
         message="我要转壹贰叁肆给姐姐",
+        recommend_task_json="[]",
         recent_messages_json="[]",
         long_term_memory_json="[]",
         matched_intents_json="[]",

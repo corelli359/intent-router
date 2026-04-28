@@ -84,6 +84,8 @@ class ProtocolMessageRequest(BaseModel):
     execution_mode: MessageExecutionMode = Field(default=MessageExecutionMode.EXECUTE, alias="executionMode")
     cust_id: str | None = Field(default=None, alias="custId")
     stream: bool = True
+    recommend_task: list[dict[str, Any]] | None = Field(default=None, alias="recommendTask")
+    current_display: list[dict[str, Any]] | None = Field(default=None, alias="currentDisplay")
 
     @model_validator(mode="after")
     def normalize(self) -> "ProtocolMessageRequest":
@@ -830,6 +832,8 @@ async def _assistant_message_json_response(
     execution_mode: MessageExecutionMode,
     config_variables: list[ConfigVariableInput],
     cust_id: str | None,
+    recommend_task: list[dict[str, Any]] | None,
+    current_display: list[dict[str, Any]] | None,
     orchestrator: GraphRouterOrchestrator,
 ) -> dict[str, Any]:
     """Process one assistant-protocol turn and always return v0.5 top-level fields without snapshots."""
@@ -847,6 +851,8 @@ async def _assistant_message_json_response(
                 router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 upstream_config_variables=upstream_config_variables,
                 upstream_slots_data=upstream_slots_data,
+                recommend_task=recommend_task,
+                current_display=current_display,
                 emit_events=False,
             )
             return _assistant_response_dict(serialized_response)
@@ -858,6 +864,8 @@ async def _assistant_message_json_response(
             router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
             upstream_config_variables=upstream_config_variables,
             upstream_slots_data=upstream_slots_data,
+            recommend_task=recommend_task,
+            current_display=current_display,
             return_snapshot=False,
             emit_events=False,
         )
@@ -902,6 +910,8 @@ def _assistant_message_stream_response(
     execution_mode: MessageExecutionMode,
     config_variables: list[ConfigVariableInput],
     cust_id: str | None,
+    recommend_task: list[dict[str, Any]] | None,
+    current_display: list[dict[str, Any]] | None,
     http_request: Request,
     orchestrator: GraphRouterOrchestrator,
     broker: EventBroker,
@@ -921,6 +931,8 @@ def _assistant_message_stream_response(
                 router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
                 upstream_config_variables=upstream_config_variables,
                 upstream_slots_data=upstream_slots_data,
+                recommend_task=recommend_task,
+                current_display=current_display,
                 return_snapshot=False,
                 emit_events=True,
             )
@@ -1139,6 +1151,8 @@ async def post_protocol_message(
             execution_mode=request.execution_mode,
             config_variables=request.config_variables,
             cust_id=request.cust_id,
+            recommend_task=request.recommend_task,
+            current_display=request.current_display,
             http_request=http_request,
             orchestrator=orchestrator,
             broker=broker,
@@ -1149,6 +1163,8 @@ async def post_protocol_message(
         execution_mode=request.execution_mode,
         config_variables=request.config_variables,
         cust_id=request.cust_id,
+        recommend_task=request.recommend_task,
+        current_display=request.current_display,
         orchestrator=orchestrator,
     )
 
