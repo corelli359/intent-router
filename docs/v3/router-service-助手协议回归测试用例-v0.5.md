@@ -321,13 +321,34 @@ curl -N http://127.0.0.1:8000/api/v1/message \
 - 缺槽时返回 `waiting_user_input`。
 - 槽位齐全时返回 `ready_for_dispatch`。
 - `completion_reason="router_ready_for_dispatch"`。
-- `output={}`。
+- `output` 为非空合成块，至少包含 `ishandover=true` 和 `handOverReason="router_only_ready_for_dispatch"`。
 - agent 调用次数为 0。
 
 补充自动化要求：
 
 - 当前已有非流式断言：`backend/tests/test_router_api_v2.py::test_v1_message_router_only_keeps_latest_payee_across_multiple_waiting_turns`
-- 需要新增 `stream=true` 版本。
+- 当前已有流式断言：`backend/tests/test_router_api_v2.py::test_v1_message_stream_router_only_ready_marks_handover`
+
+### TC-S04B Agent 空 output 交接后路由兜底
+
+目的：明确 `ishandover=true` 且 `output={}` 不是正常完成结果，而是当前业务 Agent 无法完成任务，需要 Router 路由兜底智能体。
+
+前置：
+
+- catalog 中配置 fallback intent。
+- 业务 Agent 返回终态 `ishandover=true`，但 `output={}`。
+
+期望：
+
+- Router 不把空输出作为正常业务结果返回上游。
+- Router 复用当前 `taskId` 调用 fallback agent。
+- 最终业务帧的 `intent_code` 为 fallback intent。
+- 最终业务帧的 `output` 来自 fallback agent，且不为空。
+
+自动化覆盖：
+
+- `backend/tests/test_router_api_v2.py::test_v1_message_empty_handover_output_routes_to_fallback_agent`
+- `backend/tests/test_router_api_v2.py::test_v1_message_stream_empty_handover_output_routes_to_fallback_agent`
 
 ### TC-S05 Agent 工作流多帧透传
 

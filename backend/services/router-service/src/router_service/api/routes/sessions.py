@@ -396,6 +396,20 @@ def _assistant_agent_output(agent_output: dict[str, Any] | None) -> dict[str, An
     return normalized_output
 
 
+def _assistant_router_only_output(*, status: str) -> dict[str, Any]:
+    """Expose the router-only handover marker at the assistant protocol boundary."""
+    normalized_output: dict[str, Any] = {}
+    if status == "ready_for_dispatch":
+        normalized_output.update(
+            {
+                "ishandover": True,
+                "handOverReason": "router_only_ready_for_dispatch",
+                "message": "Router 已完成识别和槽位校验，当前为 router_only 模式，未调用执行 agent",
+            }
+        )
+    return normalized_output
+
+
 def _assistant_completion_fields(
     *,
     status: str,
@@ -521,7 +535,11 @@ def _assistant_output_from_node(
             fallback="",
         ),
         slot_memory=slot_memory,
-        output=_assistant_agent_output(agent_output),
+        output=(
+            _assistant_router_only_output(status=status)
+            if status == "ready_for_dispatch"
+            else _assistant_agent_output(agent_output)
+        ),
     )
 
 
@@ -627,7 +645,7 @@ def _assistant_output_from_graph_payload(
             fallback=message,
         ),
         slot_memory=slot_memory,
-        output={},
+        output=_assistant_router_only_output(status=status),
     )
 
 
@@ -749,7 +767,11 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
             fallback="",
         ),
         slot_memory=slot_memory,
-        output=_assistant_agent_output(agent_output),
+        output=(
+            _assistant_router_only_output(status=status)
+            if status == "ready_for_dispatch"
+            else _assistant_agent_output(agent_output)
+        ),
     )
 
 

@@ -960,7 +960,16 @@ class GraphRouterOrchestrator:
             try:
                 async with asyncio.timeout(self.config.agent_timeout_seconds):
                     async for chunk in self.agent_client.stream(task, effective_user_input):
-                        await self._handle_agent_chunk(session, graph, node, task, chunk)
+                        should_stop = await self._handle_agent_chunk(
+                            session,
+                            graph,
+                            node,
+                            task,
+                            chunk,
+                            source_input=effective_user_input,
+                        )
+                        if should_stop:
+                            break
             except TimeoutError:
                 await self._fail_node(
                     session,
@@ -983,8 +992,7 @@ class GraphRouterOrchestrator:
         dispatch_input: str,
     ) -> Task | None:
         """Validate slot readiness and create the agent task for a ready node."""
-        active_intents = self.intent_catalog.active_intents_by_code()
-        intent = active_intents.get(node.intent_code)
+        intent = self._intent_for_dispatch(node.intent_code)
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
 
@@ -1047,8 +1055,7 @@ class GraphRouterOrchestrator:
         dispatch_input: str,
     ) -> bool:
         """Validate router understanding and stop once the node is ready to dispatch."""
-        active_intents = self.intent_catalog.active_intents_by_code()
-        intent = active_intents.get(node.intent_code)
+        intent = self._intent_for_dispatch(node.intent_code)
         if intent is None:
             raise ValueError(f"Intent {node.intent_code} is no longer active")
 
@@ -1077,8 +1084,20 @@ class GraphRouterOrchestrator:
         node: GraphNodeState,
         task: Task,
         chunk: Any,
-    ) -> None:
+        *,
+        source_input: str = "",
+    ) -> bool:
         """Project each streamed agent chunk back into node/session/graph state."""
+        if await self._route_empty_handover_to_fallback(
+            session,
+            graph,
+            node,
+            task,
+            chunk,
+            source_input=source_input,
+        ):
+            return True
+
         raw_task_status = chunk.status
         node.slot_memory = dict(task.slot_memory)
         node.output_payload = dict(chunk.payload)
@@ -1133,6 +1152,88 @@ class GraphRouterOrchestrator:
         }:
             await self._refresh_graph_state(session, graph)
             await self._emit_graph_progress(session)
+        return False
+
+    async def _route_empty_handover_to_fallback(
+        self,
+        session: GraphSessionState,
+        graph: ExecutionGraphState,
+        node: GraphNodeState,
+        task: Task,
+        chunk: Any,
+        *,
+        source_input: str,
+    ) -> bool:
+        """Route an explicit empty handover from a business agent to the fallback agent."""
+        if not self._requires_fallback_agent(chunk):
+            return False
+        fallback_intent = self._fallback_intent()
+        if fallback_intent is None or task.intent_code == fallback_intent.intent_code:
+            return False
+
+        original_intent_code = task.intent_code
+        original_agent_url = task.agent_url
+        node.intent_code = fallback_intent.intent_code
+        node.title = fallback_intent.name or node.title
+        node.output_payload = {
+            "fallback_from_intent_code": original_intent_code,
+            "fallback_from_agent_url": original_agent_url,
+            "fallback_reason": "empty_agent_handover_output",
+        }
+        task.intent_code = fallback_intent.intent_code
+        task.agent_url = fallback_intent.agent_url
+        task.intent_name = fallback_intent.name
+        task.intent_description = fallback_intent.description
+        task.intent_examples = list(fallback_intent.examples)
+        task.request_schema = dict(fallback_intent.request_schema)
+        task.field_mapping = dict(fallback_intent.field_mapping)
+        task.input_context = self._build_graph_task_context(session, graph=graph, task=task)
+        task.input_context.update(
+            {
+                "graph_id": graph.graph_id,
+                "graph_version": graph.version,
+                "node_id": node.node_id,
+                "source_input": source_input,
+                "initial_source_input": node.source_fragment or graph.source_message,
+                "fallback_from_intent_code": original_intent_code,
+                "fallback_from_agent_url": original_agent_url,
+                "fallback_reason": "empty_agent_handover_output",
+            }
+        )
+
+        message = f"事项 {original_intent_code} 返回空交接结果，已切换到兜底智能体"
+        task.touch(TaskStatus.DISPATCHING)
+        node.touch(GraphNodeStatus.RUNNING, blocking_reason=message)
+        graph.touch(GraphStatus.RUNNING)
+        await self._publish_node_state(session, graph, node, task.status, "node.dispatching", message)
+
+        task.touch(TaskStatus.RUNNING)
+        await self._publish_node_state(session, graph, node, task.status, "node.running", "兜底智能体执行中")
+
+        async for fallback_chunk in self.agent_client.stream(task, source_input):
+            if await self._handle_agent_chunk(
+                session,
+                graph,
+                node,
+                task,
+                fallback_chunk,
+                source_input=source_input,
+            ):
+                break
+        return True
+
+    def _requires_fallback_agent(self, chunk: Any) -> bool:
+        """Return whether an agent explicitly handed over with an empty output block."""
+        output = getattr(chunk, "output", None)
+        if not isinstance(output, dict):
+            return False
+        assistant_output = dict(output)
+        assistant_output.pop("slot_memory", None)
+        return (
+            getattr(chunk, "ishandover", False) is True
+            and getattr(chunk, "status", None) == TaskStatus.COMPLETED
+            and not assistant_output
+        )
 
     async def _fail_node(
         self,
@@ -1609,6 +1710,16 @@ class GraphRouterOrchestrator:
         if getter is None:
             return None
         return getter()
+
+    def _intent_for_dispatch(self, intent_code: str) -> IntentDefinition | None:
+        """Return an active business intent or the configured fallback intent for dispatch."""
+        intent = self.intent_catalog.active_intents_by_code().get(intent_code)
+        if intent is not None:
+            return intent
+        fallback_intent = self._fallback_intent()
+        if fallback_intent is not None and fallback_intent.intent_code == intent_code:
+            return fallback_intent
+        return None
 
     def _node_status_for_task_status(self, status: TaskStatus) -> GraphNodeStatus:
         """Delegate task-to-node status translation into the state-sync/runtime layers."""

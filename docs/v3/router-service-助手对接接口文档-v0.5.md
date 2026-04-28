@@ -81,9 +81,21 @@ POST /api/v1/task/completion
 
 都是 Router 汇总后的结果，助手必须以顶层字段判断当前任务是否真正结束。
 
-### 3.2 `output` 只放 Agent 原始输出
+### 3.2 `output` 与兜底语义
 
 `output` 只承载 Agent `node_output.output` 的内容；Router 自己的字段不塞进 `output`。
+
+例外：`executionMode=router_only` 不会调用 Agent。当 Router 已经完成识别和槽位校验并返回 `ready_for_dispatch` 时，会返回非空的合成输出块：
+
+```json
+{
+  "output": {
+    "ishandover": true,
+    "handOverReason": "router_only_ready_for_dispatch",
+    "message": "Router 已完成识别和槽位校验，当前为 router_only 模式，未调用执行 agent"
+  }
+}
+```
 
 如果 Agent 没有 `output`，Router 会返回：
 
@@ -92,6 +104,8 @@ POST /api/v1/task/completion
   "output": {}
 }
 ```
+
+当真实业务 Agent 返回 `ishandover=true` 且 `output={}` 时，Router 将其视为“当前 Agent 无法完成该任务”的明确交接信号；如果已配置兜底意图，Router 会复用当前 `taskId` 路由到兜底智能体继续执行。
 
 ### 3.3 意图识别帧
 
@@ -131,6 +145,7 @@ POST /api/v1/task/completion
 |---|---|---:|---|
 | 还在执行 | `running` | 0 | `running` |
 | 缺槽位等用户补充 | `waiting_user_input` | 0 | `router_waiting_user_input` |
+| router_only 已具备分发条件 | `ready_for_dispatch` | 0 | `router_ready_for_dispatch` |
 | Agent 已给出业务结果，等待助手确认 | `waiting_assistant_completion` | 1 | `assistant_confirmation_required` |
 | 助手确认最终完成 | `completed` | 2 | `assistant_final_done` |
 

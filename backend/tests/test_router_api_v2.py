@@ -177,6 +177,19 @@ def _ag_trans_intent() -> IntentDefinition:
     )
 
 
+def _fallback_general_intent() -> IntentDefinition:
+    return IntentDefinition(
+        intent_code="FALLBACK_GENERAL",
+        name="兜底智能体",
+        description="处理业务智能体无法完成的事项。",
+        examples=["帮我处理一下"],
+        keywords=[],
+        agent_url="http://test-agent/fallback",
+        dispatch_priority=1,
+        is_fallback=True,
+    )
+
+
 class _TransferOnlyRecognizer:
     async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
         del intents, recent_messages, long_term_memory, on_delta
@@ -376,6 +389,49 @@ class _TrailingTerminalChunkAgentClient:
             ishandover=True,
             status=TaskStatus.COMPLETED,
             payload={"phase": "settled"},
+        )
+
+    async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
+        del session_id, task_id, agent_url
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+class _EmptyHandoverThenFallbackAgentClient:
+    def __init__(self) -> None:
+        self.intent_codes: list[str] = []
+        self.task_ids: list[str] = []
+
+    async def stream(self, task: Task, user_input: str):
+        del user_input
+        self.intent_codes.append(task.intent_code)
+        self.task_ids.append(task.task_id)
+        if task.intent_code == "AG_TRANS":
+            yield AgentStreamChunk(
+                task_id=task.task_id,
+                event="final",
+                content="当前转账智能体无法完成该事项",
+                ishandover=True,
+                status=TaskStatus.COMPLETED,
+                output={},
+            )
+            return
+        yield AgentStreamChunk(
+            task_id=task.task_id,
+            event="final",
+            content="兜底智能体已接管该事项",
+            ishandover=True,
+            status=TaskStatus.COMPLETED,
+            output={
+                "message": "兜底智能体已接管该事项",
+                "completion_state": 2,
+                "completion_reason": "fallback_agent_done",
+                "ishandover": True,
+                "handOverReason": "business_agent_returned_empty_output",
+                "data": [{"answer": "兜底智能体已接管该事项"}],
+            },
         )
 
     async def cancel(self, session_id: str, task_id: str, agent_url: str | None = None) -> None:
@@ -1690,7 +1746,134 @@ def test_v1_message_router_only_keeps_latest_payee_across_multiple_waiting_turns
                 "payee_name": "小红",
                 "amount": "200",
             }
-            assert fourth_body["output"] == {}
+            assert fourth_body["output"]["ishandover"] is True
+            assert fourth_body["output"]["handOverReason"] == "router_only_ready_for_dispatch"
+            assert fourth_body["output"]["message"].startswith("Router 已完成识别和槽位校验")
+
+    asyncio.run(run())
+
+
+def test_v1_message_stream_router_only_ready_marks_handover() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            intents=[_ag_trans_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = "router_only_stream_handover_demo"
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "给小明转账200元",
+                    "stream": True,
+                    "executionMode": "router_only",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            ) as response:
+                stream_text = "".join([chunk async for chunk in response.aiter_text()])
+
+        frames = _parse_sse_frames(stream_text)
+        assert frames[-1] == ("done", "[DONE]")
+        state_payloads = _non_recognition_payloads(_message_payloads(stream_text))
+        assert len(state_payloads) == 1
+        assert state_payloads[0]["status"] == "ready_for_dispatch"
+        assert state_payloads[0]["completion_reason"] == "router_ready_for_dispatch"
+        assert state_payloads[0]["output"]["ishandover"] is True
+        assert state_payloads[0]["output"]["handOverReason"] == "router_only_ready_for_dispatch"
+        assert state_payloads[0]["output"]["message"].startswith("Router 已完成识别和槽位校验")
+
+    asyncio.run(run())
+
+
+def test_v1_message_empty_handover_output_routes_to_fallback_agent() -> None:
+    async def run() -> None:
+        agent_client = _EmptyHandoverThenFallbackAgentClient()
+        app, _ = _test_v2_app(
+            intents=[_ag_trans_intent(), _fallback_general_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/api/v1/message",
+                json={
+                    "sessionId": "empty_handover_routes_fallback_demo",
+                    "txt": "给小明转账200元",
+                    "stream": False,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": "empty_handover_routes_fallback_demo"},
+                    ],
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["status"] == "waiting_assistant_completion"
+        assert body["completion_state"] == 1
+        assert body["completion_reason"] == "assistant_confirmation_required"
+        assert body["intent_code"] == "FALLBACK_GENERAL"
+        assert body["current_task"].startswith("task_")
+        assert body["task_list"] == [{"name": body["current_task"], "status": "waiting"}]
+        assert body["output"]["message"] == "兜底智能体已接管该事项"
+        assert body["output"]["handOverReason"] == "business_agent_returned_empty_output"
+        assert agent_client.intent_codes == ["AG_TRANS", "FALLBACK_GENERAL"]
+        assert len(set(agent_client.task_ids)) == 1
+
+    asyncio.run(run())
+
+
+def test_v1_message_stream_empty_handover_output_routes_to_fallback_agent() -> None:
+    async def run() -> None:
+        agent_client = _EmptyHandoverThenFallbackAgentClient()
+        app, _ = _test_v2_app(
+            intents=[_ag_trans_intent(), _fallback_general_intent()],
+            recognizer=_TransferOnlyRecognizer(),
+            understanding_validator=_ContractTransferUnderstandingValidator(),
+            agent_client=agent_client,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": "stream_empty_handover_routes_fallback_demo",
+                    "txt": "给小明转账200元",
+                    "stream": True,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": "stream_empty_handover_routes_fallback_demo"},
+                    ],
+                },
+            ) as response:
+                stream_text = "".join([chunk async for chunk in response.aiter_text()])
+
+        frames = _parse_sse_frames(stream_text)
+        assert frames[-1] == ("done", "[DONE]")
+        state_payloads = _non_recognition_payloads(_message_payloads(stream_text))
+        assert state_payloads[-1]["status"] == "waiting_assistant_completion"
+        assert state_payloads[-1]["intent_code"] == "FALLBACK_GENERAL"
+        assert state_payloads[-1]["output"]["message"] == "兜底智能体已接管该事项"
+        assert state_payloads[-1]["output"]["handOverReason"] == "business_agent_returned_empty_output"
+        assert agent_client.intent_codes == ["AG_TRANS", "FALLBACK_GENERAL"]
+        assert len(set(agent_client.task_ids)) == 1
 
     asyncio.run(run())
 
