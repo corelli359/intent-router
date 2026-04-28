@@ -27,6 +27,7 @@ DEFAULT_RECOGNIZER_SYSTEM_PROMPT = (
 
 DEFAULT_RECOGNIZER_HUMAN_PROMPT = (
     "当前消息:\n{message}\n\n"
+    "推荐任务(JSON):\n{recommend_task_json}\n\n"
     "最近对话(JSON):\n{recent_messages_json}\n\n"
     "长期记忆(JSON):\n{long_term_memory_json}\n\n"
     "已注册意图清单(JSON):\n{intents_json}"
@@ -140,6 +141,7 @@ DEFAULT_GRAPH_PLANNER_SYSTEM_PROMPT = (
 
 DEFAULT_GRAPH_PLANNER_HUMAN_PROMPT = (
     "当前用户消息:\n{message}\n\n"
+    "推荐任务(JSON):\n{recommend_task_json}\n\n"
     "最近对话(JSON):\n{recent_messages_json}\n\n"
     "长期记忆(JSON):\n{long_term_memory_json}\n\n"
     "本轮已识别 intent(JSON):\n{matched_intents_json}\n\n"
@@ -220,6 +222,7 @@ DEFAULT_UNIFIED_GRAPH_BUILDER_SYSTEM_PROMPT = (
 
 DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT = (
     "当前用户消息:\n{message}\n\n"
+    "推荐任务(JSON):\n{recommend_task_json}\n\n"
     "最近对话(JSON):\n{recent_messages_json}\n\n"
     "长期记忆(JSON):\n{long_term_memory_json}\n\n"
     "已有识别提示(JSON，可为空):\n{recognition_hint_json}\n\n"

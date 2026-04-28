@@ -145,6 +145,8 @@ class GraphMessageFlow:
         proactive_recommendation: ProactiveRecommendationPayload | None = None,
         upstream_config_variables: dict[str, Any] | None = None,
         upstream_slots_data: dict[str, Any] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[dict[str, Any]] | None = None,
         return_snapshot: bool = True,
         emit_events: bool = False,
     ) -> GraphRouterSnapshot | None:
@@ -164,6 +166,8 @@ class GraphMessageFlow:
                 session.set_request_context(
                     config_variables=upstream_config_variables,
                     slots_data=upstream_slots_data,
+                    recommend_task=recommend_task,
+                    current_display=current_display,
                 )
             if session.current_graph is None and session.pending_graph is None:
                 session.restore_latest_suspended_business()
