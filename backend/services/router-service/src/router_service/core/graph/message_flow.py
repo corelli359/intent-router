@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 PLANNING_RECENT_MESSAGE_PREFIXES = (
     "user:",
     "[CURRENT_DISPLAY]",
+    "[RECOMMEND_TASK]",
     "[FRONTEND_RECOMMENDATION_CONTEXT]",
     "[PROACTIVE_RECOMMENDATION_CONTEXT]",
     "[PROACTIVE_RECOMMENDATION_SELECTION]",
@@ -47,6 +48,17 @@ TERMINAL_GRAPH_STATUSES = {
 
 BLOCKING_LLM_DIAGNOSTIC_CODES = {
     RouterDiagnosticCode.RECOGNIZER_LLM_FAILED,
+}
+
+CONTINUE_GRAPH_MESSAGES = {
+    "继续",
+    "继续执行",
+    "继续下一个",
+    "继续下一步",
+    "下一步",
+    "下一个",
+    "执行下一个",
+    "执行下一步",
 }
 
 
@@ -163,17 +175,21 @@ class GraphMessageFlow:
         ):
             session = self.session_store.get_or_create(session_id, cust_id)
             session.last_diagnostics = []
+            message_content = content.strip()
+            should_continue_current_graph = self._should_continue_current_graph(session, message_content)
+            effective_recommend_task = recommend_task
+            if effective_recommend_task is None and should_continue_current_graph and hasattr(session, "recommend_task"):
+                effective_recommend_task = session.recommend_task()
             if hasattr(session, "set_request_context"):
                 session.set_request_context(
                     config_variables=upstream_config_variables,
                     slots_data=upstream_slots_data,
-                    recommend_task=recommend_task,
+                    recommend_task=effective_recommend_task,
                     current_display=current_display,
                 )
             if session.current_graph is None and session.pending_graph is None:
                 session.restore_latest_suspended_business()
             session.router_only_mode = router_only
-            message_content = content.strip()
             display_content = message_content or self.graph_compiler.guided_selection_display_content(guided_selection)
             if display_content:
                 session.messages.append(ChatMessage(role="user", content=display_content))
@@ -217,6 +233,10 @@ class GraphMessageFlow:
                     )
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
+                if should_continue_current_graph:
+                    await self.drain_graph(session, message_content)
+                    return self.snapshot_session(session.session_id) if return_snapshot else None
+
                 await self.route_new_message(
                     session,
                     message_content,
@@ -245,6 +265,16 @@ class GraphMessageFlow:
                 session.active_node_id,
             )
             return self.snapshot_session(session.session_id) if return_snapshot else None
+
+    def _should_continue_current_graph(self, session: GraphSessionState, content: str) -> bool:
+        """Return whether this turn explicitly asks to continue the active graph."""
+        graph = session.current_graph
+        if graph is None or graph.status in TERMINAL_GRAPH_STATUSES:
+            return False
+        normalized = "".join(content.split())
+        if not normalized:
+            return False
+        return normalized in CONTINUE_GRAPH_MESSAGES
 
     async def handle_proactive_recommendation_turn(
         self,

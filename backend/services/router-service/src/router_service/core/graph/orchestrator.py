@@ -414,14 +414,12 @@ class GraphRouterOrchestrator:
         with self.event_publisher.event_scope(emit_events):
             async with self.session_store.session_lock(session_id):
                 session = self.session_store.get(session_id)
-                completion_finalized = await self._apply_task_completion_signal(
+                await self._apply_task_completion_signal(
                     session,
                     task_id=task_id,
                     completion_signal=completion_signal,
                     emit_events=emit_events,
                 )
-                if completion_finalized and session.current_graph is not None:
-                    await self._drain_graph(session, session.current_graph.source_message)
                 snapshot = self._finalize_handover_business(session)
                 if snapshot is None:
                     snapshot = self._build_session_dump(session)
@@ -440,14 +438,12 @@ class GraphRouterOrchestrator:
         with self.event_publisher.event_scope(emit_events):
             async with self.session_store.session_lock(session_id):
                 session = self.session_store.get(session_id)
-                completion_finalized = await self._apply_task_completion_signal(
+                await self._apply_task_completion_signal(
                     session,
                     task_id=task_id,
                     completion_signal=completion_signal,
                     emit_events=emit_events,
                 )
-                if completion_finalized and session.current_graph is not None:
-                    await self._drain_graph(session, session.current_graph.source_message)
                 serialized = self._finalize_handover_business_with(session, serializer)
                 if serialized is None:
                     serialized = serializer(session)
@@ -1299,9 +1295,12 @@ class GraphRouterOrchestrator:
                 node=node,
                 graph_source_message=graph.source_message,
                 current_message=current_message,
-                recent_messages=self._recent_messages_without_current_turn(
-                    session,
-                    current_message=current_message,
+                recent_messages=self.context_builder.append_recommend_task_messages(
+                    self._recent_messages_without_current_turn(
+                        session,
+                        current_message=current_message,
+                    ),
+                    session.recommend_task() if hasattr(session, "recommend_task") else None,
                 ),
                 long_term_memory=memory_candidates,
             )
