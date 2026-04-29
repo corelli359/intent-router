@@ -401,6 +401,7 @@ data:
       "intents": [
         {
           "intent_code": "AG_MENU_6",
+          "agent_id": "AG_MENU",
           "name": "生活服务",
           "description": "日常生活相关的非金融服务入口。",
           "domain_code": "ag_menu_6",
@@ -433,6 +434,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -441,6 +443,7 @@ data:
         },
         {
           "intent_code": "AG_PAYMENT",
+          "agent_id": "AG_PAYMENT",
           "name": "缴纳各种日常生活中的费用",
           "description": "生活缴费、账单支付等相关服务。",
           "domain_code": "ag_payment",
@@ -479,6 +482,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_PAYMENT",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -487,6 +491,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_8",
+          "agent_id": "AG_MENU",
           "name": "办理各种付款业务",
           "description": "各类支付付款功能办理。",
           "domain_code": "ag_menu_8",
@@ -521,6 +526,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -529,6 +535,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_9",
+          "agent_id": "AG_MENU",
           "name": "办理存款业务",
           "description": "各类存款产品办理。",
           "domain_code": "ag_menu_9",
@@ -563,6 +570,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -571,6 +579,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_10",
+          "agent_id": "AG_MENU",
           "name": "政务服务",
           "description": "政府相关便民服务。",
           "domain_code": "ag_menu_10",
@@ -607,6 +616,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -615,6 +625,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_11",
+          "agent_id": "AG_MENU",
           "name": "办理外汇业务",
           "description": "外汇买卖、结售汇、跨境汇款等服务。",
           "domain_code": "ag_menu_11",
@@ -651,6 +662,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -659,6 +671,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_12",
+          "agent_id": "AG_MENU",
           "name": "管理支付渠道",
           "description": "支付渠道设置、限额管理、快捷支付管理。",
           "domain_code": "ag_menu_12",
@@ -693,6 +706,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -701,6 +715,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_13",
+          "agent_id": "AG_MENU",
           "name": "购买投资理财类产品",
           "description": "各类理财产品购买服务。",
           "domain_code": "ag_menu_13",
@@ -735,6 +750,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -743,6 +759,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_14",
+          "agent_id": "AG_MENU",
           "name": "办理券商第三方存管开户",
           "description": "银证转账、第三方存管开户等服务。",
           "domain_code": "ag_menu_14",
@@ -777,6 +794,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -785,6 +803,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_15",
+          "agent_id": "AG_MENU",
           "name": "办理信用卡业务",
           "description": "信用卡全生命周期服务。",
           "domain_code": "ag_menu_15",
@@ -823,6 +842,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -831,6 +851,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_16",
+          "agent_id": "AG_MENU",
           "name": "查询消息待办",
           "description": "掌银消息、通知、待办查询。",
           "domain_code": "ag_menu_16",
@@ -865,6 +886,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -873,6 +895,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_17",
+          "agent_id": "AG_MENU",
           "name": "办理客户服务业务",
           "description": "客户信息管理、客户等级维护。",
           "domain_code": "ag_menu_17",
@@ -907,6 +930,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -915,6 +939,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_18",
+          "agent_id": "AG_MENU",
           "name": "查询账户信息",
           "description": "账户详细信息、交易流水查询。",
           "domain_code": "ag_menu_18",
@@ -949,6 +974,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -957,6 +983,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_19",
+          "agent_id": "AG_MENU",
           "name": "查看资产视图",
           "description": "资产负债总览、资产配置分析。",
           "domain_code": "ag_menu_19",
@@ -991,6 +1018,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -999,6 +1027,7 @@ data:
         },
         {
           "intent_code": "AG_TRANS",
+          "agent_id": "AG_TRANS",
           "name": "立即发起一笔转账交易",
           "description": "实时转账交易执行。",
           "domain_code": "ag_trans",
@@ -1008,13 +1037,21 @@ data:
             "发起转账",
             "我要转账",
             "转5000元给朋友",
-            "立即转账"
+            "立即转账",
+            "给小明转账",
+            "给王芳汇款200元",
+            "转200给欧阳娜娜",
+            "给我妈转两百"
           ],
           "routing_examples": [
             "发起转账",
             "我要转账",
             "转5000元给朋友",
-            "立即转账"
+            "立即转账",
+            "给小明转账",
+            "给王芳汇款200元",
+            "转200给欧阳娜娜",
+            "给我妈转两百"
           ],
           "agent_url": "http://intent-appointment-agent.intent.svc.cluster.local:8000/api/agent/run",
           "is_leaf_intent": true,
@@ -1047,12 +1084,14 @@ data:
             "config_variables.slots_data.payee_card_no": "$slot_memory.payee_card_no",
             "config_variables.slots_data.payee_card_remark": "$slot_memory.payee_card_remark",
             "config_variables.slots_data.payee_card_bank": "$slot_memory.payee_card_bank",
-            "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone"
+            "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone",
+            "agent_id": "AG_TRANS"
           },
           "resume_policy": "resume_same_task"
         },
         {
           "intent_code": "AG_MENU_21",
+          "agent_id": "AG_MENU",
           "name": "查询转账相关功能",
           "description": "转账记录查询、常用收款人管理。",
           "domain_code": "ag_menu_21",
@@ -1087,6 +1126,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1095,6 +1135,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_22",
+          "agent_id": "AG_MENU",
           "name": "管理APP设置",
           "description": "掌银APP个性化设置管理。",
           "domain_code": "ag_menu_22",
@@ -1131,6 +1172,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1139,6 +1181,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_23",
+          "agent_id": "AG_MENU",
           "name": "管理安全设置",
           "description": "账户安全、认证方式管理。",
           "domain_code": "ag_menu_23",
@@ -1175,6 +1218,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1183,6 +1227,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_24",
+          "agent_id": "AG_MENU",
           "name": "网点服务",
           "description": "物理网点查询、预约、导航。",
           "domain_code": "ag_menu_24",
@@ -1217,6 +1262,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1225,6 +1271,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_25",
+          "agent_id": "AG_MENU",
           "name": "查询存贷款利率",
           "description": "存贷款基准利率、LPR利率查询。",
           "domain_code": "ag_menu_25",
@@ -1259,6 +1306,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1267,6 +1315,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_26",
+          "agent_id": "AG_MENU",
           "name": "办理助农金融业务",
           "description": "三农金融服务、乡村振兴相关服务。",
           "domain_code": "ag_menu_26",
@@ -1301,6 +1350,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1309,6 +1359,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_27",
+          "agent_id": "AG_MENU",
           "name": "预约纪念币兑换",
           "description": "纪念币预约兑换服务。",
           "domain_code": "ag_menu_27",
@@ -1343,6 +1394,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1351,6 +1403,7 @@ data:
         },
         {
           "intent_code": "AG_ZIXUN",
+          "agent_id": "AG_ZIXUN",
           "name": "搜索金融市场新闻资讯",
           "description": "金融市场新闻、行情分析、财经资讯服务。",
           "domain_code": "ag_zixun",
@@ -1387,6 +1440,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_ZIXUN",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1395,6 +1449,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_29",
+          "agent_id": "AG_MENU",
           "name": "查找优惠活动与权益",
           "description": "掌银优惠活动、权益领取入口。",
           "domain_code": "ag_menu_29",
@@ -1431,6 +1486,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1439,6 +1495,7 @@ data:
         },
         {
           "intent_code": "AG_MENU_30",
+          "agent_id": "AG_MENU",
           "name": "查找掌银功能入口",
           "description": "掌银功能入口查找、智能导航。",
           "domain_code": "ag_menu_30",
@@ -1471,6 +1528,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1479,6 +1537,7 @@ data:
         },
         {
           "intent_code": "AG_MARKET",
+          "agent_id": "AG_MARKET",
           "name": "为用户提供营销活动权益领取使用相关服务",
           "description": "营销活动、权益领取使用相关服务。",
           "domain_code": "ag_market",
@@ -1515,6 +1574,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_MARKET",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1523,6 +1583,7 @@ data:
         },
         {
           "intent_code": "AG_PRODUCT_32",
+          "agent_id": "AG_PRODUCT",
           "name": "用户购买商品",
           "description": "掌银商城商品购买服务。",
           "domain_code": "ag_product_32",
@@ -1557,6 +1618,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_PRODUCT",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1565,6 +1627,7 @@ data:
         },
         {
           "intent_code": "AG_PRODUCT_33",
+          "agent_id": "AG_PRODUCT",
           "name": "用户查询商品特产",
           "description": "掌银商城商品查询、特产查找。",
           "domain_code": "ag_product_33",
@@ -1599,6 +1662,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_PRODUCT",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1607,6 +1671,7 @@ data:
         },
         {
           "intent_code": "AG_FUND",
+          "agent_id": "AG_FUND",
           "name": "基金产品推荐与购买",
           "description": "基金产品推荐、购买、定投及查询服务。",
           "domain_code": "ag_fund",
@@ -1643,6 +1708,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_FUND",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1651,6 +1717,7 @@ data:
         },
         {
           "intent_code": "AG_DIALOG_35",
+          "agent_id": "AG_DIALOG",
           "name": "问候与闲聊",
           "description": "闲聊、问候、非业务对话。",
           "domain_code": "ag_dialog_35",
@@ -1687,6 +1754,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_DIALOG",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1695,6 +1763,7 @@ data:
         },
         {
           "intent_code": "AG_DIALOG_36",
+          "agent_id": "AG_DIALOG",
           "name": "询问掌上银行服务范围",
           "description": "掌银功能介绍、服务范围说明、使用指导。",
           "domain_code": "ag_dialog_36",
@@ -1731,6 +1800,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_DIALOG",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1739,6 +1809,7 @@ data:
         },
         {
           "intent_code": "AG_CLIENTSERVICE_37",
+          "agent_id": "AG_CLIENTSERVICE",
           "name": "办理业务限制异常寻求帮助",
           "description": "业务办理异常、限制解除、人工客服。",
           "domain_code": "ag_clientservice_37",
@@ -1775,6 +1846,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_CLIENTSERVICE",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1783,6 +1855,7 @@ data:
         },
         {
           "intent_code": "AG_CLIENTSERVICE_38",
+          "agent_id": "AG_CLIENTSERVICE",
           "name": "使用掌银技术问题",
           "description": "掌银技术故障、系统问题人工支持。",
           "domain_code": "ag_clientservice_38",
@@ -1819,6 +1892,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_CLIENTSERVICE",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1827,6 +1901,7 @@ data:
         },
         {
           "intent_code": "AG_CLIENTSERVICE_39",
+          "agent_id": "AG_CLIENTSERVICE",
           "name": "金融业务安全问题咨询",
           "description": "账户安全、风险可疑、诈骗咨询。",
           "domain_code": "ag_clientservice_39",
@@ -1865,6 +1940,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_CLIENTSERVICE",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1873,6 +1949,7 @@ data:
         },
         {
           "intent_code": "AG_ASK",
+          "agent_id": "AG_ASK",
           "name": "意图澄清",
           "description": "多意图识别、意图不明确时的澄清处理。",
           "domain_code": "ag_ask",
@@ -1907,6 +1984,7 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
+            "agent_id": "AG_ASK",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1917,6 +1995,7 @@ data:
       "source_csv": "/root/intent-router/intent_table_from_updated_screenshot.csv",
       "exported_count": 35
     }
+
   slot-schemas.json: |
     {
       "slot_schemas": {
