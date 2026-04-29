@@ -44,6 +44,7 @@ class AssistantOutputResponse(BaseModel):
     task_list: list[dict[str, str]] = Field(default_factory=list)
     status: str = ""
     intent_code: str = ""
+    agent_id: str | None = None
     completion_state: int = 0
     completion_reason: str = ""
     slot_memory: dict[str, Any] = Field(default_factory=dict)
@@ -410,6 +411,23 @@ def _assistant_router_only_output(*, status: str) -> dict[str, Any]:
     return normalized_output
 
 
+def _assistant_agent_id(
+    *,
+    node_agent_id: object = None,
+    agent_output: dict[str, Any] | None = None,
+    has_agent_output: bool = False,
+) -> str | None:
+    """Return the top-level agent id only for responses backed by agent output."""
+    if not has_agent_output and not agent_output:
+        return None
+    if node_agent_id not in (None, ""):
+        return str(node_agent_id)
+    raw_agent_id = (agent_output or {}).get("agent_id")
+    if raw_agent_id in (None, ""):
+        return None
+    return str(raw_agent_id)
+
+
 def _assistant_completion_fields(
     *,
     status: str,
@@ -465,6 +483,7 @@ def _assistant_output_template(
     completion_state: int = 0,
     completion_reason: str = "",
     intent_code: str = "",
+    agent_id: str | None = None,
     message: str = "",
     slot_memory: dict[str, Any] | None = None,
     task_list: list[dict[str, str]] | None = None,
@@ -485,6 +504,8 @@ def _assistant_output_template(
         "message": message,
         "output": dict(output or {}),
     }
+    if agent_id not in (None, ""):
+        response_payload["agent_id"] = str(agent_id)
     if error_code is not None:
         response_payload["errorCode"] = str(error_code)
     if stage is not None:
@@ -527,6 +548,11 @@ def _assistant_output_from_node(
         completion_state=completion_state,
         completion_reason=completion_reason,
         intent_code=node.intent_code,
+        agent_id=_assistant_agent_id(
+            node_agent_id=node.agent_id,
+            agent_output=agent_output,
+            has_agent_output=bool(agent_output) or node.status == GraphNodeStatus.WAITING_ASSISTANT_COMPLETION,
+        ),
         status=status,
         message=_assistant_router_placeholder_message(
             status=status,
@@ -684,7 +710,9 @@ def _assistant_output_from_recognition_event(event: TaskEvent) -> dict[str, Any]
 def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
     """Translate one internal router task event into the assistant-facing v0.5 SSE payload."""
     payload = dict(event.payload or {})
-    agent_output = payload.get("agent_output")
+    raw_agent_output = payload.get("agent_output")
+    has_agent_output = isinstance(raw_agent_output, dict)
+    agent_output = raw_agent_output
     if not isinstance(agent_output, dict):
         agent_output = {}
 
@@ -738,6 +766,11 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
         node_status=str(node_payload.get("status") or ""),
     )
     intent_code = str(node_payload.get("intent_code") or event.intent_code)
+    agent_id = _assistant_agent_id(
+        node_agent_id=node_payload.get("agent_id"),
+        agent_output=agent_output,
+        has_agent_output=has_agent_output,
+    )
     completion_state, completion_reason = _assistant_completion_fields(
         status=status,
         node_status=str(node_payload.get("status") or ""),
@@ -759,6 +792,7 @@ def _assistant_output_from_event(event: TaskEvent) -> dict[str, Any] | None:
         completion_state=completion_state,
         completion_reason=completion_reason,
         intent_code=intent_code,
+        agent_id=agent_id,
         status=status,
         message=_assistant_router_placeholder_message(
             status=status,

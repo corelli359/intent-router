@@ -70,6 +70,7 @@ class IntentDefinition(BaseModel):
     domain_description: str = ""
     examples: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
+    agent_id: str = ""
     agent_url: str
     status: str = "active"
     is_fallback: bool = False
@@ -136,6 +137,7 @@ class Task(BaseModel):
     intent_name: str = ""
     intent_description: str = ""
     intent_examples: list[str] = Field(default_factory=list)
+    agent_id: str = ""
     request_schema: dict[str, Any] = Field(default_factory=dict)
     field_mapping: dict[str, str] = Field(default_factory=dict)
     confidence: float

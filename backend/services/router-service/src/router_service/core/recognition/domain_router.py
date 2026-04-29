@@ -73,6 +73,7 @@ class DomainRouter:
             domain_description=domain.domain_description,
             examples=list(domain.routing_examples),
             keywords=[item for item in [domain.domain_name, domain.domain_code] if item],
+            agent_id="",
             agent_url=f"domain://{domain.domain_code}",
             status="active",
             is_fallback=False,

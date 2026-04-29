@@ -1258,6 +1258,7 @@ class GraphRouterOrchestrator:
             task_id=node.ensure_task_id(),
             session_id=session.session_id,
             intent_code=intent.intent_code,
+            agent_id=intent.agent_id,
             agent_url=intent.agent_url,
             intent_name=intent.name,
             intent_description=intent.description,
@@ -1272,6 +1273,7 @@ class GraphRouterOrchestrator:
         session.tasks.append(task)
         session.enforce_task_limit(self.config.session_task_limit)
         node.task_id = task.task_id
+        node.agent_id = intent.agent_id
         await self._publish_node_state(session, graph, node, task.status, "node.created", f"创建节点 {node.intent_code}")
         return task
 
@@ -1410,12 +1412,14 @@ class GraphRouterOrchestrator:
             "fallback_reason": "empty_agent_handover_output",
         }
         task.intent_code = fallback_intent.intent_code
+        task.agent_id = fallback_intent.agent_id
         task.agent_url = fallback_intent.agent_url
         task.intent_name = fallback_intent.name
         task.intent_description = fallback_intent.description
         task.intent_examples = list(fallback_intent.examples)
         task.request_schema = dict(fallback_intent.request_schema)
         task.field_mapping = dict(fallback_intent.field_mapping)
+        node.agent_id = fallback_intent.agent_id
         task.input_context = self._build_graph_task_context(session, graph=graph, task=task)
         task.input_context.update(
             {

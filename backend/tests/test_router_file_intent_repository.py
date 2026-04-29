@@ -24,6 +24,7 @@ def _catalog_payload() -> dict[str, object]:
                 "domain_name": "支付",
                 "domain_description": "支付类意图",
                 "examples": ["给小红转200"],
+                "agent_id": "AG_TRANS",
                 "agent_url": "https://agent.example.com/transfer_money",
                 "is_leaf_intent": True,
                 "parent_intent_code": "",
@@ -75,6 +76,7 @@ def _catalog_payload() -> dict[str, object]:
                 "domain_name": "兜底",
                 "domain_description": "兜底处理",
                 "examples": ["随便聊聊"],
+                "agent_id": "AG_FALLBACK",
                 "agent_url": "https://agent.example.com/fallback",
                 "is_leaf_intent": True,
                 "parent_intent_code": "",
@@ -154,6 +156,7 @@ def test_file_intent_repository_loads_domains_and_slots(tmp_path: Path) -> None:
     record = records[0]
     assert record.intent_code == "transfer_money"
     assert record.domain_code == "payment"
+    assert record.agent_id == "AG_TRANS"
     assert record.field_catalog[0].field_code == "amount"
     assert record.slot_schema[0].slot_key == "amount"
     assert record.graph_build_hints.confirm_policy.value == "multi_node_only"

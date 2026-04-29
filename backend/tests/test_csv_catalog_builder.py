@@ -83,7 +83,7 @@ def test_build_csv_catalog_payloads_preserves_transfer_slots_and_generates_recog
         "status": "active",
         "dispatch_priority": 95,
         "request_schema": {"type": "object", "required": ["sessionId", "taskId", "input"]},
-        "field_mapping": {"input": "$message.current"},
+        "field_mapping": {"agent_id": "AG_TRANS", "input": "$message.current"},
         "field_catalog": [
             {
                 "field_code": "payee_name",
@@ -146,7 +146,9 @@ def test_build_csv_catalog_payloads_preserves_transfer_slots_and_generates_recog
 
     transfer = payloads_by_code["AG_TRANS"]
     assert transfer["name"] == "立即发起一笔转账交易"
+    assert transfer["agent_id"] == "AG_TRANS"
     assert transfer["agent_url"] == transfer_payload["agent_url"]
+    assert "agent_id" not in transfer["field_mapping"]
     assert transfer["graph_build_hints"]["provides_context_keys"] == ["amount", "business_status"]
     assert [field["field_code"] for field in transfer["field_catalog"]] == ["payee_name"]
     assert transfer["field_catalog"][0]["label"] == "收款人姓名"
@@ -155,6 +157,8 @@ def test_build_csv_catalog_payloads_preserves_transfer_slots_and_generates_recog
     assert transfer["slot_schema"][0]["required"] is True
 
     generic = payloads_by_code["AG_MENU_6"]
+    assert generic["agent_id"] == "AG_MENU"
+    assert "agent_id" not in generic["field_mapping"]
     assert generic["slot_schema"] == []
     assert generic["field_catalog"] == []
     assert generic["agent_url"] == DEFAULT_FALLBACK_AGENT_URL

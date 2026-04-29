@@ -107,6 +107,7 @@ _ASSISTANT_PROTOCOL_OUTPUT_KEYS = {
     "slot_memory",
     "output",
 }
+_ASSISTANT_PROTOCOL_OUTPUT_KEYS_WITH_AGENT = _ASSISTANT_PROTOCOL_OUTPUT_KEYS | {"agent_id"}
 
 
 class _AsyncByteStream(httpx.AsyncByteStream):
@@ -128,6 +129,7 @@ def _ag_trans_intent() -> IntentDefinition:
         description="执行转账，需要收款人姓名和金额。",
         examples=["给小明转账", "我要转账"],
         keywords=["转账", "转钱", "汇款"],
+        agent_id="AG_TRANS",
         agent_url="http://test-agent/ag_trans",
         dispatch_priority=100,
         primary_threshold=0.72,
@@ -2319,6 +2321,7 @@ def test_v2_router_message_assistant_protocol_returns_output_after_second_turn()
         assert body["status"] == "waiting_assistant_completion"
         assert body["completion_state"] == 1
         assert body["completion_reason"] == "assistant_confirmation_required"
+        assert body["agent_id"] == "AG_TRANS"
         assert body["message"] == "执行图等待助手确认完成态"
         assert _ASSISTANT_PROTOCOL_OUTPUT_KEYS.issubset(body)
         assert body.get("errorCode") is None
@@ -2881,8 +2884,9 @@ def test_v1_message_stream_assistant_protocol_waiting_then_completed() -> None:
         assert completed_payload["status"] == "waiting_assistant_completion"
         assert completed_payload["completion_state"] == 1
         assert completed_payload["completion_reason"] == "assistant_confirmation_required"
+        assert completed_payload["agent_id"] == "AG_TRANS"
         assert completed_payload["message"] == "执行图等待助手确认完成态"
-        assert set(completed_payload) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS
+        assert set(completed_payload) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS_WITH_AGENT
         assert completed_payload["task_list"] == [{"name": completed_payload["current_task"], "status": "waiting"}]
         assert completed_payload["output"]["message"] == "已向小明转账 200 CNY，转账成功"
         assert completed_payload["output"]["data"][0]["answer"] == "||200|小明|"
@@ -3110,7 +3114,8 @@ def test_v1_message_stream_assistant_protocol_preserves_agent_workflow_frames() 
             "收款人校验通过",
             "已向小明转账 200 CNY，转账成功",
         ]
-        assert all(set(payload) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS for payload in state_payloads)
+        assert all(set(payload) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS_WITH_AGENT for payload in state_payloads)
+        assert [payload["agent_id"] for payload in state_payloads] == ["AG_TRANS", "AG_TRANS"]
         assert state_payloads[0]["status"] == "running"
         assert state_payloads[0]["completion_state"] == 0
         assert state_payloads[0]["message"] == ""
@@ -3208,7 +3213,8 @@ def test_v1_message_stream_assistant_protocol_flattens_agent_output_wrapper_with
         message_payloads = _message_payloads(stream_text)
         state_payloads = _non_recognition_payloads(message_payloads)
         assert len(state_payloads) == 2
-        assert all(set(payload) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS for payload in state_payloads)
+        assert all(set(payload) == _ASSISTANT_PROTOCOL_OUTPUT_KEYS_WITH_AGENT for payload in state_payloads)
+        assert [payload["agent_id"] for payload in state_payloads] == ["AG_TRANS", "AG_TRANS"]
 
         first_payload = state_payloads[0]
         assert first_payload["status"] == "running"

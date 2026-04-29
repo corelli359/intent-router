@@ -136,6 +136,7 @@ class GraphNodeState(BaseModel):
 
     node_id: str = Field(default_factory=lambda: f"node_{uuid4().hex[:10]}")
     intent_code: str
+    agent_id: str = ""
     title: str
     confidence: float
     position: int = 0

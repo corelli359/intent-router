@@ -87,6 +87,7 @@ def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
                 description="执行转账",
                 examples=["给张三转 200 元"],
                 keywords=["转账"],
+                agent_id="AG_TRANS",
                 agent_url="https://agent.example.com/transfer",
                 dispatch_priority=100,
                 primary_threshold=0.7,
@@ -141,6 +142,7 @@ def test_llm_intent_recognizer_uses_registered_intent_catalog_payload() -> None:
         assert llm_client.last_recognition_call["model"] == "recognizer-model"
         assert json.loads(llm_client.last_recognition_call["variables"]["recommend_task_json"]) == recommend_task
         first_intent_payload = json.loads(llm_client.last_recognition_call["variables"]["intents_json"])[0]
+        assert first_intent_payload["agent_id"] == "AG_TRANS"
         assert "agent_url" not in first_intent_payload
         assert "request_schema" not in first_intent_payload
         assert "field_mapping" not in first_intent_payload
@@ -671,9 +673,11 @@ def test_request_payload_builder_supports_config_variables_and_slots_data_mappin
         intent_name="转账",
         intent_description="执行转账",
         intent_examples=["给小明转账 200 元"],
+        agent_id="AG_TRANS",
         confidence=0.91,
         request_schema={"type": "object", "required": ["session_id", "txt", "stream", "config_variables"]},
         field_mapping={
+            "agent_id": "legacy_mapping_value",
             "session_id": "$session.id",
             "txt": "$message.current",
             "stream": "true",
@@ -713,6 +717,7 @@ def test_request_payload_builder_supports_config_variables_and_slots_data_mappin
     assert payload["session_id"] == "session_003"
     assert payload["txt"] == "给小明转账 200 元"
     assert payload["stream"] is True
+    assert payload["agent_id"] == "AG_TRANS"
     assert "intent" not in payload
 
     config_variables = {item["name"]: item["value"] for item in payload["config_variables"]}
@@ -794,6 +799,7 @@ def test_request_payload_builder_keeps_legacy_default_payload_for_unmapped_inten
         intent_name="查询订单状态",
         intent_description="查询订单和物流状态",
         intent_examples=["帮我查订单 123"],
+        agent_id="AG_ORDER",
         confidence=0.88,
         input_context={"recent_messages": ["user: 帮我查订单"], "long_term_memory": ["订单 123 常查"]},
         slot_memory={"order_id": "123"},
@@ -805,6 +811,7 @@ def test_request_payload_builder_keeps_legacy_default_payload_for_unmapped_inten
         "sessionId": "session_legacy",
         "taskId": task.task_id,
         "intentCode": "query_order_status",
+        "agent_id": "AG_ORDER",
         "input": "帮我查订单 123",
         "intent": {
             "code": "query_order_status",

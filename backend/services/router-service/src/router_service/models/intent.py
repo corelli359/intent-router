@@ -137,6 +137,7 @@ class IntentPayload(BaseModel):
     domain_name: str = Field(default="", max_length=256)
     domain_description: str = Field(default="", max_length=2000)
     examples: list[str] = Field(default_factory=list)
+    agent_id: str = Field(default="", max_length=128)
     agent_url: str = Field(min_length=1, max_length=2048)
     is_leaf_intent: bool = True
     parent_intent_code: str = Field(default="", max_length=128)

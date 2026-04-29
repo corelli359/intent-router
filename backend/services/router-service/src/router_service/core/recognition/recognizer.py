@@ -60,6 +60,7 @@ def recognition_intent_payload(intent: IntentDefinition) -> dict[str, object]:
         "examples": intent.examples,
         "routing_examples": getattr(intent, "routing_examples", []),
         "keywords": intent.keywords,
+        "agent_id": getattr(intent, "agent_id", ""),
         "dispatch_priority": intent.dispatch_priority,
         "primary_threshold": intent.primary_threshold,
         "candidate_threshold": intent.candidate_threshold,

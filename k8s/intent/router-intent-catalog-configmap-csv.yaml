@@ -434,7 +434,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -482,7 +481,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_PAYMENT",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -526,7 +524,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -570,7 +567,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -616,7 +612,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -662,7 +657,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -706,7 +700,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -750,7 +743,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -794,7 +786,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -842,7 +833,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -886,7 +876,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -930,7 +919,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -974,7 +962,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1018,7 +1005,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1084,8 +1070,7 @@ data:
             "config_variables.slots_data.payee_card_no": "$slot_memory.payee_card_no",
             "config_variables.slots_data.payee_card_remark": "$slot_memory.payee_card_remark",
             "config_variables.slots_data.payee_card_bank": "$slot_memory.payee_card_bank",
-            "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone",
-            "agent_id": "AG_TRANS"
+            "config_variables.slots_data.payee_phone": "$slot_memory.payee_phone"
           },
           "resume_policy": "resume_same_task"
         },
@@ -1126,7 +1111,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1172,7 +1156,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1218,7 +1201,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1262,7 +1244,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1306,7 +1287,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1350,7 +1330,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1394,7 +1373,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1440,7 +1418,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_ZIXUN",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1486,7 +1463,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1528,7 +1504,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MENU",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1574,7 +1549,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_MARKET",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1618,7 +1592,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_PRODUCT",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1662,7 +1635,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_PRODUCT",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1708,7 +1680,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_FUND",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1754,7 +1725,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_DIALOG",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1800,7 +1770,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_DIALOG",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1846,7 +1815,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_CLIENTSERVICE",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1892,7 +1860,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_CLIENTSERVICE",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1940,7 +1907,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_CLIENTSERVICE",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1984,7 +1950,6 @@ data:
           "field_mapping": {
             "sessionId": "$session.id",
             "taskId": "$task.id",
-            "agent_id": "AG_ASK",
             "input": "$message.current",
             "conversation.recentMessages": "$context.recent_messages",
             "conversation.longTermMemory": "$context.long_term_memory"
@@ -1995,7 +1960,6 @@ data:
       "source_csv": "/root/intent-router/intent_table_from_updated_screenshot.csv",
       "exported_count": 35
     }
-
   slot-schemas.json: |
     {
       "slot_schemas": {

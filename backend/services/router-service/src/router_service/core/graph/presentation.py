@@ -121,6 +121,7 @@ class GraphSnapshotPresenter:
         payload = {
             "node_id": node.node_id,
             "intent_code": node.intent_code,
+            "agent_id": node.agent_id,
             "title": node.title,
             "confidence": node.confidence,
             "position": node.position,

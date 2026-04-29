@@ -103,6 +103,23 @@ def parse_examples(raw_examples: str) -> list[str]:
     return [item for item in parts if item]
 
 
+def field_mapping_without_agent_id(raw_mapping: dict[str, Any] | None) -> dict[str, Any]:
+    """Return request field mappings without catalog-level agent metadata."""
+    mapping = dict(raw_mapping or {})
+    mapping.pop("agent_id", None)
+    return mapping
+
+
+def agent_id_from_payload(payload: dict[str, Any], fallback: str = "") -> str:
+    """Read agent metadata from the top-level catalog field or legacy mapping."""
+    raw_agent_id = payload.get("agent_id")
+    if raw_agent_id in (None, ""):
+        raw_agent_id = (payload.get("field_mapping") or {}).get("agent_id")
+    if raw_agent_id in (None, ""):
+        raw_agent_id = fallback
+    return str(raw_agent_id or "")
+
+
 def _load_csv_rows(csv_path: Path) -> list[dict[str, str]]:
     """Load the business CSV into normalized row dictionaries."""
     with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -147,6 +164,7 @@ def _build_transfer_payload(
         "domain_description": row["description"] or transfer_payload.get("domain_description", ""),
         "examples": examples,
         "routing_examples": examples,
+        "agent_id": agent_id_from_payload(transfer_payload, row["intent_code"]),
         "agent_url": transfer_payload["agent_url"],
         "is_leaf_intent": True,
         "parent_intent_code": "",
@@ -154,7 +172,9 @@ def _build_transfer_payload(
         "is_fallback": False,
         "dispatch_priority": dispatch_priority,
         "request_schema": dict(transfer_payload.get("request_schema", COMMON_REQUEST_SCHEMA)),
-        "field_mapping": dict(transfer_payload.get("field_mapping", COMMON_CONTEXT_MAPPING)),
+        "field_mapping": field_mapping_without_agent_id(
+            transfer_payload.get("field_mapping", COMMON_CONTEXT_MAPPING)
+        ),
         "field_catalog": list(transfer_payload.get("field_catalog", [])),
         "slot_schema": list(transfer_payload.get("slot_schema", [])),
         "graph_build_hints": graph_build_hints,
@@ -185,6 +205,7 @@ def _build_generic_payload(
         "domain_description": row["description"] or row["category"] or row["name"] or unique_code,
         "examples": examples,
         "routing_examples": examples,
+        "agent_id": row["intent_code"],
         "agent_url": fallback_agent_url,
         "is_leaf_intent": True,
         "parent_intent_code": "",
@@ -192,7 +213,7 @@ def _build_generic_payload(
         "is_fallback": False,
         "dispatch_priority": dispatch_priority,
         "request_schema": dict(COMMON_REQUEST_SCHEMA),
-        "field_mapping": dict(COMMON_CONTEXT_MAPPING),
+        "field_mapping": field_mapping_without_agent_id(COMMON_CONTEXT_MAPPING),
         "field_catalog": [],
         "slot_schema": [],
         "graph_build_hints": graph_build_hints,

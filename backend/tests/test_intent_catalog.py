@@ -22,6 +22,7 @@ def _payload(
         domain_name=domain_name,
         domain_description=domain_description,
         examples=[f"example for {intent_code}"],
+        agent_id=f"AG_{intent_code.upper()}",
         agent_url=f"http://agent.example.com/{intent_code}",
         routing_examples=routing_examples or [],
         status=status,
@@ -59,6 +60,7 @@ def test_catalog_keeps_cached_snapshot_until_refresh_now() -> None:
 
     catalog.refresh_now()
     assert [intent.intent_code for intent in catalog.list_active()] == ["query_order_status"]
+    assert catalog.list_active()[0].agent_id == "AG_QUERY_ORDER_STATUS"
     assert catalog.list_active()[0].slot_schema[0].slot_key == "input"
 
     repository.update_intent(

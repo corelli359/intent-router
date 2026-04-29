@@ -46,6 +46,8 @@ class RequestPayloadBuilder:
             uses_config_variables = False
             slots_data_requested = False
             for target_path, source_path in task.field_mapping.items():
+                if target_path == "agent_id":
+                    continue
                 if target_path == "config_variables.slots_data" or target_path.startswith(
                     "config_variables.slots_data."
                 ):
@@ -66,6 +68,9 @@ class RequestPayloadBuilder:
                 ]
                 payload.setdefault("stream", True)
 
+        if task.agent_id:
+            payload["agent_id"] = task.agent_id
+
         if not uses_config_variables:
             payload.setdefault(
                 "intent",
@@ -82,7 +87,7 @@ class RequestPayloadBuilder:
 
     def _default_payload(self, task: Task, user_input: str) -> dict[str, Any]:
         """Build the default payload shape used when no explicit field mapping exists."""
-        return {
+        payload = {
             "sessionId": task.session_id,
             "taskId": task.task_id,
             "intentCode": task.intent_code,
@@ -99,6 +104,9 @@ class RequestPayloadBuilder:
             },
             "slots": dict(task.slot_memory),
         }
+        if task.agent_id:
+            payload["agent_id"] = task.agent_id
+        return payload
 
     def _validate_required_fields(self, payload: dict[str, Any], request_schema: dict[str, Any]) -> None:
         """Validate required request fields declared by the intent schema."""

@@ -143,6 +143,7 @@ class RepositoryIntentCatalog:
             domain_name=record.domain_name,
             domain_description=record.domain_description,
             examples=record.examples,
+            agent_id=record.agent_id,
             agent_url=record.agent_url,
             status=record.status.value,
             is_fallback=record.is_fallback,
