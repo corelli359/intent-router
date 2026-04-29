@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from router_service.core.shared.domain import ChatMessage, IntentMatch, SESSION_TTL, Task, utc_now
+from router_service.core.shared.domain import ChatMessage, IntentMatch, Task, session_ttl, utc_now
 from router_service.core.shared.diagnostics import RouterDiagnostic
 
 
@@ -332,7 +332,7 @@ class GraphSessionState(BaseModel):
     router_only_mode: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
-    expires_at: datetime = Field(default_factory=lambda: utc_now() + SESSION_TTL)
+    expires_at: datetime = Field(default_factory=lambda: utc_now() + session_ttl())
     _upstream_config_variables: dict[str, Any] = PrivateAttr(default_factory=dict)
     _upstream_slots_data: dict[str, Any] = PrivateAttr(default_factory=dict)
     _recommend_task: list[dict[str, Any]] | None = PrivateAttr(default=None)
@@ -342,7 +342,7 @@ class GraphSessionState(BaseModel):
         """Refresh session timestamps and extend the expiry deadline."""
         now = utc_now()
         self.updated_at = now
-        self.expires_at = now + SESSION_TTL
+        self.expires_at = now + session_ttl()
 
     def is_expired(self, now: datetime | None = None) -> bool:
         """Return whether the session TTL has elapsed."""

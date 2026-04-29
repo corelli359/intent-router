@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 
 from router_service.core.graph.session_store import GraphSessionStore
+from router_service.core.shared.domain import SESSION_TTL
 from router_service.core.support.memory_store import LongTermMemoryStore
 
 
@@ -69,6 +70,28 @@ def test_purge_expired_skips_session_when_expiry_was_extended() -> None:
     assert memory.promoted_sessions == ["extended"]
     with pytest.raises(KeyError):
         store.get(session.session_id)
+
+
+def test_session_expiry_uses_router_session_ttl_seconds_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ROUTER_SESSION_TTL_SECONDS", "2")
+    store = GraphSessionStore()
+
+    session = store.create(cust_id="cust-ttl", session_id="short-ttl")
+    created_delta = session.expires_at - session.created_at
+    session.touch()
+    touched_delta = session.expires_at - session.updated_at
+
+    assert created_delta <= timedelta(seconds=3)
+    assert touched_delta <= timedelta(seconds=3)
+
+
+def test_session_expiry_falls_back_to_default_ttl_when_env_is_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ROUTER_SESSION_TTL_SECONDS", "invalid")
+    store = GraphSessionStore()
+
+    session = store.create(cust_id="cust-default-ttl", session_id="default-ttl")
+
+    assert session.expires_at - session.created_at > SESSION_TTL - timedelta(seconds=1)
 
 
 def test_session_lock_serializes_same_session_id() -> None:
