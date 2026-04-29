@@ -148,6 +148,7 @@ class GraphMessageFlow:
         upstream_slots_data: dict[str, Any] | None = None,
         recommend_task: list[dict[str, Any]] | None = None,
         current_display: list[dict[str, Any]] | None = None,
+        session: GraphSessionState | None = None,
         return_snapshot: bool = True,
         emit_events: bool = False,
     ) -> GraphRouterSnapshot | None:
@@ -161,7 +162,8 @@ class GraphMessageFlow:
             has_proactive_recommendation=proactive_recommendation is not None,
             emit_events=emit_events,
         ):
-            session = self.session_store.get_or_create(session_id, cust_id)
+            if session is None:
+                session = self.session_store.get_or_create(session_id, cust_id)
             session.last_diagnostics = []
             if hasattr(session, "set_request_context"):
                 session.set_request_context(
@@ -245,6 +247,42 @@ class GraphMessageFlow:
                 session.active_node_id,
             )
             return self.snapshot_session(session.session_id) if return_snapshot else None
+
+    async def handle_user_message_in_session(
+        self,
+        session: GraphSessionState,
+        content: str,
+        *,
+        assistant_protocol: bool = False,
+        router_only: bool = False,
+        guided_selection: GuidedSelectionPayload | None = None,
+        recommendation_context: RecommendationContextPayload | None = None,
+        proactive_recommendation: ProactiveRecommendationPayload | None = None,
+        upstream_config_variables: dict[str, Any] | None = None,
+        upstream_slots_data: dict[str, Any] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[dict[str, Any]] | None = None,
+        return_snapshot: bool = True,
+        emit_events: bool = False,
+    ) -> GraphRouterSnapshot | None:
+        """Handle a message using a session already owned by the caller's request scope."""
+        return await self.handle_user_message(
+            session.session_id,
+            session.cust_id,
+            content,
+            assistant_protocol=assistant_protocol,
+            router_only=router_only,
+            guided_selection=guided_selection,
+            recommendation_context=recommendation_context,
+            proactive_recommendation=proactive_recommendation,
+            upstream_config_variables=upstream_config_variables,
+            upstream_slots_data=upstream_slots_data,
+            recommend_task=recommend_task,
+            current_display=current_display,
+            session=session,
+            return_snapshot=return_snapshot,
+            emit_events=emit_events,
+        )
 
     async def handle_proactive_recommendation_turn(
         self,

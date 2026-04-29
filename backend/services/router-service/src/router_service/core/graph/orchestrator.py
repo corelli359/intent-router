@@ -403,6 +403,77 @@ class GraphRouterOrchestrator:
             )
             return snapshot if return_snapshot or snapshot is not None else None
 
+    async def handle_user_message_in_session(
+        self,
+        session: GraphSessionState,
+        content: str,
+        *,
+        assistant_protocol: bool = False,
+        router_only: bool = False,
+        guided_selection: GuidedSelectionPayload | None = None,
+        recommendation_context: RecommendationContextPayload | None = None,
+        proactive_recommendation: ProactiveRecommendationPayload | None = None,
+        upstream_config_variables: dict[str, Any] | None = None,
+        upstream_slots_data: dict[str, Any] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[dict[str, Any]] | None = None,
+        return_snapshot: bool = True,
+        emit_events: bool = True,
+    ) -> GraphRouterSnapshot | None:
+        """Handle one user message against a session already owned by the API request scope."""
+        trace_details = {
+            "router_only": router_only,
+            "has_guided_selection": guided_selection is not None,
+            "has_recommendation_context": recommendation_context is not None,
+            "has_proactive_recommendation": proactive_recommendation is not None,
+            "emit_events": emit_events,
+        }
+        with router_trace(
+            logger,
+            entrypoint="handle_user_message_in_session",
+            session_id=session.session_id,
+            cust_id=session.cust_id,
+            content=content,
+            details=trace_details,
+        ):
+            with self.event_publisher.event_scope(emit_events):
+                with router_stage(logger, "orchestrator.handle_user_message_in_session", **trace_details):
+                    message_flow_kwargs: dict[str, Any] = {
+                        "assistant_protocol": assistant_protocol,
+                        "router_only": router_only,
+                        "guided_selection": guided_selection,
+                        "recommendation_context": recommendation_context,
+                        "proactive_recommendation": proactive_recommendation,
+                        "return_snapshot": False,
+                        "emit_events": emit_events,
+                    }
+                    if upstream_config_variables is not None:
+                        message_flow_kwargs["upstream_config_variables"] = upstream_config_variables
+                    if upstream_slots_data is not None:
+                        message_flow_kwargs["upstream_slots_data"] = upstream_slots_data
+                    if recommend_task is not None:
+                        message_flow_kwargs["recommend_task"] = recommend_task
+                    if current_display is not None:
+                        message_flow_kwargs["current_display"] = current_display
+                    await self.message_flow.handle_user_message_in_session(
+                        session,
+                        content,
+                        **message_flow_kwargs,
+                    )
+                snapshot = self._finalize_handover_business(session)
+                if snapshot is None and return_snapshot:
+                    snapshot = self._build_session_dump(session)
+        logger.debug(
+            "Router message snapshot (trace_id=%s, session_id=%s, current_graph_status=%s, pending_graph_status=%s, active_node_id=%s, candidate_intents=%s)",
+            current_trace_id(),
+            session.session_id,
+            snapshot.current_graph.status.value if snapshot is not None and snapshot.current_graph is not None else None,
+            snapshot.pending_graph.status.value if snapshot is not None and snapshot.pending_graph is not None else None,
+            snapshot.active_node_id if snapshot is not None else None,
+            len(snapshot.candidate_intents) if snapshot is not None else len(session.candidate_intents),
+        )
+        return snapshot if return_snapshot or snapshot is not None else None
+
     async def handle_task_completion(
         self,
         *,
@@ -458,6 +529,59 @@ class GraphRouterOrchestrator:
                 serialized = self._finalize_handover_business_with(session, serializer)
                 if serialized is None:
                     serialized = serializer(session)
+        return serialized
+
+    async def handle_task_completion_in_session(
+        self,
+        *,
+        session: GraphSessionState,
+        task_id: str,
+        completion_signal: int,
+        emit_events: bool = False,
+    ) -> GraphRouterSnapshot | None:
+        """Apply one assistant completion callback against a session owned by the request scope."""
+        with self.event_publisher.event_scope(emit_events):
+            completion_finalized = await self._apply_task_completion_signal(
+                session,
+                task_id=task_id,
+                completion_signal=completion_signal,
+                emit_events=emit_events,
+            )
+            if completion_finalized and session.current_graph is not None:
+                if session.router_only_mode:
+                    await self._drain_graph_router_only(session, session.current_graph.source_message)
+                else:
+                    await self._drain_graph(session, session.current_graph.source_message)
+            snapshot = self._finalize_handover_business(session)
+            if snapshot is None:
+                snapshot = self._build_session_dump(session)
+        return snapshot
+
+    async def handle_task_completion_serialized_in_session(
+        self,
+        *,
+        session: GraphSessionState,
+        task_id: str,
+        completion_signal: int,
+        serializer: Callable[[GraphSessionState], SerializedResponseT],
+        emit_events: bool = False,
+    ) -> SerializedResponseT:
+        """Apply one assistant completion callback and serialize while request-owned."""
+        with self.event_publisher.event_scope(emit_events):
+            completion_finalized = await self._apply_task_completion_signal(
+                session,
+                task_id=task_id,
+                completion_signal=completion_signal,
+                emit_events=emit_events,
+            )
+            if completion_finalized and session.current_graph is not None:
+                if session.router_only_mode:
+                    await self._drain_graph_router_only(session, session.current_graph.source_message)
+                else:
+                    await self._drain_graph(session, session.current_graph.source_message)
+            serialized = self._finalize_handover_business_with(session, serializer)
+            if serialized is None:
+                serialized = serializer(session)
         return serialized
 
     async def handle_user_message_serialized(
@@ -524,6 +648,68 @@ class GraphRouterOrchestrator:
                     serialized = self._finalize_handover_business_with(session, serializer)
                     if serialized is None:
                         serialized = serializer(session)
+        return serialized
+
+    async def handle_user_message_serialized_in_session(
+        self,
+        *,
+        session: GraphSessionState,
+        content: str,
+        serializer: Callable[[GraphSessionState], SerializedResponseT],
+        router_only: bool = False,
+        assistant_protocol: bool = False,
+        guided_selection: GuidedSelectionPayload | None = None,
+        recommendation_context: RecommendationContextPayload | None = None,
+        proactive_recommendation: ProactiveRecommendationPayload | None = None,
+        upstream_config_variables: dict[str, Any] | None = None,
+        upstream_slots_data: dict[str, Any] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+        current_display: list[dict[str, Any]] | None = None,
+        emit_events: bool = False,
+    ) -> SerializedResponseT:
+        """Process and serialize a user message against a request-owned session."""
+        trace_details = {
+            "router_only": router_only,
+            "has_guided_selection": guided_selection is not None,
+            "has_recommendation_context": recommendation_context is not None,
+            "has_proactive_recommendation": proactive_recommendation is not None,
+            "emit_events": emit_events,
+        }
+        with router_trace(
+            logger,
+            entrypoint="handle_user_message_serialized_in_session",
+            session_id=session.session_id,
+            cust_id=session.cust_id,
+            content=content,
+            details=trace_details,
+        ):
+            with self.event_publisher.event_scope(emit_events):
+                with router_stage(logger, "orchestrator.handle_user_message_serialized_in_session", **trace_details):
+                    message_flow_kwargs: dict[str, Any] = {
+                        "assistant_protocol": assistant_protocol,
+                        "router_only": router_only,
+                        "guided_selection": guided_selection,
+                        "recommendation_context": recommendation_context,
+                        "proactive_recommendation": proactive_recommendation,
+                        "return_snapshot": False,
+                        "emit_events": emit_events,
+                    }
+                    if upstream_config_variables is not None:
+                        message_flow_kwargs["upstream_config_variables"] = upstream_config_variables
+                    if upstream_slots_data is not None:
+                        message_flow_kwargs["upstream_slots_data"] = upstream_slots_data
+                    if recommend_task is not None:
+                        message_flow_kwargs["recommend_task"] = recommend_task
+                    if current_display is not None:
+                        message_flow_kwargs["current_display"] = current_display
+                    await self.message_flow.handle_user_message_in_session(
+                        session,
+                        content,
+                        **message_flow_kwargs,
+                    )
+                serialized = self._finalize_handover_business_with(session, serializer)
+                if serialized is None:
+                    serialized = serializer(session)
         return serialized
 
     async def _handle_proactive_recommendation_turn(
@@ -616,6 +802,62 @@ class GraphRouterOrchestrator:
                 serialized = self._finalize_handover_business_with(session, serializer)
                 if serialized is None:
                     serialized = serializer(session)
+        return serialized
+
+    async def handle_action_in_session(
+        self,
+        *,
+        session: GraphSessionState,
+        action_code: str,
+        source: str | None = None,
+        task_id: str | None = None,
+        confirm_token: str | None = None,
+        payload: dict[str, Any] | None = None,
+        return_snapshot: bool = True,
+        emit_events: bool = True,
+    ) -> GraphRouterSnapshot | None:
+        """Delegate one explicit graph action against a request-owned session."""
+        with self.event_publisher.event_scope(emit_events):
+            await self.action_flow.handle_action_in_session(
+                session,
+                action_code=action_code,
+                source=source,
+                task_id=task_id,
+                confirm_token=confirm_token,
+                payload=payload,
+                return_snapshot=False,
+            )
+            snapshot = self._finalize_handover_business(session)
+            if snapshot is None and return_snapshot:
+                snapshot = self._build_session_dump(session)
+        return snapshot if return_snapshot or snapshot is not None else None
+
+    async def handle_action_serialized_in_session(
+        self,
+        *,
+        session: GraphSessionState,
+        action_code: str,
+        serializer: Callable[[GraphSessionState], SerializedResponseT],
+        source: str | None = None,
+        task_id: str | None = None,
+        confirm_token: str | None = None,
+        payload: dict[str, Any] | None = None,
+        emit_events: bool = False,
+    ) -> SerializedResponseT:
+        """Process one explicit graph action and serialize while request-owned."""
+        with self.event_publisher.event_scope(emit_events):
+            await self.action_flow.handle_action_in_session(
+                session,
+                action_code=action_code,
+                source=source,
+                task_id=task_id,
+                confirm_token=confirm_token,
+                payload=payload,
+                return_snapshot=False,
+            )
+            serialized = self._finalize_handover_business_with(session, serializer)
+            if serialized is None:
+                serialized = serializer(session)
         return serialized
 
     async def _route_new_message(

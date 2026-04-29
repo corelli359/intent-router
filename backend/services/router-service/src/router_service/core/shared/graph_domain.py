@@ -61,6 +61,13 @@ class GraphStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class SessionRuntimeState(StrEnum):
+    """Runtime state used only for session idle-time accounting."""
+
+    IDLE = "idle"
+    RUNNING = "running"
+
+
 class BusinessObjectStatus(StrEnum):
     """Lifecycle status for one business runtime object attached to a session."""
 
@@ -332,6 +339,8 @@ class GraphSessionState(BaseModel):
     router_only_mode: bool = False
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    runtime_state: SessionRuntimeState = SessionRuntimeState.IDLE
+    idle_since: datetime | None = Field(default_factory=utc_now)
     expires_at: datetime = Field(default_factory=lambda: utc_now() + session_ttl())
     _upstream_config_variables: dict[str, Any] = PrivateAttr(default_factory=dict)
     _upstream_slots_data: dict[str, Any] = PrivateAttr(default_factory=dict)
@@ -339,13 +348,32 @@ class GraphSessionState(BaseModel):
     _current_display: list[dict[str, Any]] | None = PrivateAttr(default=None)
 
     def touch(self) -> None:
-        """Refresh session timestamps and extend the expiry deadline."""
+        """Refresh session timestamps without extending active request runtime."""
         now = utc_now()
         self.updated_at = now
-        self.expires_at = now + session_ttl()
+        if self.runtime_state == SessionRuntimeState.IDLE:
+            self.idle_since = now
+            self.expires_at = now + session_ttl()
+
+    def mark_running(self, now: datetime | None = None) -> None:
+        """Mark the session as processing one API request."""
+        current = now or utc_now()
+        self.runtime_state = SessionRuntimeState.RUNNING
+        self.idle_since = None
+        self.updated_at = current
+
+    def mark_idle(self, now: datetime | None = None) -> None:
+        """Mark the session idle and start a fresh idle timeout window."""
+        current = now or utc_now()
+        self.runtime_state = SessionRuntimeState.IDLE
+        self.idle_since = current
+        self.updated_at = current
+        self.expires_at = current + session_ttl()
 
     def is_expired(self, now: datetime | None = None) -> bool:
         """Return whether the session TTL has elapsed."""
+        if self.runtime_state != SessionRuntimeState.IDLE:
+            return False
         current = now or utc_now()
         return current >= self.expires_at
 

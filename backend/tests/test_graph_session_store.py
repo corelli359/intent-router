@@ -7,6 +7,7 @@ import pytest
 
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.shared.domain import SESSION_TTL
+from router_service.core.shared.graph_domain import SessionRuntimeState
 from router_service.core.support.memory_store import LongTermMemoryStore
 
 
@@ -116,3 +117,57 @@ def test_session_lock_serializes_same_session_id() -> None:
     asyncio.run(run())
 
     assert events == ["first-start", "first-end", "second-start", "second-end"]
+
+
+def test_request_scope_marks_session_running_then_idle() -> None:
+    store = GraphSessionStore()
+
+    async def run() -> None:
+        async with store.request_scope("request-scope", "cust-request") as session:
+            running_expiry = session.expires_at
+
+            assert session.runtime_state == SessionRuntimeState.RUNNING
+            assert session.idle_since is None
+
+            session.touch()
+
+            assert session.expires_at == running_expiry
+
+        session_after = store.get("request-scope")
+
+        assert session_after.runtime_state == SessionRuntimeState.IDLE
+        assert session_after.idle_since is not None
+        assert session_after.expires_at > session_after.idle_since
+
+    asyncio.run(run())
+
+
+def test_purge_expired_skips_running_session_until_request_scope_exits() -> None:
+    memory = SpyMemory()
+    store = GraphSessionStore(long_term_memory=memory)
+
+    async def run() -> None:
+        async with store.request_scope("active-expired", "cust-active") as session:
+            session.expires_at = session.updated_at - timedelta(seconds=1)
+            store.note_session_expiry(session)
+
+            removed = store.purge_expired()
+
+            assert removed == []
+            assert memory.promoted_sessions == []
+            assert store.get(session.session_id) is session
+            assert session.runtime_state == SessionRuntimeState.RUNNING
+
+        idle_session = store.get("active-expired")
+        assert idle_session.idle_since is not None
+        idle_session.expires_at = idle_session.idle_since - timedelta(seconds=1)
+        store.note_session_expiry(idle_session)
+
+        removed = store.purge_expired()
+
+        assert removed == ["active-expired"]
+        assert memory.promoted_sessions == ["active-expired"]
+        with pytest.raises(KeyError):
+            store.get("active-expired")
+
+    asyncio.run(run())

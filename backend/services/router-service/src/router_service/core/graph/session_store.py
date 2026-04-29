@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from router_service.core.shared.domain import utc_now
-from router_service.core.shared.graph_domain import GraphSessionState
+from router_service.core.shared.graph_domain import GraphSessionState, SessionRuntimeState
 from router_service.core.support.memory_store import LongTermMemoryStore
 
 
@@ -45,6 +45,31 @@ class GraphSessionStore:
             lock = self._locks[session_id]
         async with lock:
             yield
+
+    @asynccontextmanager
+    async def request_scope(
+        self,
+        session_id: str,
+        cust_id: str | None = None,
+        *,
+        create: bool = True,
+    ) -> AsyncIterator[GraphSessionState]:
+        """Own one API request's session runtime state and idle-time boundary."""
+        async with self.session_lock(session_id):
+            if create:
+                if cust_id is None:
+                    raise ValueError("cust_id is required when creating a router session")
+                session = self.get_or_create(session_id, cust_id)
+            else:
+                session = self.get(session_id)
+            session.mark_running()
+            try:
+                yield session
+            finally:
+                with self._state_lock:
+                    if self._sessions.get(session.session_id) is session:
+                        session.mark_idle()
+                        self._push_expiry(session)
 
     def get_or_create(self, session_id: str | None, cust_id: str) -> GraphSessionState:
         """Resolve a session id, recreating expired or customer-mismatched sessions when needed."""
@@ -108,6 +133,8 @@ class GraphSessionStore:
                     continue
                 if session.expires_at > tracked_expiry:
                     self._push_expiry(session)
+                    continue
+                if session.runtime_state == SessionRuntimeState.RUNNING:
                     continue
                 if not session.is_expired(now=current_time):
                     self._push_expiry(session)

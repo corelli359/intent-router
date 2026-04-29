@@ -68,10 +68,12 @@ class GraphActionFlow:
         task_id: str | None = None,
         confirm_token: str | None = None,
         payload: dict[str, Any] | None = None,
+        session: GraphSessionState | None = None,
         return_snapshot: bool = True,
     ) -> GraphRouterSnapshot | None:
         """Entry point for action APIs and graph-originated control actions."""
-        session = self.session_store.get_or_create(session_id, cust_id)
+        if session is None:
+            session = self.session_store.get_or_create(session_id, cust_id)
         if source not in {None, "router", "graph"}:
             raise ValueError(f"Unsupported action source: {source}")
 
@@ -89,6 +91,30 @@ class GraphActionFlow:
             return self.snapshot_session(session.session_id) if return_snapshot else None
 
         raise ValueError(f"Unsupported action_code: {action_code}")
+
+    async def handle_action_in_session(
+        self,
+        session: GraphSessionState,
+        *,
+        action_code: str,
+        source: str | None = None,
+        task_id: str | None = None,
+        confirm_token: str | None = None,
+        payload: dict[str, Any] | None = None,
+        return_snapshot: bool = True,
+    ) -> GraphRouterSnapshot | None:
+        """Handle an explicit action using a session already owned by the request scope."""
+        return await self.handle_action(
+            session_id=session.session_id,
+            cust_id=session.cust_id,
+            action_code=action_code,
+            source=source,
+            task_id=task_id,
+            confirm_token=confirm_token,
+            payload=payload,
+            session=session,
+            return_snapshot=return_snapshot,
+        )
 
     async def cancel_current_node(self, session: GraphSessionState, *, reason: str) -> None:
         """Cancel the currently waiting node and refresh graph progress."""
