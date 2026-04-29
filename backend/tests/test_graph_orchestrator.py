@@ -260,7 +260,7 @@ def test_graph_orchestrator_drain_graph_accepts_waiting_assistant_completion_wit
     asyncio.run(run())
 
 
-def test_handle_task_completion_drains_ready_downstream_node_after_assistant_confirmation() -> None:
+def test_handle_task_completion_waits_for_continue_before_draining_downstream_node() -> None:
     async def run() -> None:
         agent_client = _NoopAgentClient()
         orchestrator = GraphRouterOrchestrator(
@@ -329,11 +329,20 @@ def test_handle_task_completion_drains_ready_downstream_node_after_assistant_con
         )
 
         assert first.status == GraphNodeStatus.COMPLETED
-        assert second.status == GraphNodeStatus.COMPLETED
-        assert dispatched_nodes == [second.node_id]
+        assert second.status == GraphNodeStatus.READY
+        assert dispatched_nodes == []
         assert agent_client.cancelled == [
             (session.session_id, first_task.task_id, "http://agent.example.com/transfer")
         ]
+
+        await orchestrator.handle_user_message(
+            session_id=session.session_id,
+            cust_id=session.cust_id,
+            content="继续",
+        )
+
+        assert second.status == GraphNodeStatus.COMPLETED
+        assert dispatched_nodes == [second.node_id]
 
     asyncio.run(run())
 

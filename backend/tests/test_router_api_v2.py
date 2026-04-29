@@ -1896,7 +1896,7 @@ def test_v1_message_stream_router_only_ready_marks_handover() -> None:
     asyncio.run(run())
 
 
-def test_v1_task_completion_stream_advances_router_only_handover_to_next_task() -> None:
+def test_v1_task_completion_stream_waits_for_continue_before_next_router_only_task() -> None:
     async def run() -> None:
         app, _ = _test_v2_app(
             intents=[_ag_trans_intent(), _pay_gas_bill_intent()],
@@ -1965,12 +1965,35 @@ def test_v1_task_completion_stream_advances_router_only_handover_to_next_task() 
             ) as response:
                 completion_stream = "".join([chunk async for chunk in response.aiter_text()])
 
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "继续",
+                    "stream": True,
+                    "executionMode": "router_only",
+                    "config_variables": config_variables,
+                },
+            ) as response:
+                continue_stream = "".join([chunk async for chunk in response.aiter_text()])
+
         assert _parse_sse_frames(completion_stream)[-1] == ("done", "[DONE]")
         completion_payloads = _message_payloads(completion_stream)
         assert completion_payloads
         assert all(payload.get("ok") is not False for payload in completion_payloads)
         assert all(payload.get("errorCode") != "ROUTER_TASK_NOT_FOUND" for payload in completion_payloads)
-        final_payload = completion_payloads[-1]
+        completion_payload = completion_payloads[-1]
+        assert completion_payload["status"] == "completed"
+        assert completion_payload["intent_code"] == "AG_TRANS"
+        assert completion_payload["current_task"] == current_task
+        assert completion_payload["task_list"][0] == {"name": current_task, "status": "completed"}
+        assert completion_payload["task_list"][1]["status"] == "waiting"
+
+        assert _parse_sse_frames(continue_stream)[-1] == ("done", "[DONE]")
+        continue_payloads = _non_recognition_payloads(_message_payloads(continue_stream))
+        assert continue_payloads
+        final_payload = continue_payloads[-1]
         assert final_payload["status"] == "waiting_user_input"
         assert final_payload["intent_code"] == "pay_gas_bill"
         assert final_payload["current_task"] != current_task
@@ -2384,7 +2407,10 @@ def test_v2_message_uses_recommend_task_and_current_display_only_for_router_cont
         assert recognizer.calls == [
             {
                 "message": "给小明转账200",
-                "recent_messages": ["[CURRENT_DISPLAY] assistant: 推荐事项：给小明转账200"],
+                "recent_messages": [
+                    "[CURRENT_DISPLAY] assistant: 推荐事项：给小明转账200",
+                    '[RECOMMEND_TASK] 1: {"intentCode":"AG_TRANS","slotMemory":{"amount":"200","payee_name":"小明"},"title":"给小明转账200"}',
+                ],
                 "recommend_task": recommend_task,
             }
         ]
@@ -2574,7 +2600,7 @@ def test_v1_task_completion_real_chain_waits_for_assistant_then_joins_to_complet
     asyncio.run(run())
 
 
-def test_v1_task_completion_stream_confirms_current_task_then_runs_next_task() -> None:
+def test_v1_task_completion_stream_confirms_current_task_then_continue_runs_next_task() -> None:
     async def run() -> None:
         agent_client = _AssistantProtocolTransferAgentClient()
         app, orchestrator = _test_v2_app(
@@ -2664,10 +2690,25 @@ def test_v1_task_completion_stream_confirms_current_task_then_runs_next_task() -
             ) as response:
                 stream_text = "".join([chunk async for chunk in response.aiter_text()])
 
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": session.session_id,
+                    "txt": "继续",
+                    "stream": True,
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session.session_id},
+                    ],
+                },
+            ) as response:
+                continue_stream_text = "".join([chunk async for chunk in response.aiter_text()])
+
         frames = _parse_sse_frames(stream_text)
         assert frames[-1] == ("done", "[DONE]")
         message_payloads = [json.loads(data) for event, data in frames if event == "message"]
-        assert len(message_payloads) >= 2
+        assert len(message_payloads) == 1
 
         completed_payload = message_payloads[0]
         assert completed_payload["current_task"] == first_task.task_id
@@ -2676,7 +2717,13 @@ def test_v1_task_completion_stream_confirms_current_task_then_runs_next_task() -
         assert completed_payload["completion_reason"] == "assistant_final_done"
         assert completed_payload["output"]["message"] == "已向小明转账 200 CNY，转账成功"
 
-        next_payload = message_payloads[-1]
+        continue_frames = _parse_sse_frames(continue_stream_text)
+        assert continue_frames[-1] == ("done", "[DONE]")
+        continue_payloads = _non_recognition_payloads(
+            [json.loads(data) for event, data in continue_frames if event == "message"]
+        )
+        assert continue_payloads
+        next_payload = continue_payloads[-1]
         assert next_payload["current_task"].startswith("task_")
         assert next_payload["current_task"] != first_task.task_id
         assert next_payload["status"] == "waiting_assistant_completion"
