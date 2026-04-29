@@ -156,7 +156,8 @@ def test_v2_slot_extractor_prompt_accepts_recent_messages_and_existing_slots() -
     assert "意图定义、field_catalog、slot_schema、examples、routing_examples" in messages[0].content
     assert "不是用户事实，也不是槽位证据" in messages[0].content
     assert "不能输出 payee_name，也不能猜成" in messages[0].content
-    assert "recent_messages 只用于帮助你理解当前轮和既有槽位之间的上下文连续性" in messages[0].content
+    assert "recent_messages 既可用于理解当前轮和既有槽位之间的上下文连续性" in messages[0].content
+    assert "允许使用 recent_messages/currentDisplay 补槽的前提是：当前轮消息明确表达了复用、指代或延续关系" in messages[0].content
     assert "我要转壹贰叁肆给姐姐" in messages[0].content
     assert "可用上下文片段" in messages[1].content
     assert "如果 value 只来自 intent_json/examples/slot_schema，而不是可用上下文，删除该槽位" in messages[1].content
