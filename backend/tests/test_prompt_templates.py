@@ -105,7 +105,11 @@ def test_v2_graph_planner_prompt_accepts_expected_variables() -> None:
     assert "needs_confirmation=false" in messages[0].content
     assert "field_catalog、slot_schema 和 graph_build_hints" in messages[0].content
     assert "field_code、role、semantic_definition" in messages[0].content
+    assert "不是用户事实，也不是槽位证据" in messages[0].content
     assert "条件阈值只能进入 edge.condition.right_value" in messages[0].content
+    assert "slot_memory 只允许填来自可用上下文的结构化提示" in messages[0].content
+    assert "如果 value 只来自 intent/examples/slot_schema，而不是可用上下文，删除该槽位" in messages[0].content
+    assert "不能填 payee_name=朋友/小明" in messages[0].content
     assert "推荐任务(JSON)" in messages[1].content
     assert "summary" in messages[1].content
     assert '"slot_memory": {}' in messages[1].content
@@ -148,8 +152,14 @@ def test_v2_slot_extractor_prompt_accepts_recent_messages_and_existing_slots() -
     )
 
     assert len(messages) == 2
+    assert "可用上下文包括当前消息、最近对话、已有槽位，以及上游明确给出的推荐或运行时上下文" in messages[0].content
+    assert "意图定义、field_catalog、slot_schema、examples、routing_examples" in messages[0].content
+    assert "不是用户事实，也不是槽位证据" in messages[0].content
+    assert "不能输出 payee_name，也不能猜成" in messages[0].content
     assert "recent_messages 只用于帮助你理解当前轮和既有槽位之间的上下文连续性" in messages[0].content
     assert "我要转壹贰叁肆给姐姐" in messages[0].content
+    assert "可用上下文片段" in messages[1].content
+    assert "如果 value 只来自 intent_json/examples/slot_schema，而不是可用上下文，删除该槽位" in messages[1].content
     assert "最近对话(JSON)" in messages[1].content
     assert '"payee_name":"小红"' in messages[1].content
 
@@ -171,8 +181,14 @@ def test_v2_unified_graph_builder_prompt_accepts_expected_variables() -> None:
 
     assert len(messages) == 2
     assert "slot_schema 是强约束" in messages[0].content
+    assert "已注册意图清单、field_catalog、slot_schema、examples、routing_examples" in messages[0].content
+    assert "不是用户事实，也不是槽位证据" in messages[0].content
     assert "我要转壹贰叁肆给姐姐" in messages[0].content
     assert "field_catalog" in messages[0].content
+    assert "可用上下文里能够明确落地的结构化值" in messages[0].content
+    assert "不能从 examples、routing_examples、slot_schema 示例、常识默认值、无关历史值或模型联想中补值" in messages[0].content
+    assert "如果 value 只来自 intents_json/examples/slot_schema，而不是可用上下文，删除该槽位" in messages[0].content
+    assert "不能填 payee_name=朋友/小明" in messages[0].content
     assert "请尽量输出 node.slot_bindings" in messages[0].content
     assert "条件阈值只能进入 edge.condition.right_value" in messages[0].content
     assert "推荐任务(JSON)" in messages[1].content

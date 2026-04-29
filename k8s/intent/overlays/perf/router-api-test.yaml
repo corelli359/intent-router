@@ -22,6 +22,8 @@ spec:
           env:
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
+            - name: ROUTER_ENV_FILE
+              value: /etc/intent-router/.env.local
             - name: ROUTER_INTENT_CATALOG_BACKEND
               value: "file"
             - name: ROUTER_INTENT_CATALOG_FILE
@@ -32,12 +34,6 @@ spec:
               value: /etc/intent-router/catalog/slot-schemas.json
             - name: ROUTER_INTENT_GRAPH_BUILD_HINTS_FILE
               value: /etc/intent-router/catalog/graph-build-hints.json
-            - name: ROUTER_LLM_API_BASE_URL
-              value: "http://intent-fake-llm.intent.svc.cluster.local:8000/v1"
-            - name: ROUTER_LLM_MODEL
-              value: "fake-router-llm"
-            - name: ROUTER_LLM_FAST_FAKE_ENABLED
-              value: "true"
             - name: ROUTER_AGENT_BARRIER_ENABLED
               value: "true"
             - name: ROUTER_LOG_LEVEL
@@ -87,6 +83,10 @@ spec:
           volumeMounts:
             - name: repo
               mountPath: /workspace
+            - name: router-config
+              mountPath: /etc/intent-router/.env.local
+              subPath: .env.local
+              readOnly: true
             - name: router-intent-catalog
               mountPath: /etc/intent-router/catalog
               readOnly: true
@@ -95,6 +95,12 @@ spec:
           hostPath:
             path: /mnt/intent-router
             type: Directory
+        - name: router-config
+          configMap:
+            name: intent-router-api-env
+            items:
+              - key: .env.local
+                path: .env.local
         - name: router-intent-catalog
           configMap:
             name: intent-router-intent-catalog
