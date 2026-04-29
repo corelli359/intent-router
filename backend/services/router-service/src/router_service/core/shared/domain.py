@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -12,6 +13,20 @@ from router_service.models.intent import IntentFieldDefinition, IntentGraphBuild
 
 
 SESSION_TTL = timedelta(minutes=30)
+
+
+def session_ttl() -> timedelta:
+    """Return the configured idle TTL for router sessions."""
+    raw_value = os.getenv("ROUTER_SESSION_TTL_SECONDS")
+    if raw_value in (None, ""):
+        return SESSION_TTL
+    try:
+        seconds = float(raw_value)
+    except ValueError:
+        return SESSION_TTL
+    if seconds <= 0:
+        return SESSION_TTL
+    return timedelta(seconds=seconds)
 
 
 def utc_now() -> datetime:

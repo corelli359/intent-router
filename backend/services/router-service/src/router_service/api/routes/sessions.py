@@ -862,6 +862,23 @@ async def _assistant_message_json_response(
     resolved_cust_id = _resolve_session_cust_id(orchestrator, session_id, cust_id)
     upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(config_variables)
     try:
+        request_scope = getattr(getattr(orchestrator, "session_store", None), "request_scope", None)
+        serialized_in_session_handler = getattr(orchestrator, "handle_user_message_serialized_in_session", None)
+        if callable(request_scope) and callable(serialized_in_session_handler):
+            async with request_scope(session_id, resolved_cust_id, create=True) as session:
+                serialized_response = await serialized_in_session_handler(
+                    session=session,
+                    content=content,
+                    serializer=_assistant_response_envelope,
+                    assistant_protocol=True,
+                    router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
+                    upstream_config_variables=upstream_config_variables,
+                    upstream_slots_data=upstream_slots_data,
+                    recommend_task=recommend_task,
+                    current_display=current_display,
+                    emit_events=False,
+                )
+            return _assistant_response_dict(serialized_response)
         serialized_handler = getattr(orchestrator, "handle_user_message_serialized", None)
         if callable(serialized_handler):
             serialized_response = await serialized_handler(
@@ -942,23 +959,41 @@ def _assistant_message_stream_response(
     resolved_cust_id = _resolve_session_cust_id(orchestrator, session_id, cust_id)
     upstream_config_variables, upstream_slots_data = _split_upstream_config_variables(config_variables)
 
+    async def process_message() -> None:
+        request_scope = getattr(getattr(orchestrator, "session_store", None), "request_scope", None)
+        in_session_handler = getattr(orchestrator, "handle_user_message_in_session", None)
+        if callable(request_scope) and callable(in_session_handler):
+            async with request_scope(session_id, resolved_cust_id, create=True) as session:
+                await in_session_handler(
+                    session=session,
+                    content=content,
+                    assistant_protocol=True,
+                    router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
+                    upstream_config_variables=upstream_config_variables,
+                    upstream_slots_data=upstream_slots_data,
+                    recommend_task=recommend_task,
+                    current_display=current_display,
+                    return_snapshot=False,
+                    emit_events=True,
+                )
+            return
+        await orchestrator.handle_user_message(
+            session_id=session_id,
+            cust_id=resolved_cust_id,
+            content=content,
+            assistant_protocol=True,
+            router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
+            upstream_config_variables=upstream_config_variables,
+            upstream_slots_data=upstream_slots_data,
+            recommend_task=recommend_task,
+            current_display=current_display,
+            return_snapshot=False,
+            emit_events=True,
+        )
+
     async def event_generator():
         queue = broker.register(session_id)
-        processing_task = asyncio.create_task(
-            orchestrator.handle_user_message(
-                session_id=session_id,
-                cust_id=resolved_cust_id,
-                content=content,
-                assistant_protocol=True,
-                router_only=execution_mode == MessageExecutionMode.ROUTER_ONLY,
-                upstream_config_variables=upstream_config_variables,
-                upstream_slots_data=upstream_slots_data,
-                recommend_task=recommend_task,
-                current_display=current_display,
-                return_snapshot=False,
-                emit_events=True,
-            )
-        )
+        processing_task = asyncio.create_task(process_message())
         try:
             while True:
                 if await http_request.is_disconnected():
@@ -1043,6 +1078,18 @@ async def _assistant_task_completion_json_response(
     orchestrator: GraphRouterOrchestrator,
 ) -> dict[str, Any]:
     """Process one assistant task-completion callback and return the non-stream v0.5 payload."""
+    request_scope = getattr(getattr(orchestrator, "session_store", None), "request_scope", None)
+    serialized_in_session_handler = getattr(orchestrator, "handle_task_completion_serialized_in_session", None)
+    if callable(request_scope) and callable(serialized_in_session_handler):
+        async with request_scope(request.session_id, create=False) as session:
+            serialized_response = await serialized_in_session_handler(
+                session=session,
+                task_id=request.task_id,
+                completion_signal=request.completion_signal,
+                serializer=lambda current_session: _assistant_response_envelope_for_task(current_session, request.task_id),
+                emit_events=False,
+            )
+        return _assistant_response_dict(serialized_response)
     serialized_handler = getattr(orchestrator, "handle_task_completion_serialized", None)
     if callable(serialized_handler):
         serialized_response = await serialized_handler(
@@ -1075,16 +1122,28 @@ def _assistant_task_completion_stream_response(
 ) -> StreamingResponse:
     """Stream router events produced by an assistant task-completion callback."""
 
+    async def process_completion() -> None:
+        request_scope = getattr(getattr(orchestrator, "session_store", None), "request_scope", None)
+        in_session_handler = getattr(orchestrator, "handle_task_completion_in_session", None)
+        if callable(request_scope) and callable(in_session_handler):
+            async with request_scope(request.session_id, create=False) as session:
+                await in_session_handler(
+                    session=session,
+                    task_id=request.task_id,
+                    completion_signal=request.completion_signal,
+                    emit_events=True,
+                )
+            return
+        await orchestrator.handle_task_completion(
+            session_id=request.session_id,
+            task_id=request.task_id,
+            completion_signal=request.completion_signal,
+            emit_events=True,
+        )
+
     async def event_generator():
         queue = broker.register(request.session_id)
-        processing_task = asyncio.create_task(
-            orchestrator.handle_task_completion(
-                session_id=request.session_id,
-                task_id=request.task_id,
-                completion_signal=request.completion_signal,
-                emit_events=True,
-            )
-        )
+        processing_task = asyncio.create_task(process_completion())
         try:
             while True:
                 if await http_request.is_disconnected():
