@@ -177,6 +177,10 @@ def _ag_trans_intent() -> IntentDefinition:
     )
 
 
+def _pay_gas_bill_intent() -> IntentDefinition:
+    return next(intent for intent in _mock_intents() if intent.intent_code == "pay_gas_bill").model_copy(deep=True)
+
+
 def _fallback_general_intent() -> IntentDefinition:
     return IntentDefinition(
         intent_code="FALLBACK_GENERAL",
@@ -199,6 +203,17 @@ class _TransferOnlyRecognizer:
                 candidates=[],
             )
         return RecognitionResult(primary=[], candidates=[])
+
+
+class _TransferThenPaymentRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del intents, recent_messages, long_term_memory, on_delta
+        primary: list[IntentMatch] = []
+        if "转账" in message:
+            primary.append(IntentMatch(intent_code="AG_TRANS", confidence=0.97, reason="fixed transfer"))
+        if "缴费" in message:
+            primary.append(IntentMatch(intent_code="pay_gas_bill", confidence=0.94, reason="fixed payment"))
+        return RecognitionResult(primary=primary, candidates=[])
 
 
 class _RequestContextRecordingRecognizer:
@@ -353,6 +368,93 @@ class _MultiTurnOverrideTransferUnderstandingValidator:
             ("amount",): "请提供金额",
             ("payee_name",): "请提供收款人姓名",
         }.get(tuple(missing_required_slots))
+        return UnderstandingValidationResult(
+            slot_memory=slot_memory,
+            slot_bindings=self._bindings(slot_memory, source_text=current_message),
+            history_slot_keys=[],
+            missing_required_slots=missing_required_slots,
+            ambiguous_slot_keys=[],
+            invalid_slot_keys=[],
+            needs_confirmation=False,
+            can_dispatch=not missing_required_slots,
+            prompt_message=prompt_message,
+            diagnostics=[],
+        )
+
+
+@dataclass
+class _RouterOnlyTransferPaymentUnderstandingValidator:
+    payee_candidates: tuple[str, ...] = ("杨丽敏",)
+
+    def _bindings(self, slot_memory: dict[str, str], *, source_text: str) -> list[SlotBindingState]:
+        return [
+            SlotBindingState(
+                slot_key=slot_key,
+                value=value,
+                source=SlotBindingSource.USER_MESSAGE,
+                source_text=source_text,
+                confidence=0.95,
+            )
+            for slot_key, value in slot_memory.items()
+        ]
+
+    def _digits(self, text: str) -> str:
+        return "".join(character for character in text if character.isdigit())
+
+    def _payee_name(self, current_message: str) -> str | None:
+        for candidate in self.payee_candidates:
+            if candidate in current_message:
+                return candidate
+        return None
+
+    async def validate_node(
+        self,
+        *,
+        intent,
+        node,
+        graph_source_message,
+        current_message,
+        recent_messages=None,
+        long_term_memory=None,
+    ) -> UnderstandingValidationResult:
+        del graph_source_message, recent_messages, long_term_memory
+        slot_memory = dict(node.slot_memory)
+        intent_code = getattr(intent, "intent_code", "")
+        if intent_code == "AG_TRANS":
+            payee_name = self._payee_name(current_message)
+            if payee_name is not None:
+                slot_memory["payee_name"] = payee_name
+            digits = self._digits(current_message)
+            if digits:
+                slot_memory["amount"] = digits
+            required_slots = ("amount", "payee_name")
+            prompt_by_missing = {
+                ("amount", "payee_name"): "请提供金额、收款人姓名",
+                ("amount",): "请提供金额",
+                ("payee_name",): "请提供收款人姓名",
+            }
+        elif intent_code == "pay_gas_bill":
+            digits = self._digits(current_message)
+            if "户号" in current_message and digits:
+                slot_memory["gas_account_number"] = digits
+            elif "元" in current_message and digits:
+                slot_memory["amount"] = digits
+            required_slots = ("gas_account_number", "amount")
+            prompt_by_missing = {
+                ("gas_account_number", "amount"): "请提供燃气户号、缴费金额",
+                ("gas_account_number",): "请提供燃气户号",
+                ("amount",): "请提供缴费金额",
+            }
+        else:
+            required_slots = ()
+            prompt_by_missing = {}
+
+        missing_required_slots = [
+            slot_key
+            for slot_key in required_slots
+            if slot_key not in slot_memory
+        ]
+        prompt_message = prompt_by_missing.get(tuple(missing_required_slots))
         return UnderstandingValidationResult(
             slot_memory=slot_memory,
             slot_bindings=self._bindings(slot_memory, source_text=current_message),
@@ -1790,6 +1892,91 @@ def test_v1_message_stream_router_only_ready_marks_handover() -> None:
         assert state_payloads[0]["output"]["ishandover"] is True
         assert state_payloads[0]["output"]["handOverReason"] == "router_only_ready_for_dispatch"
         assert state_payloads[0]["output"]["message"].startswith("Router 已完成识别和槽位校验")
+
+    asyncio.run(run())
+
+
+def test_v1_task_completion_stream_advances_router_only_handover_to_next_task() -> None:
+    async def run() -> None:
+        app, _ = _test_v2_app(
+            intents=[_ag_trans_intent(), _pay_gas_bill_intent()],
+            recognizer=_TransferThenPaymentRecognizer(),
+            understanding_validator=_RouterOnlyTransferPaymentUnderstandingValidator(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = "router_only_completion_handover_demo"
+            config_variables = [
+                {"name": "custID", "value": "C0001"},
+                {"name": "sessionID", "value": session_id},
+                {"name": "agentSessionID", "value": session_id},
+            ]
+
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "我要先转账,然后进行缴费",
+                    "stream": True,
+                    "executionMode": "router_only",
+                    "config_variables": config_variables,
+                },
+            ) as response:
+                first_stream = "".join([chunk async for chunk in response.aiter_text()])
+
+            first_payloads = _non_recognition_payloads(_message_payloads(first_stream))
+            assert first_payloads[-1]["status"] == "waiting_user_input"
+            assert first_payloads[-1]["intent_code"] == "AG_TRANS"
+            assert first_payloads[-1]["message"] == "请提供金额、收款人姓名"
+
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "给杨丽敏转500元",
+                    "stream": True,
+                    "executionMode": "router_only",
+                    "config_variables": config_variables,
+                },
+            ) as response:
+                ready_stream = "".join([chunk async for chunk in response.aiter_text()])
+
+            ready_payloads = _non_recognition_payloads(_message_payloads(ready_stream))
+            ready_payload = ready_payloads[-1]
+            current_task = ready_payload["current_task"]
+            assert ready_payload["status"] == "ready_for_dispatch"
+            assert ready_payload["intent_code"] == "AG_TRANS"
+            assert ready_payload["slot_memory"] == {"payee_name": "杨丽敏", "amount": "500"}
+            assert ready_payload["output"]["ishandover"] is True
+
+            async with client.stream(
+                "POST",
+                "/api/v1/task/completion",
+                json={
+                    "sessionId": session_id,
+                    "taskId": current_task,
+                    "completionSignal": 2,
+                    "stream": True,
+                },
+            ) as response:
+                completion_stream = "".join([chunk async for chunk in response.aiter_text()])
+
+        assert _parse_sse_frames(completion_stream)[-1] == ("done", "[DONE]")
+        completion_payloads = _message_payloads(completion_stream)
+        assert completion_payloads
+        assert all(payload.get("ok") is not False for payload in completion_payloads)
+        assert all(payload.get("errorCode") != "ROUTER_TASK_NOT_FOUND" for payload in completion_payloads)
+        final_payload = completion_payloads[-1]
+        assert final_payload["status"] == "waiting_user_input"
+        assert final_payload["intent_code"] == "pay_gas_bill"
+        assert final_payload["current_task"] != current_task
+        assert final_payload["message"] == "请提供燃气户号、缴费金额"
+        assert final_payload["task_list"][0] == {"name": current_task, "status": "completed"}
+        assert final_payload["task_list"][1]["status"] == "waiting"
 
     asyncio.run(run())
 

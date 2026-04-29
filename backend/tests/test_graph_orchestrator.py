@@ -376,7 +376,7 @@ def test_graph_orchestrator_drain_graph_downgrades_running_exit_to_debug() -> No
     asyncio.run(run())
 
 
-def test_graph_orchestrator_serialized_message_response_preserves_handover_graph_before_cleanup() -> None:
+def test_graph_orchestrator_router_only_handover_keeps_graph_for_completion_callback() -> None:
     async def run() -> None:
         orchestrator = GraphRouterOrchestrator(publish_event=lambda event: None)
         graph = ExecutionGraphState(
@@ -443,13 +443,10 @@ def test_graph_orchestrator_serialized_message_response_preserves_handover_graph
             },
             "shared_slot_memory": {},
         }
-        assert session.current_graph is None
+        assert session.current_graph is graph
         assert session.pending_graph is None
-        assert session.shared_slot_memory == {
-            "amount": "500",
-            "payee_name": "王芳",
-        }
-        assert session.business_memory_digests[-1].status == "ready_for_dispatch"
+        assert session.shared_slot_memory == {}
+        assert session.business_memory_digests == []
 
     asyncio.run(run())
 

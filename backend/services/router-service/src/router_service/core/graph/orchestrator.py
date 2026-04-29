@@ -229,13 +229,14 @@ class GraphRouterOrchestrator:
         session: GraphSessionState,
         serializer: Callable[[GraphSessionState], SerializedResponseT],
     ) -> SerializedResponseT | None:
-        """Compact the current handover-ready business after preserving one response payload."""
+        """Compact terminal handover businesses after preserving one response payload."""
         business = session.handover_business()
         if business is None:
             return None
         response_dump = serializer(session)
-        session.finalize_business(business.business_id)
-        session.touch()
+        if not (business.router_only_mode and business.graph.status == GraphStatus.READY_FOR_DISPATCH):
+            session.finalize_business(business.business_id)
+            session.touch()
         return response_dump
 
     def _finalize_handover_business(self, session: GraphSessionState) -> GraphRouterSnapshot | None:
@@ -421,7 +422,10 @@ class GraphRouterOrchestrator:
                     emit_events=emit_events,
                 )
                 if completion_finalized and session.current_graph is not None:
-                    await self._drain_graph(session, session.current_graph.source_message)
+                    if session.router_only_mode:
+                        await self._drain_graph_router_only(session, session.current_graph.source_message)
+                    else:
+                        await self._drain_graph(session, session.current_graph.source_message)
                 snapshot = self._finalize_handover_business(session)
                 if snapshot is None:
                     snapshot = self._build_session_dump(session)
@@ -447,7 +451,10 @@ class GraphRouterOrchestrator:
                     emit_events=emit_events,
                 )
                 if completion_finalized and session.current_graph is not None:
-                    await self._drain_graph(session, session.current_graph.source_message)
+                    if session.router_only_mode:
+                        await self._drain_graph_router_only(session, session.current_graph.source_message)
+                    else:
+                        await self._drain_graph(session, session.current_graph.source_message)
                 serialized = self._finalize_handover_business_with(session, serializer)
                 if serialized is None:
                     serialized = serializer(session)
