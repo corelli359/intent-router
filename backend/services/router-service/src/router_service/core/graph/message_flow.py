@@ -4,12 +4,14 @@ from collections.abc import Awaitable, Callable
 import logging
 from typing import Any
 
-from router_service.core.shared.domain import ChatMessage, utc_now
+from router_service.core.shared.domain import ChatMessage, IntentMatch, utc_now
 from router_service.core.shared.diagnostics import RouterDiagnostic, RouterDiagnosticCode
+from router_service.core.graph.constants import TERMINAL_NODE_STATUSES
 from router_service.core.graph.compiler import GraphCompiler
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphNodeState,
+    GraphNodeStatus,
     GraphRouterSnapshot,
     GraphSessionState,
     GraphStatus,
@@ -21,6 +23,7 @@ from router_service.core.shared.graph_domain import (
 )
 from router_service.core.graph.session_store import GraphSessionStore
 from router_service.core.graph.state_sync import GraphStateSync
+from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.recognition.understanding_service import IntentUnderstandingService
 from router_service.core.support.llm_client import LLMServiceUnavailableError, llm_exception_is_retryable
 from router_service.core.graph.recommendation_router import ProactiveRecommendationRouter
@@ -236,6 +239,7 @@ class GraphMessageFlow:
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
                 if should_continue_current_graph:
+                    await self._publish_continue_recognition(session)
                     await self.drain_graph(session, message_content)
                     return self.snapshot_session(session.session_id) if return_snapshot else None
 
@@ -277,6 +281,48 @@ class GraphMessageFlow:
         if not normalized:
             return False
         return normalized in CONTINUE_GRAPH_MESSAGES
+
+    async def _publish_continue_recognition(self, session: GraphSessionState) -> None:
+        """Emit a recognition-shaped SSE frame for the next graph node on explicit continue."""
+        graph = session.current_graph
+        if graph is None:
+            return
+        self.state_sync.refresh_node_states(graph)
+        node = self._next_node_for_continue_recognition(graph)
+        if node is None:
+            return
+        recognition = RecognitionResult(
+            primary=[
+                IntentMatch(
+                    intent_code=node.intent_code,
+                    confidence=node.confidence or 1.0,
+                    reason="continued current graph",
+                )
+            ],
+            candidates=[],
+            diagnostics=[],
+        )
+        await self.state_sync.event_publisher.publish_recognition_completed(
+            session,
+            recognition=recognition,
+        )
+
+    def _next_node_for_continue_recognition(self, graph: ExecutionGraphState) -> GraphNodeState | None:
+        """Return the node that an explicit continue turn is about to advance."""
+        ready_node = next(
+            (node for node in sorted(graph.nodes, key=lambda item: item.position) if node.status == GraphNodeStatus.READY),
+            None,
+        )
+        if ready_node is not None:
+            return ready_node
+        return next(
+            (
+                node
+                for node in sorted(graph.nodes, key=lambda item: item.position)
+                if node.status not in TERMINAL_NODE_STATUSES
+            ),
+            None,
+        )
 
     async def handle_user_message_in_session(
         self,

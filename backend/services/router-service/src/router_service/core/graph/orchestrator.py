@@ -1529,7 +1529,7 @@ class GraphRouterOrchestrator:
                 graph_source_message=graph.source_message,
                 current_message=current_message,
                 recent_messages=self.context_builder.append_recommend_task_messages(
-                    self._recent_messages_without_current_turn(
+                    self._recent_messages_for_understanding(
                         session,
                         current_message=current_message,
                     ),
@@ -1898,12 +1898,7 @@ class GraphRouterOrchestrator:
         )
         current_display = None
         if include_request_context and hasattr(session, "current_display"):
-            current_display_raw = session.current_display()
-            if current_display_raw is not None:
-                current_display = [
-                    f"[CURRENT_DISPLAY] {msg.get('role', 'user')}: {msg.get('content', '')}"
-                    for msg in current_display_raw
-                ]
+            current_display = self._current_display_messages(session)
         return self.context_builder.build_task_context(
             session,
             task=task,
@@ -1911,6 +1906,34 @@ class GraphRouterOrchestrator:
             recommend_task=recommend_task,
             current_display=current_display,
         )
+
+    def _current_display_messages(self, session: GraphSessionState) -> list[str] | None:
+        """Render request-scoped currentDisplay items for recognizer/slot context."""
+        if not hasattr(session, "current_display"):
+            return None
+        current_display_raw = session.current_display()
+        if current_display_raw is None:
+            return None
+        return [
+            f"[CURRENT_DISPLAY] {msg.get('role', 'user')}: {msg.get('content', '')}"
+            for msg in current_display_raw
+        ]
+
+    def _recent_messages_for_understanding(
+        self,
+        session: GraphSessionState,
+        *,
+        current_message: str,
+    ) -> list[str]:
+        """Return slot-understanding context including currentDisplay when supplied."""
+        recent_messages = self._recent_messages_without_current_turn(
+            session,
+            current_message=current_message,
+        )
+        current_display = self._current_display_messages(session)
+        if not current_display:
+            return recent_messages
+        return [*current_display, *recent_messages]
 
     def _recent_messages_without_current_turn(
         self,
