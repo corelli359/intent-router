@@ -146,6 +146,7 @@ class GraphCompiler:
                 recommendation_context=recommendation_context,
             )
 
+            recognition_event_deferred = False
             if self.understanding_service.has_graph_builder and self.planning_policy == "always":
                 build_kwargs: dict[str, Any] = {
                     "recent_messages": recent_messages,
@@ -166,10 +167,11 @@ class GraphCompiler:
                 recognition = build_result.recognition
                 graph = build_result.graph
             elif recognition is None:
+                recognition_event_deferred = emit_events
                 recognize_kwargs: dict[str, Any] = {
                     "recent_messages": recent_messages,
                     "long_term_memory": long_term_memory,
-                    "emit_events": emit_events,
+                    "emit_events": False,
                 }
                 if _callable_supports_keyword(
                     self.understanding_service.recognize_message,
@@ -210,6 +212,11 @@ class GraphCompiler:
                         len(recognition.primary),
                         len(recognition.candidates),
                     )
+                    if recognition_event_deferred:
+                        await self.understanding_service.event_publisher.publish_recognition_completed(
+                            session,
+                            recognition=recognition,
+                        )
                     return GraphCompilationResult(
                         recognition=recognition,
                         graph=None,
@@ -250,6 +257,13 @@ class GraphCompiler:
                     long_term_memory=long_term_memory,
                 )
 
+            recognition = self._align_recognition_to_graph_order(recognition=recognition, graph=graph)
+            if recognition_event_deferred:
+                await self.understanding_service.event_publisher.publish_recognition_completed(
+                    session,
+                    recognition=recognition,
+                )
+
             logger.debug(
                 "Compiler result (trace_id=%s, session_id=%s, primary_intents=%s, candidate_intents=%s, graph_nodes=%s, graph_status=%s)",
                 current_trace_id(),
@@ -265,6 +279,33 @@ class GraphCompiler:
                 no_match=False,
                 diagnostics=diagnostics,
             )
+
+    def _align_recognition_to_graph_order(
+        self,
+        *,
+        recognition: RecognitionResult,
+        graph: ExecutionGraphState,
+    ) -> RecognitionResult:
+        """Order recognition matches by the graph nodes that will be advanced."""
+        if not recognition.primary or not graph.nodes:
+            return recognition
+        remaining = list(recognition.primary)
+        ordered: list[IntentMatch] = []
+        for node in sorted(graph.nodes, key=lambda item: item.position):
+            for index, match in enumerate(remaining):
+                if match.intent_code != node.intent_code:
+                    continue
+                ordered.append(match)
+                remaining.pop(index)
+                break
+        if not ordered:
+            return recognition
+        ordered.extend(remaining)
+        return RecognitionResult(
+            primary=ordered,
+            candidates=recognition.candidates,
+            diagnostics=recognition.diagnostics,
+        )
 
     def _exclude_inflight_user_message(
         self,

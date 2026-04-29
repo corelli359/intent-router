@@ -646,3 +646,335 @@ data: [DONE]
 - 等待补槽时，用户补充 `txt` 后可继续执行。
 - `currentDisplay` 不覆盖显式 `txt`。
 - `txt` 与 `recommendTask` 冲突时，以 `txt` 为准。
+
+## 8. k8s catalog + router_only 实测记录
+
+测试时间：2026-04-29。
+
+测试前提：
+
+- Router 使用 `.venv` 和 `--reload` 启动。
+- Router catalog 使用 `k8s/intent/router-intent-catalog/`。
+- 子智能体停止：`8102/8104` 均无法连接。
+- 请求统一带 `"stream": true` 和 `"executionMode": "router_only"`。
+
+启动命令模板：
+
+```bash
+ROUTER_LLM_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1" \
+ROUTER_LLM_API_KEY="<your-api-key>" \
+ROUTER_LLM_MODEL="qwen3.6-flash-2026-04-16" \
+ROUTER_INTENT_CATALOG_BACKEND="file" \
+ROUTER_INTENT_CATALOG_FILE="k8s/intent/router-intent-catalog/intents.json" \
+ROUTER_INTENT_FIELD_CATALOG_FILE="k8s/intent/router-intent-catalog/field-catalogs.json" \
+ROUTER_INTENT_SLOT_SCHEMA_FILE="k8s/intent/router-intent-catalog/slot-schemas.json" \
+ROUTER_INTENT_GRAPH_BUILD_HINTS_FILE="k8s/intent/router-intent-catalog/graph-build-hints.json" \
+.venv/bin/python -m uvicorn router_service.api.app:app \
+  --reload \
+  --host 127.0.0.1 \
+  --port 8012
+```
+
+健康检查：
+
+```bash
+curl -sS http://127.0.0.1:8012/health
+```
+
+实际输出：
+
+```text
+{"status":"ok"}
+```
+
+### 8.1 基础转账
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_single_k8s_20260429_001",
+    "txt": "给小明转500元",
+    "stream": true,
+    "executionMode": "router_only"
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,"current_task":"","task_list":[],"status":"running","intent_code":"AG_TRANS","completion_state":0,"completion_reason":"intent_recognized","slot_memory":{},"message":"意图识别完成: AG_TRANS","output":{},"stage":"intent_recognition",...}
+
+event: message
+data: {"ok":true,"current_task":"task_9c9489db9d","task_list":[{"name":"task_9c9489db9d","status":"waiting"}],"status":"ready_for_dispatch","intent_code":"AG_TRANS","completion_state":0,"completion_reason":"router_ready_for_dispatch","slot_memory":{"amount":"500","payee_name":"小明"},"message":"路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",...}
+
+event: done
+data: [DONE]
+```
+
+结论：通过。k8s catalog 下转账意图码为 `AG_TRANS`。
+
+### 8.2 recommendTask 多任务推进
+
+k8s catalog 中燃气/缴费类意图码为 `AG_PAYMENT`。当前 k8s `slot-schemas.json` 中 `AG_PAYMENT` 没有必填槽位，因此 router_only 下会直接停在可分发边界，不会反问燃气户号或金额。
+
+发起第一个和第三个推荐任务：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_recommend_mixed_k8s_20260429_001",
+    "txt": "选第一个和第三个",
+    "stream": true,
+    "executionMode": "router_only",
+    "currentDisplay": [
+      {"role": "assistant", "content": "当前推荐：1. 给小明转账500元；2. 给小刚转账200元；3. 缴燃气费"}
+    ],
+    "recommendTask": [
+      {"intent_code": "AG_TRANS", "title": "给小明转账500元", "slot_memory": {"payee_name": "小明", "amount": "500"}},
+      {"intent_code": "AG_TRANS", "title": "给小刚转账200元", "slot_memory": {"payee_name": "小刚", "amount": "200"}},
+      {"intent_code": "AG_PAYMENT", "title": "缴燃气费", "slot_memory": {}}
+    ]
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,"current_task":"","task_list":[],"status":"running","intent_code":"AG_PAYMENT","completion_state":0,"completion_reason":"intent_recognized","slot_memory":{},"message":"意图识别完成: AG_PAYMENT, AG_TRANS","output":{},"stage":"intent_recognition",...}
+
+event: message
+data: {"ok":true,"current_task":"task_beea3c4a91","task_list":[{"name":"task_beea3c4a91","status":"waiting"},{"name":"task_1d095fd36f","status":"waiting"}],"status":"ready_for_dispatch","intent_code":"AG_TRANS","completion_state":0,"completion_reason":"router_ready_for_dispatch","slot_memory":{"amount":"500","payee_name":"小明"},"message":"路由识别完成：事项「给小明转账500元」已具备执行条件，当前为 router_only 模式，未调用执行 agent",...}
+
+event: done
+data: [DONE]
+```
+
+完成第一个任务：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/task/completion \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_recommend_mixed_k8s_20260429_001",
+    "taskId": "task_beea3c4a91",
+    "completionSignal": 2,
+    "stream": true
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,"current_task":"task_beea3c4a91","task_list":[{"name":"task_beea3c4a91","status":"completed"},{"name":"task_1d095fd36f","status":"waiting"}],"status":"completed","intent_code":"AG_TRANS","completion_state":2,"completion_reason":"assistant_final_done","slot_memory":{"amount":"500","payee_name":"小明"},"message":"执行图已完成","output":{}}
+
+event: done
+data: [DONE]
+```
+
+显式继续第二个任务：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_recommend_mixed_k8s_20260429_001",
+    "txt": "继续",
+    "stream": true,
+    "executionMode": "router_only",
+    "currentDisplay": [
+      {"role": "assistant", "content": "给小明转账500元已完成，下一项是缴燃气费"}
+    ]
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,"current_task":"","task_list":[],"status":"running","intent_code":"AG_PAYMENT","completion_state":0,"completion_reason":"intent_recognized","slot_memory":{},"message":"意图识别完成: AG_PAYMENT","output":{},"stage":"intent_recognition","details":{"primary":[{"intent_code":"AG_PAYMENT","confidence":0.99,"reason":"continued current graph"}],"candidates":[]}}
+
+event: message
+data: {"ok":true,"current_task":"task_1d095fd36f","task_list":[{"name":"task_beea3c4a91","status":"completed"},{"name":"task_1d095fd36f","status":"waiting"}],"status":"ready_for_dispatch","intent_code":"AG_PAYMENT","completion_state":0,"completion_reason":"router_ready_for_dispatch","slot_memory":{},"message":"路由识别完成：事项「缴燃气费」已具备执行条件，当前为 router_only 模式，未调用执行 agent",...}
+
+event: done
+data: [DONE]
+```
+
+结论：通过。completion 只完成当前任务，不自动推进；继续时先输出第二任务意图帧，再输出 router_only 分发边界。
+
+### 8.3 补槽
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_missing_slot_k8s_20260429_001",
+    "txt": "转账",
+    "stream": true,
+    "executionMode": "router_only"
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,...,"status":"running","intent_code":"AG_TRANS","message":"意图识别完成: AG_TRANS","stage":"intent_recognition",...}
+
+event: message
+data: {"ok":true,"current_task":"task_6e38628f84","task_list":[{"name":"task_6e38628f84","status":"waiting"}],"status":"waiting_user_input","intent_code":"AG_TRANS","completion_reason":"router_waiting_user_input","slot_memory":{},"message":"请提供金额、收款人姓名","output":{}}
+
+event: done
+data: [DONE]
+```
+
+补充槽位：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_missing_slot_k8s_20260429_001",
+    "txt": "给小红转300元",
+    "stream": true,
+    "executionMode": "router_only"
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,"current_task":"task_6e38628f84","task_list":[{"name":"task_6e38628f84","status":"waiting"}],"status":"ready_for_dispatch","intent_code":"AG_TRANS","completion_reason":"router_ready_for_dispatch","slot_memory":{"amount":"300","payee_name":"小红"},"message":"路由识别完成：事项「立即发起一笔转账交易」已具备执行条件，当前为 router_only 模式，未调用执行 agent",...}
+
+event: done
+data: [DONE]
+```
+
+结论：通过。等待补槽时不会调用子智能体，补齐后进入 router_only 分发边界。
+
+### 8.4 currentDisplay 历史记忆
+
+从 `currentDisplay` 复用历史金额：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_current_display_same_amount_20260429_001",
+    "txt": "给小红也转同样金额",
+    "stream": true,
+    "executionMode": "router_only",
+    "currentDisplay": [
+      {"role": "user", "content": "给小明转500元"},
+      {"role": "assistant", "content": "已受理向小明转账500元，等待确认"},
+      {"role": "user", "content": "确认完成"},
+      {"role": "assistant", "content": "转账任务已完成"}
+    ]
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,...,"stage":"intent_recognition","intent_code":"AG_TRANS",...}
+
+event: message
+data: {"ok":true,"status":"ready_for_dispatch","intent_code":"AG_TRANS","slot_memory":{"payee_name":"小红","amount":"500"},...}
+
+event: done
+data: [DONE]
+```
+
+从 `currentDisplay` 复用历史收款人：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_current_display_same_payee_20260429_001",
+    "txt": "给刚才那个收款人转300元",
+    "stream": true,
+    "executionMode": "router_only",
+    "currentDisplay": [
+      {"role": "user", "content": "给小明转500元"},
+      {"role": "assistant", "content": "已受理向小明转账500元，等待确认"},
+      {"role": "user", "content": "确认完成"},
+      {"role": "assistant", "content": "转账任务已完成"}
+    ]
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,...,"stage":"intent_recognition","intent_code":"AG_TRANS",...}
+
+event: message
+data: {"ok":true,"status":"ready_for_dispatch","intent_code":"AG_TRANS","slot_memory":{"amount":"300","payee_name":"小明"},...}
+
+event: done
+data: [DONE]
+```
+
+结论：通过。当前用户输入出现明确指代时，Router 可以从 `currentDisplay` 历史中提取必要槽位；当前 `txt` 明确给出的槽位仍优先。
+
+### 8.5 继续边界
+
+没有待办任务时直接说继续：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_continue_no_pending_20260429_001",
+    "txt": "继续",
+    "stream": true,
+    "executionMode": "router_only"
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,"current_task":"","task_list":[],"status":"running","intent_code":"AG_ASK","completion_reason":"intent_recognized","message":"意图识别完成: AG_ASK","stage":"intent_recognition",...}
+
+event: message
+data: {"ok":true,"current_task":"task_f61870ea0a","task_list":[{"name":"task_f61870ea0a","status":"waiting"}],"status":"draft","intent_code":"AG_ASK","completion_reason":"running","slot_memory":{},"message":"执行图等待节点确认","output":{}}
+
+event: done
+data: [DONE]
+```
+
+补槽未完成时说继续：
+
+```bash
+curl -sS -N -X POST http://127.0.0.1:8012/api/v1/message \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sessionId": "ro_continue_during_slot_20260429_001",
+    "txt": "继续",
+    "stream": true,
+    "executionMode": "router_only"
+  }'
+```
+
+实际关键输出：
+
+```text
+event: message
+data: {"ok":true,"current_task":"task_db0cf8dd0f","task_list":[{"name":"task_db0cf8dd0f","status":"waiting"}],"status":"waiting_user_input","intent_code":"AG_TRANS","completion_reason":"router_waiting_user_input","slot_memory":{},"message":"请提供金额、收款人姓名","output":{}}
+
+event: done
+data: [DONE]
+```
+
+结论：没有待办任务时不会推进业务任务；已有任务等待补槽时，`继续` 不会跳过当前任务，仍要求补齐缺失槽位。
