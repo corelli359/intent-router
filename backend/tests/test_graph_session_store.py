@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from router_service.core.graph.session_store import GraphSessionStore
-from router_service.core.shared.domain import SESSION_TTL, utc_now
+from router_service.core.shared.domain import SESSION_TTL
 from router_service.core.support.memory_store import LongTermMemoryStore
 
 
@@ -92,34 +92,6 @@ def test_session_expiry_falls_back_to_default_ttl_when_env_is_invalid(monkeypatc
     session = store.create(cust_id="cust-default-ttl", session_id="default-ttl")
 
     assert session.expires_at - session.created_at > SESSION_TTL - timedelta(seconds=1)
-
-
-def test_purge_expired_skips_active_session_lock() -> None:
-    memory = SpyMemory()
-    store = GraphSessionStore(long_term_memory=memory)
-    session = store.create(cust_id="cust-active", session_id="active-expired")
-    session.expires_at = session.created_at - timedelta(seconds=1)
-    store.note_session_expiry(session)
-
-    async def run() -> None:
-        async with store.session_lock(session.session_id):
-            removed = store.purge_expired()
-            assert removed == []
-            assert memory.promoted_sessions == []
-            assert store.get(session.session_id) is session
-            assert session.expires_at > utc_now()
-
-    asyncio.run(run())
-
-    session.expires_at = utc_now() - timedelta(seconds=1)
-    store.note_session_expiry(session)
-
-    removed = store.purge_expired()
-
-    assert removed == [session.session_id]
-    assert memory.promoted_sessions == [session.session_id]
-    with pytest.raises(KeyError):
-        store.get(session.session_id)
 
 
 def test_session_lock_serializes_same_session_id() -> None:

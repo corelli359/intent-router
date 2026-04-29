@@ -22,7 +22,6 @@ class GraphSessionStore:
         """Initialize the session store and its long-term memory backend."""
         self._sessions: dict[str, GraphSessionState] = {}
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        self._active_session_counts: dict[str, int] = {}
         self._expiry_heap: list[tuple[datetime, str]] = []
         self._state_lock = threading.RLock()
         self.long_term_memory = long_term_memory or LongTermMemoryStore()
@@ -45,17 +44,7 @@ class GraphSessionStore:
         with self._state_lock:
             lock = self._locks[session_id]
         async with lock:
-            with self._state_lock:
-                self._active_session_counts[session_id] = self._active_session_counts.get(session_id, 0) + 1
-            try:
-                yield
-            finally:
-                with self._state_lock:
-                    active_count = self._active_session_counts.get(session_id, 0)
-                    if active_count <= 1:
-                        self._active_session_counts.pop(session_id, None)
-                    else:
-                        self._active_session_counts[session_id] = active_count - 1
+            yield
 
     def get_or_create(self, session_id: str | None, cust_id: str) -> GraphSessionState:
         """Resolve a session id, recreating expired or customer-mismatched sessions when needed."""
@@ -121,10 +110,6 @@ class GraphSessionStore:
                     self._push_expiry(session)
                     continue
                 if not session.is_expired(now=current_time):
-                    self._push_expiry(session)
-                    continue
-                if self._active_session_counts.get(session_id, 0) > 0:
-                    session.touch()
                     self._push_expiry(session)
                     continue
                 self.long_term_memory.promote_session(self._compat_session_view(session))
