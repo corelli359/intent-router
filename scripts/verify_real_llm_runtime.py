@@ -23,6 +23,17 @@ from router_service.core.shared.domain import IntentDefinition  # noqa: E402
 from router_service.core.recognition.recognizer import LLMIntentRecognizer  # noqa: E402
 
 
+def _recognition_payload(recognition) -> dict[str, object]:
+    return {
+        "primary": [match.model_dump(mode="json") for match in recognition.primary],
+        "candidates": [match.model_dump(mode="json") for match in recognition.candidates],
+        "diagnostics": [
+            item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+            for item in (recognition.diagnostics or [])
+        ],
+    }
+
+
 def _masked_key(api_key: str | None) -> str | None:
     if not api_key:
         return None
@@ -98,7 +109,7 @@ async def _run() -> None:
             ),
         ],
     )
-    print(json.dumps({"recognition": recognition.model_dump()}, ensure_ascii=False, indent=2))
+    print(json.dumps({"recognition": _recognition_payload(recognition)}, ensure_ascii=False, indent=2))
 
 
 def main() -> int:

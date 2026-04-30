@@ -38,6 +38,7 @@ from router_service.core.shared.graph_domain import (  # noqa: E402
 from router_service.core.graph.planner import (  # noqa: E402
     LLMGraphTurnInterpreter,
     LLMIntentGraphPlanner,
+    TurnDecisionPayload,
 )
 from router_service.core.graph.recommendation_router import LLMProactiveRecommendationRouter  # noqa: E402
 from langchain_core.prompts import ChatPromptTemplate  # noqa: E402
@@ -1459,6 +1460,106 @@ def test_llm_turn_interpreter_uses_structured_llm_decision() -> None:
         assert decision.target_intent_code == "query_account_balance"
 
     asyncio.run(run())
+
+
+def test_llm_blocked_turn_interpreter_merges_action_and_intent_recognition() -> None:
+    class FakeTurnClient:
+        def __init__(self) -> None:
+            self.variables: dict[str, Any] | None = None
+            self.model: str | None = None
+
+        async def run_json(self, *, prompt, variables, model=None, on_delta=None):
+            del prompt, on_delta
+            self.variables = dict(variables)
+            self.model = model
+            return {
+                "action": "replan",
+                "reason": "用户在补槽阶段切换为余额查询",
+                "primary_intents": [
+                    {
+                        "intent_code": "query_account_balance",
+                        "confidence": 0.98,
+                        "reason": "明确提出查余额",
+                    }
+                ],
+                "candidate_intents": [],
+            }
+
+    async def run() -> None:
+        client = FakeTurnClient()
+        interpreter = LLMGraphTurnInterpreter(client, model="turn-model")
+        recommend_task = [{"intentCode": "transfer_money", "title": "给张三转账"}]
+        decision = await interpreter.interpret_blocked_turn(
+            mode="waiting_node",
+            message="别转了，先帮我查余额",
+            waiting_node=GraphNodeState(
+                intent_code="transfer_money",
+                title="转账",
+                confidence=0.9,
+            ),
+            current_graph=ExecutionGraphState(source_message="帮我转账"),
+            active_intents=[
+                IntentDefinition(
+                    intent_code="query_account_balance",
+                    name="查询余额",
+                    description="查询账户余额",
+                    examples=["查余额"],
+                    agent_url="https://agent.example.com/balance",
+                ),
+                IntentDefinition(
+                    intent_code="transfer_money",
+                    name="转账",
+                    description="执行转账",
+                    examples=["给张三转账"],
+                    agent_url="https://agent.example.com/transfer",
+                ),
+            ],
+            recent_messages=["user: 我要转账", "assistant: 请提供金额"],
+            long_term_memory=["常用账户：工资卡"],
+            recommend_task=recommend_task,
+        )
+
+        assert client.model == "turn-model"
+        assert client.variables is not None
+        assert json.loads(client.variables["recommend_task_json"]) == recommend_task
+        assert json.loads(client.variables["recent_messages_json"]) == ["user: 我要转账", "assistant: 请提供金额"]
+        assert json.loads(client.variables["long_term_memory_json"]) == ["常用账户：工资卡"]
+        assert [item["intent_code"] for item in json.loads(client.variables["intents_json"])] == [
+            "query_account_balance",
+            "transfer_money",
+        ]
+        assert json.loads(client.variables["primary_intents_json"]) == []
+        assert decision.action == "replan"
+        assert decision.target_intent_code == "query_account_balance"
+        assert [match.intent_code for match in decision.primary_intents] == ["query_account_balance"]
+
+    asyncio.run(run())
+
+
+def test_turn_decision_clears_intent_fields_for_non_replan_actions() -> None:
+    decision = TurnDecisionPayload(
+        action="cancel_current",
+        reason="用户取消当前任务",
+        target_intent_code="transfer_money",
+        primary_intents=[
+            IntentMatch(
+                intent_code="query_account_balance",
+                confidence=0.98,
+                reason="should be ignored",
+            )
+        ],
+        candidate_intents=[
+            IntentMatch(
+                intent_code="pay_gas_bill",
+                confidence=0.72,
+                reason="should be ignored",
+            )
+        ],
+    )
+
+    assert decision.target_intent_code is None
+    assert decision.primary_intents == []
+    assert decision.candidate_intents == []
 
 
 def test_llm_graph_planner_falls_back_when_llm_call_fails() -> None:

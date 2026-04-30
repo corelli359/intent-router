@@ -1,6 +1,6 @@
 # router-service 助手协议回归测试用例 v0.5
 
-更新时间：2026-04-28
+更新时间：2026-04-30
 
 ## 1. 测试场景矩阵
 
@@ -24,6 +24,8 @@
 | S14 | 旧 session 接口不可用 | 路由注册检查 | 不调用独立 session API | active router 中无 `/sessions` 生产入口 | 已覆盖 |
 | S15 | assistant-service 流式代理 | `/api/assistant/run/stream` | 助手服务转发 router SSE | 不重写 SSE frame，透传 `message/done` | 已覆盖 |
 | S16 | `recommendTask/currentDisplay` router 独用上下文 | `/api/v1/message` `stream=true` | 上游传推荐任务和展示历史 | 只影响 router 识别/规划 prompt，不透传给子智能体 | 已覆盖核心边界，需补流式等价 |
+| S17 | PR #8 识别顺序与图卡片推送一致 | `/api/v1/message` `stream=true` + 内部 `graph.proposed` | 识别原始顺序与执行图顺序不一致 | 识别帧按图节点顺序输出，后续 `task_list` / `graph_card.nodes` 同序 | 已覆盖 |
+| S18 | blocked-turn 合并识别 | `/api/v1/message` `stream=true` + 内部 turn interpreter | 补槽/待确认阶段用户提出新意图 | 一次 turn interpreter 调用同时输出 `action=replan` 与 `primary_intents`，不再额外调用普通 recognizer | 已覆盖单元与 LLM payload |
 
 ## 2. 测试目标
 
@@ -35,6 +37,8 @@
 6. 多任务图中，助手确认当前任务完成后，Router 必须继续调度后续 ready 节点。
 7. 多轮提槽、槽位覆盖、意图取消、意图切换、多意图图确认都必须有明确回归路径。
 8. `recommendTask/currentDisplay` 是 router 独用上下文，只能影响识别/规划，不能进入子智能体 `input_context`。
+9. 识别结果、`task_list`、图卡片节点必须使用同一执行图顺序，不能出现首帧识别与后续卡片首任务错位。
+10. blocked-turn 阶段的动作判断与新意图识别应由 turn interpreter 一次完成，避免同轮重复 LLM 调用。
 
 不覆盖前端，不覆盖 admin。
 
@@ -53,7 +57,7 @@ pytest backend/tests/test_router_api_v2.py \
 当前基线结果：
 
 ```text
-43 passed
+48 passed
 ```
 
 PR `recommendTask/currentDisplay` 相关扩展检查：
@@ -73,11 +77,64 @@ pytest backend/tests/test_prompt_templates.py \
 12 passed
 ```
 
+PR #8 识别顺序 / 卡片推送检查：
+
+```bash
+pytest \
+  backend/tests/test_graph_compiler.py::test_graph_compiler_defers_recognition_event_until_it_matches_graph_order \
+  backend/tests/test_v2_presentation.py::test_graph_event_publisher_pushes_pending_graph_card_payload \
+  backend/tests/test_router_api_v2.py::test_v1_message_stream_aligns_recognition_with_graph_card_task_order \
+  -q
+```
+
+当前 PR #8 检查结果：
+
+```text
+3 passed
+```
+
+blocked-turn 合并识别检查：
+
+```bash
+pytest \
+  backend/tests/test_understanding_service.py::test_waiting_node_turn_can_merge_action_and_intent_recognition_in_one_call \
+  backend/tests/test_llm_integration.py::test_llm_blocked_turn_interpreter_merges_action_and_intent_recognition \
+  backend/tests/test_llm_integration.py::test_turn_decision_clears_intent_fields_for_non_replan_actions \
+  backend/tests/test_prompt_templates.py::test_v2_turn_interpreter_prompt_accepts_expected_variables \
+  -q
+```
+
+当前 blocked-turn 合并检查结果：
+
+```text
+4 passed
+```
+
+可选真实 LLM smoke（需要本地配置 `ROUTER_ENV_FILE` 且显式开启）：
+
+```bash
+ROUTER_ENV_FILE=.env.local RUN_REAL_LLM_TEST=1 \
+PYTHONPATH=backend/services/router-service/src \
+pytest \
+  backend/tests/integration/test_real_llm_runtime_script.py \
+  backend/tests/integration/test_real_llm_intent_recognizer_only.py \
+  backend/tests/integration/test_real_llm_blocked_turn_interpreter.py \
+  -q -s
+```
+
+当前真实 LLM smoke 结果：
+
+```text
+3 passed
+```
+
 可选语法检查：
 
 ```bash
 python -m compileall -q backend/services/router-service/src \
+  backend/tests/test_graph_compiler.py \
   backend/tests/test_router_api_v2.py \
+  backend/tests/test_v2_presentation.py \
   backend/tests/test_assistant_service.py \
   backend/tests/test_graph_orchestrator.py
 ```
@@ -488,12 +545,16 @@ curl -N http://127.0.0.1:8000/api/v1/task/completion \
 - 业务帧 `task_list` 至少包含两个任务。
 - `current_task` 必须是 `task_list` 中的一个。
 - 如果图需要确认，返回 `graph.proposed` / `graph.waiting_confirmation` 对应的助手 payload。
+- 内部图卡片推送必须包含 `interaction.type=graph_card`、`card_type=dynamic_graph`、`source=router` 和图节点 / actions。
+- 即使识别模型返回的主意图顺序与执行图不同，推给上游的识别帧也必须按执行图节点顺序对齐；后续 `task_list` 与 `graph_card.nodes` 同序。
 - 如果当前策略直接执行第一个节点，后续仍必须通过 `task_list` 保留剩余任务状态。
 
 补充自动化要求：
 
 - 当前已有非流式基本断言：`backend/tests/test_router_api_v2.py::test_v2_router_message_assistant_protocol_supports_multi_intent_graph`
-- 需要新增流式版本，并断言 `task_list`、图确认状态和 `done` 帧。
+- 当前已有流式顺序断言：`backend/tests/test_router_api_v2.py::test_v1_message_stream_aligns_recognition_with_graph_card_task_order`
+- 当前已有卡片推送断言：`backend/tests/test_v2_presentation.py::test_graph_event_publisher_pushes_pending_graph_card_payload`
+- 后续仍需补齐完整图确认 actions 的端到端流式用例。
 
 ### TC-S10 意图取消：补槽中取消当前意图
 
@@ -547,6 +608,31 @@ curl -N http://127.0.0.1:8000/api/v1/task/completion \
 
 - 需要新增端到端流式测试。
 - 需要覆盖 `cancel_current` 和 `replan` 两类 TurnDecision。
+
+### TC-S11B blocked-turn 合并识别
+
+目的：补槽或待确认阶段不再先跑一次普通意图识别、再跑一次 turn interpreter；同一轮用户输入应由 turn interpreter 一次性判断动作并输出新意图。
+
+步骤：
+
+1. `stream=true` 发 `给小明转账`，进入 `waiting_user_input`。
+2. 同一 `sessionId` 发 `先不转了，帮我查余额`。
+
+期望：
+
+- turn interpreter prompt 内包含 `已注册意图清单(JSON)`、最近对话、长期记忆和推荐任务上下文。
+- turn interpreter 输出 `action=replan` 时，同时输出 `primary_intents`。
+- 服务层把 `primary_intents` 投影为既有 `RecognitionResult`，供后续重规划复用。
+- 当前 blocked turn 不再额外调用普通 `recognizer.recognize`。
+- 如果输出 `resume_current`、`cancel_current`、`confirm_pending_graph`、`cancel_pending_graph` 或 `wait`，则不携带新识别主意图。
+
+自动化覆盖：
+
+- `backend/tests/test_understanding_service.py::test_waiting_node_turn_can_merge_action_and_intent_recognition_in_one_call`
+- `backend/tests/test_llm_integration.py::test_llm_blocked_turn_interpreter_merges_action_and_intent_recognition`
+- `backend/tests/test_llm_integration.py::test_turn_decision_clears_intent_fields_for_non_replan_actions`
+- `backend/tests/test_prompt_templates.py::test_v2_turn_interpreter_prompt_accepts_expected_variables`
+- 可选真实 LLM：`backend/tests/integration/test_real_llm_blocked_turn_interpreter.py`
 
 ### TC-S12 识别失败时不推误导性成功帧
 
@@ -694,7 +780,7 @@ POST /api/assistant/task/completion/stream
 
 一次回归通过需要同时满足：
 
-1. 自动化命令通过，当前基线为 `43 passed`。
+1. 自动化命令通过，当前基线为 `48 passed`。
 2. 所有 `stream=true` 主链路均以 `event: done` 收尾。
 3. 每个 `/api/v1/message` 流式请求在可识别场景下先推 `intent_recognized`。
 4. 多轮提槽使用同一 `sessionId`，槽位持续且可被后续用户输入覆盖。
@@ -704,3 +790,4 @@ POST /api/assistant/task/completion/stream
 8. active router 代码中没有独立 session 入口复活。
 9. admin 相关代码不参与 router 回归。
 10. `recommendTask/currentDisplay` 不透传给子智能体，只作为 router 识别/规划上下文。
+11. blocked-turn 阶段不重复调用普通 recognizer；turn interpreter 一次输出动作和重规划所需主意图。

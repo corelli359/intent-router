@@ -128,13 +128,21 @@ def test_v2_turn_interpreter_prompt_accepts_expected_variables() -> None:
         waiting_node_json="{}",
         current_graph_json="{}",
         pending_graph_json="null",
+        recommend_task_json="[]",
+        recent_messages_json="[]",
+        long_term_memory_json="[]",
+        intents_json="[]",
         primary_intents_json="[]",
         candidate_intents_json="[]",
     )
 
     assert len(messages) == 2
+    assert "先不转了，帮我查余额" in messages[0].content
+    assert "必须优先返回 replan" in messages[0].content
     assert "resume_current" in messages[1].content
     assert '"target_intent_code": "string | null"' in messages[1].content
+    assert '"primary_intents"' in messages[1].content
+    assert "已注册意图清单" in messages[1].content
 
 
 def test_v2_slot_extractor_prompt_accepts_recent_messages_and_existing_slots() -> None:

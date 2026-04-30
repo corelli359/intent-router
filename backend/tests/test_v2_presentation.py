@@ -7,7 +7,13 @@ from types import SimpleNamespace
 
 
 from router_service.core.shared.domain import TaskEvent, TaskStatus  # noqa: E402
-from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphNodeStatus, GraphStatus  # noqa: E402
+from router_service.core.shared.graph_domain import (  # noqa: E402
+    ExecutionGraphState,
+    GraphAction,
+    GraphNodeState,
+    GraphNodeStatus,
+    GraphStatus,
+)
 from router_service.core.graph.presentation import GraphEventPublisher, GraphSnapshotPresenter  # noqa: E402
 
 
@@ -93,6 +99,58 @@ def test_graph_event_publisher_skips_session_payload_when_scope_disabled() -> No
     asyncio.run(run())
 
     assert events == []
+
+
+def test_graph_event_publisher_pushes_pending_graph_card_payload() -> None:
+    events: list[TaskEvent] = []
+    publisher = GraphEventPublisher(events.append)
+
+    async def run() -> None:
+        from router_service.core.shared.graph_domain import GraphSessionState
+
+        session = GraphSessionState(session_id="s1", cust_id="cust_demo")
+        graph = ExecutionGraphState(
+            source_message="先查余额再转账",
+            summary="识别到 2 个事项，需要确认执行图",
+            status=GraphStatus.WAITING_CONFIRMATION,
+            actions=[
+                GraphAction(code="confirm_graph", label="开始执行"),
+                GraphAction(code="cancel_graph", label="取消"),
+            ],
+        )
+        graph.nodes.extend(
+            [
+                GraphNodeState(
+                    intent_code="query_account_balance",
+                    title="查询余额",
+                    confidence=0.96,
+                    position=0,
+                ),
+                GraphNodeState(
+                    intent_code="transfer_money",
+                    title="转账",
+                    confidence=0.94,
+                    position=1,
+                ),
+            ]
+        )
+        await publisher.publish_pending_graph(session, graph)
+
+    asyncio.run(run())
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.event == "graph.proposed"
+    assert event.status == TaskStatus.WAITING_CONFIRMATION
+    interaction = event.payload["interaction"]
+    assert interaction["type"] == "graph_card"
+    assert interaction["card_type"] == "dynamic_graph"
+    assert interaction["source"] == "router"
+    assert [node["intent_code"] for node in interaction["nodes"]] == [
+        "query_account_balance",
+        "transfer_money",
+    ]
+    assert [action["code"] for action in interaction["actions"]] == ["confirm_graph", "cancel_graph"]
 
 
 def test_graph_event_publisher_publishes_recognition_and_node_runtime_events() -> None:

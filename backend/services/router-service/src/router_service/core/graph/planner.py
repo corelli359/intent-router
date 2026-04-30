@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from collections.abc import Iterable
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, model_validator
@@ -19,7 +21,7 @@ from router_service.core.prompts.prompt_templates import (
     build_graph_planner_prompt,
     build_turn_interpreter_prompt,
 )
-from router_service.core.recognition.recognizer import RecognitionResult
+from router_service.core.recognition.recognizer import RecognitionResult, recognition_intents_json
 from router_service.core.shared.graph_domain import (
     ExecutionGraphState,
     GraphAction,
@@ -190,11 +192,20 @@ class TurnDecisionPayload(BaseModel):
     ]
     reason: str = ""
     target_intent_code: str | None = None
+    primary_intents: list[IntentMatch] = Field(default_factory=list)
+    candidate_intents: list[IntentMatch] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def normalize_reason(self) -> "TurnDecisionPayload":
         """Ensure the decision always carries a non-empty explanatory reason."""
         self.reason = self.reason.strip() or self.action
+        if self.action != "replan":
+            self.target_intent_code = None
+            self.primary_intents = []
+            self.candidate_intents = []
+            return self
+        if self.target_intent_code is None and self.primary_intents:
+            self.target_intent_code = self.primary_intents[0].intent_code
         return self
 
 
@@ -486,6 +497,7 @@ class LLMIntentGraphPlanner:
             return fallback_graph
         return graph
 
+
 class LLMGraphTurnInterpreter:
     """LLM-backed interpreter for blocked graph turns."""
 
@@ -529,6 +541,64 @@ class LLMGraphTurnInterpreter:
             ),
         )
 
+    async def interpret_blocked_turn(
+        self,
+        *,
+        mode: str,
+        message: str,
+        pending_graph: ExecutionGraphState | None = None,
+        current_graph: ExecutionGraphState | None = None,
+        waiting_node: GraphNodeState | None = None,
+        active_intents: Iterable[IntentDefinition] | None = None,
+        recent_messages: list[str] | None = None,
+        long_term_memory: list[str] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
+    ) -> TurnDecisionPayload:
+        """Interpret a blocked turn and recognize any replacement intent in one LLM call."""
+        recognition = RecognitionResult(primary=[], candidates=[], diagnostics=[])
+        if mode == "pending_graph":
+            fallback = lambda: self.fallback.interpret_pending_graph(
+                message=message,
+                pending_graph=pending_graph or ExecutionGraphState(source_message=message),
+                recognition=recognition,
+            )
+        else:
+            fallback = lambda: self.fallback.interpret_waiting_node(
+                message=message,
+                waiting_node=waiting_node or GraphNodeState(
+                    intent_code="",
+                    title="",
+                    confidence=0.0,
+                ),
+                current_graph=current_graph or ExecutionGraphState(source_message=message),
+                recognition=recognition,
+            )
+        return await self._interpret(
+            mode=mode,
+            message=message,
+            waiting_node_json=(
+                json_dumps(waiting_node.model_dump(mode="json"))
+                if waiting_node is not None
+                else "null"
+            ),
+            current_graph_json=(
+                json_dumps(current_graph.model_dump(mode="json"))
+                if current_graph is not None
+                else "null"
+            ),
+            pending_graph_json=(
+                json_dumps(pending_graph.model_dump(mode="json"))
+                if pending_graph is not None
+                else "null"
+            ),
+            recognition=recognition,
+            active_intents=active_intents,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+            recommend_task=recommend_task,
+            fallback=fallback,
+        )
+
     async def interpret_waiting_node(
         self,
         *,
@@ -562,18 +632,27 @@ class LLMGraphTurnInterpreter:
         current_graph_json: str,
         pending_graph_json: str,
         recognition: RecognitionResult,
+        active_intents: Iterable[IntentDefinition] | None = None,
+        recent_messages: list[str] | None = None,
+        long_term_memory: list[str] | None = None,
+        recommend_task: list[dict[str, Any]] | None = None,
         fallback,
     ) -> TurnDecisionPayload:
         """Run the LLM interpreter and degrade to the fallback interpreter on failure."""
+        active_intent_tuple = tuple(active_intents or ())
         try:
             raw_payload = await self.llm_client.run_json(
                 prompt=self.prompt,
                 variables={
                     "mode": mode,
                     "message": message,
+                    "recommend_task_json": json_dumps(recommend_task or []),
+                    "recent_messages_json": json_dumps(recent_messages or []),
+                    "long_term_memory_json": json_dumps(long_term_memory or []),
                     "waiting_node_json": waiting_node_json,
                     "current_graph_json": current_graph_json,
                     "pending_graph_json": pending_graph_json,
+                    "intents_json": recognition_intents_json(active_intent_tuple),
                     "primary_intents_json": json_dumps([match.model_dump(mode="json") for match in recognition.primary]),
                     "candidate_intents_json": json_dumps(
                         [match.model_dump(mode="json") for match in recognition.candidates]

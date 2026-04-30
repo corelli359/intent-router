@@ -1128,6 +1128,56 @@ class _ConditionalPlanner:
         return graph
 
 
+class _MisorderedRecognitionRecognizer:
+    async def recognize(self, message, intents, recent_messages, long_term_memory, on_delta=None):
+        del message, intents, recent_messages, long_term_memory, on_delta
+        return RecognitionResult(
+            primary=[
+                IntentMatch(intent_code="pay_gas_bill", confidence=0.94, reason="raw recognizer order"),
+                IntentMatch(intent_code="transfer_money", confidence=0.97, reason="raw recognizer order"),
+            ],
+            candidates=[],
+        )
+
+
+class _GraphCardOrderPlanner:
+    async def plan(self, *, message, matches, intents_by_code, recent_messages=None, long_term_memory=None):
+        del matches, intents_by_code, recent_messages, long_term_memory
+        graph = ExecutionGraphState(
+            source_message=message,
+            summary="按执行图顺序先转账再缴费",
+            status=GraphStatus.DRAFT,
+        )
+        transfer = GraphNodeState(
+            intent_code="transfer_money",
+            title="给小明转账500元",
+            confidence=0.97,
+            position=0,
+            source_fragment="给小明转账500元",
+            slot_memory={"recipient_name": "小明", "amount": "500"},
+        )
+        gas = GraphNodeState(
+            intent_code="pay_gas_bill",
+            title="缴燃气费88元",
+            confidence=0.94,
+            position=1,
+            source_fragment="缴燃气费88元",
+            slot_memory={"gas_account_number": "88001234", "amount": "88"},
+        )
+        gas.depends_on.append(transfer.node_id)
+        gas.relation_reason = "转账后再缴燃气费"
+        graph.nodes.extend([transfer, gas])
+        graph.edges.append(
+            GraphEdge(
+                source_node_id=transfer.node_id,
+                target_node_id=gas.node_id,
+                relation_type=GraphEdgeType.SEQUENTIAL,
+                label="转账后再缴燃气费",
+            )
+        )
+        return graph
+
+
 class _ImplicitBalanceAfterTransferGraphBuilder:
     async def build(self, *, message, intents, recent_messages, long_term_memory, recognition=None, on_delta=None):
         graph = ExecutionGraphState(
@@ -2810,6 +2860,61 @@ def test_v2_router_message_assistant_protocol_supports_multi_intent_graph() -> N
         assert body.get("errorCode") is None
         assert body.get("stage") is None
         assert body.get("details") is None
+
+    asyncio.run(run())
+
+
+def test_v1_message_stream_aligns_recognition_with_graph_card_task_order() -> None:
+    async def run() -> None:
+        app, orchestrator = _test_v2_app(
+            recognizer=_MisorderedRecognitionRecognizer(),
+            planner=_GraphCardOrderPlanner(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            session_id = "assistant_stream_graph_order_demo"
+            async with client.stream(
+                "POST",
+                "/api/v1/message",
+                json={
+                    "sessionId": session_id,
+                    "txt": "先给小明转账500元，再缴燃气费88元",
+                    "stream": True,
+                    "executionMode": "router_only",
+                    "config_variables": [
+                        {"name": "custID", "value": "C0001"},
+                        {"name": "sessionID", "value": session_id},
+                    ],
+                },
+            ) as response:
+                stream_text = "".join([chunk async for chunk in response.aiter_text()])
+
+        frames = _parse_sse_frames(stream_text)
+        assert frames[-1] == ("done", "[DONE]")
+        message_payloads = _message_payloads(stream_text)
+        recognition_payload = message_payloads[0]
+        assert recognition_payload["completion_reason"] == "intent_recognized"
+        assert recognition_payload["stage"] == "intent_recognition"
+        assert recognition_payload["intent_code"] == "transfer_money"
+        assert [item["intent_code"] for item in recognition_payload["details"]["primary"]] == [
+            "transfer_money",
+            "pay_gas_bill",
+        ]
+
+        state_payloads = _non_recognition_payloads(message_payloads)
+        assert state_payloads
+        first_graph_payload = state_payloads[0]
+        assert first_graph_payload["intent_code"] == "transfer_money"
+        session = orchestrator.session_store.get(session_id)
+        assert session.current_graph is not None
+        graph_task_order = [
+            node.task_id
+            for node in sorted(session.current_graph.nodes, key=lambda item: item.position)
+        ]
+        assert [item["name"] for item in first_graph_payload["task_list"]] == graph_task_order
+        assert first_graph_payload["task_list"][0]["status"] == "waiting"
 
     asyncio.run(run())
 

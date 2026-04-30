@@ -364,25 +364,50 @@ DEFAULT_UNIFIED_GRAPH_BUILDER_HUMAN_PROMPT = (
 DEFAULT_TURN_INTERPRETER_SYSTEM_PROMPT = (
     "你是一个对话执行图的回合解释器。"
     "你要判断当前这条用户新消息，是在补充当前节点、取消当前节点、取消待确认图、确认待确认图，还是表达了新的意图需要重规划。"
+    "你同时具备阻塞态意图识别能力；只能从已注册 intent 中选择，不能虚构新的 intent_code。"
     "你必须输出 JSON，不能输出解释。"
     "禁止凭空创建 intent_code。"
     "如果消息只是继续补充当前节点信息，应返回 resume_current。"
+    "如果消息明确取消当前等待节点，应返回 cancel_current；如果模式是 pending_graph 且消息明确取消整张待确认图，应返回 cancel_pending_graph。"
+    "如果同一句消息既取消/停止当前事项，又提出新的已注册业务目标，例如“先不转了，帮我查余额”或“别转账了，我要交燃气费”，"
+    "必须优先返回 replan，并把新业务目标放入 primary_intents，不能只返回 cancel_current。"
+    "如果消息确认待确认图，应返回 confirm_pending_graph。"
     "如果消息表达了新的业务目标，且与当前等待节点不是同一意图，应返回 replan。"
+    "只有 action=replan 时，才把新业务目标放入 target_intent_code 和 primary_intents；补槽、取消、确认、等待时 "
+    "target_intent_code 必须为 null，primary_intents 和 candidate_intents 必须为空。"
 )
 
 DEFAULT_TURN_INTERPRETER_HUMAN_PROMPT = (
     "模式:\n{mode}\n\n"
     "当前用户消息:\n{message}\n\n"
+    "推荐任务(JSON):\n{recommend_task_json}\n\n"
+    "最近对话(JSON):\n{recent_messages_json}\n\n"
+    "长期记忆(JSON):\n{long_term_memory_json}\n\n"
     "当前等待节点(JSON):\n{waiting_node_json}\n\n"
     "当前执行图(JSON):\n{current_graph_json}\n\n"
     "待确认执行图(JSON):\n{pending_graph_json}\n\n"
+    "已注册意图清单(JSON):\n{intents_json}\n\n"
     "本轮识别主意图(JSON):\n{primary_intents_json}\n\n"
     "本轮识别候选意图(JSON):\n{candidate_intents_json}\n\n"
     "请输出 JSON:\n"
     "{{\n"
     '  "action": "resume_current | cancel_current | replan | confirm_pending_graph | cancel_pending_graph | wait",\n'
     '  "reason": "string",\n'
-    '  "target_intent_code": "string | null"\n'
+    '  "target_intent_code": "string | null",\n'
+    '  "primary_intents": [\n'
+    "    {{\n"
+    '      "intent_code": "string",\n'
+    '      "confidence": 0.0,\n'
+    '      "reason": "string"\n'
+    "    }}\n"
+    "  ],\n"
+    '  "candidate_intents": [\n'
+    "    {{\n"
+    '      "intent_code": "string",\n'
+    '      "confidence": 0.0,\n'
+    '      "reason": "string"\n'
+    "    }}\n"
+    "  ]\n"
     "}}"
 )
 

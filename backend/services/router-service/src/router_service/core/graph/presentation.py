@@ -245,6 +245,7 @@ class GraphEventPublisher:
         if not self._should_publish_session(session):
             return
         primary_intents = [match.intent_code for match in recognition.primary]
+        diagnostics = getattr(recognition, "diagnostics", None) or []
         await self.publish(
             TaskEvent(
                 event="recognition.completed",
@@ -263,7 +264,7 @@ class GraphEventPublisher:
                     "candidates": [match.model_dump() for match in recognition.candidates],
                     "diagnostics": [
                         item.model_dump(mode="json")
-                        for item in (recognition.diagnostics or [])
+                        for item in diagnostics
                     ],
                 },
             )

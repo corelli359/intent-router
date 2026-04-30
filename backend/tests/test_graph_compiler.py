@@ -8,7 +8,7 @@ from router_service.core.support.context_builder import ContextBuilder
 from router_service.core.shared.domain import ChatMessage
 from router_service.core.recognition.recognizer import RecognitionResult
 from router_service.core.shared.domain import IntentDefinition, IntentMatch
-from router_service.core.shared.graph_domain import GraphSessionState, GraphStatus
+from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState, GraphStatus
 from router_service.core.slots.resolution_service import SlotResolutionService
 
 
@@ -58,6 +58,42 @@ class _CapturingUnderstandingService:
         return RecognitionResult(primary=[], candidates=[])
 
 
+class _RecordingRecognitionPublisher:
+    def __init__(self) -> None:
+        self.completed: list[list[str]] = []
+
+    async def publish_recognition_completed(self, session, *, recognition) -> None:
+        del session
+        self.completed.append([match.intent_code for match in recognition.primary])
+
+
+class _MisorderedUnderstandingService:
+    has_graph_builder = False
+
+    def __init__(self) -> None:
+        self.event_publisher = _RecordingRecognitionPublisher()
+        self.emit_event_flags: list[bool] = []
+
+    async def recognize_message(
+        self,
+        session,
+        content,
+        *,
+        recent_messages,
+        long_term_memory,
+        emit_events,
+    ):
+        del session, content, recent_messages, long_term_memory
+        self.emit_event_flags.append(emit_events)
+        return RecognitionResult(
+            primary=[
+                IntentMatch(intent_code="transfer_money", confidence=0.92, reason="raw recognizer order"),
+                IntentMatch(intent_code="query_account_balance", confidence=0.97, reason="raw recognizer order"),
+            ],
+            candidates=[],
+        )
+
+
 class _SpyPlanner:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -86,6 +122,47 @@ class _SpyPlanner:
             recent_messages=recent_messages,
             long_term_memory=long_term_memory,
         )
+
+
+class _GraphOrderPlanner:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def plan(
+        self,
+        *,
+        message: str,
+        matches: list[IntentMatch],
+        intents_by_code: dict[str, IntentDefinition],
+        recent_messages: list[str] | None = None,
+        long_term_memory: list[str] | None = None,
+    ):
+        del message, intents_by_code, recent_messages, long_term_memory
+        self.calls.append([match.intent_code for match in matches])
+        graph = ExecutionGraphState(
+            source_message="先查余额，再转账",
+            summary="按执行图顺序先查余额再转账",
+            status=GraphStatus.WAITING_CONFIRMATION,
+        )
+        graph.nodes.extend(
+            [
+                GraphNodeState(
+                    intent_code="query_account_balance",
+                    title="查询账户余额",
+                    confidence=0.97,
+                    position=0,
+                    source_fragment="先查余额",
+                ),
+                GraphNodeState(
+                    intent_code="transfer_money",
+                    title="转账",
+                    confidence=0.92,
+                    position=1,
+                    source_fragment="再转账",
+                ),
+            ]
+        )
+        return graph
 
 
 def _transfer_intent(*, confirm_policy: str = "auto") -> IntentDefinition:
@@ -278,6 +355,39 @@ def test_graph_compiler_multi_intent_only_policy_uses_heavy_planner_for_multi_in
     assert len(heavy.calls) == 1
     assert len(fallback.calls) == 0
     assert len(result.graph.nodes) == 2
+
+
+def test_graph_compiler_defers_recognition_event_until_it_matches_graph_order() -> None:
+    understanding_service = _MisorderedUnderstandingService()
+    planner = _GraphOrderPlanner()
+    compiler = GraphCompiler(
+        intent_catalog=_StaticCatalog([_balance_intent(), _transfer_intent()]),
+        planner=planner,
+        understanding_service=understanding_service,
+        slot_resolution_service=SlotResolutionService(),
+        planning_policy="always",
+    )
+    session = GraphSessionState(session_id="session_graph_order", cust_id="cust_demo")
+
+    result = asyncio.run(
+        compiler.compile_message(
+            session,
+            "先查余额，再转账",
+            build_session_context=lambda _session: {"recent_messages": [], "long_term_memory": []},
+            sanitize_recent_messages_for_planning=lambda entries: entries,
+            emit_events=True,
+        )
+    )
+
+    assert understanding_service.emit_event_flags == [False]
+    assert planner.calls == [["transfer_money", "query_account_balance"]]
+    assert [match.intent_code for match in result.recognition.primary] == [
+        "query_account_balance",
+        "transfer_money",
+    ]
+    assert understanding_service.event_publisher.completed == [
+        ["query_account_balance", "transfer_money"]
+    ]
 
 
 def test_graph_compiler_direct_single_intent_honors_confirm_policy() -> None:

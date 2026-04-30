@@ -8,7 +8,7 @@ import pytest
 from router_service.settings import Settings  # noqa: E402
 from router_service.core.shared.domain import IntentDefinition  # noqa: E402
 from router_service.core.support.llm_client import LangChainLLMClient  # noqa: E402
-from router_service.core.recognition.recognizer import LLMIntentRecognizer, NullIntentRecognizer  # noqa: E402
+from router_service.core.recognition.recognizer import LLMIntentRecognizer  # noqa: E402
 
 
 def test_real_llm_intent_recognizer_only() -> None:
@@ -41,7 +41,6 @@ def test_real_llm_intent_recognizer_only() -> None:
         recognizer = LLMIntentRecognizer(
             llm_client,
             model=settings.llm_recognizer_model or settings.llm_model,
-            fallback=NullIntentRecognizer(),
         )
 
         intents = [

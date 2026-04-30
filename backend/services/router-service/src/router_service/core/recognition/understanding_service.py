@@ -19,6 +19,7 @@ from router_service.core.recognition.recognizer import (
     NullIntentRecognizer,
     RecognitionResult,
 )
+from router_service.core.shared.domain import IntentMatch
 from router_service.core.shared.graph_domain import ExecutionGraphState, GraphNodeState, GraphSessionState
 from router_service.core.graph.builder import GraphBuildResult, IntentGraphBuilder
 from router_service.core.graph.planner import TurnDecisionPayload, TurnInterpreter
@@ -190,15 +191,11 @@ class IntentUnderstandingService:
             "understanding.interpret_pending_graph_turn",
             pending_graph_id=pending_graph.graph_id,
         ):
-            recognition = await self._recognize_turn_message(
+            decision, recognition = await self._interpret_blocked_turn(
                 session=session,
                 content=content,
                 mode="pending_graph",
-            )
-            decision = await self.turn_interpreter.interpret_pending_graph(
-                message=content,
                 pending_graph=pending_graph,
-                recognition=recognition,
             )
             logger.debug(
                 "Pending graph interpretation result (trace_id=%s, session_id=%s, action=%s, target_intent_code=%s)",
@@ -229,16 +226,12 @@ class IntentUnderstandingService:
             waiting_node_id=waiting_node.node_id,
             waiting_intent_code=waiting_node.intent_code,
         ):
-            recognition = await self._recognize_turn_message(
+            decision, recognition = await self._interpret_blocked_turn(
                 session=session,
                 content=content,
                 mode="waiting_node",
-            )
-            decision = await self.turn_interpreter.interpret_waiting_node(
-                message=content,
                 waiting_node=waiting_node,
                 current_graph=current_graph,
-                recognition=recognition,
             )
             logger.debug(
                 "Waiting node interpretation result (trace_id=%s, session_id=%s, node_id=%s, action=%s, target_intent_code=%s)",
@@ -307,16 +300,100 @@ class IntentUnderstandingService:
             return []
         return list(self.long_term_memory_store.recall(session.cust_id))
 
+    async def _interpret_blocked_turn(
+        self,
+        *,
+        session: GraphSessionState,
+        content: str,
+        mode: str,
+        pending_graph: ExecutionGraphState | None = None,
+        waiting_node: GraphNodeState | None = None,
+        current_graph: ExecutionGraphState | None = None,
+    ) -> tuple[TurnDecisionPayload, RecognitionResult]:
+        """Interpret a blocked turn with a merged LLM path when the interpreter supports it."""
+        recent_messages = self._blocked_turn_recent_messages(session=session, content=content)
+        long_term_memory = self._blocked_turn_long_term_memory(session)
+        merged_interpreter = getattr(self.turn_interpreter, "interpret_blocked_turn", None)
+        if callable(merged_interpreter):
+            decision = await merged_interpreter(
+                mode=mode,
+                message=content,
+                pending_graph=pending_graph,
+                current_graph=current_graph,
+                waiting_node=waiting_node,
+                active_intents=self.intent_catalog.active_intents_by_code().values(),
+                recent_messages=recent_messages,
+                long_term_memory=long_term_memory,
+                recommend_task=session.recommend_task(),
+            )
+            return decision, self._recognition_from_turn_decision(decision)
+
+        recognition = await self._recognize_turn_message(
+            session=session,
+            content=content,
+            mode=mode,
+            recent_messages=recent_messages,
+            long_term_memory=long_term_memory,
+        )
+        if mode == "pending_graph":
+            if pending_graph is None:
+                raise RuntimeError("pending_graph is required for pending graph interpretation")
+            decision = await self.turn_interpreter.interpret_pending_graph(
+                message=content,
+                pending_graph=pending_graph,
+                recognition=recognition,
+            )
+        else:
+            if waiting_node is None or current_graph is None:
+                raise RuntimeError("waiting_node and current_graph are required for waiting node interpretation")
+            decision = await self.turn_interpreter.interpret_waiting_node(
+                message=content,
+                waiting_node=waiting_node,
+                current_graph=current_graph,
+                recognition=recognition,
+            )
+        return decision, recognition
+
+    def _recognition_from_turn_decision(self, decision: TurnDecisionPayload) -> RecognitionResult:
+        """Project merged turn-interpreter intent output back into the existing recognition contract."""
+        if decision.action != "replan":
+            return RecognitionResult(primary=[], candidates=[], diagnostics=[])
+
+        active_intent_codes = set(self.intent_catalog.active_intents_by_code())
+        primary = [
+            match
+            for match in decision.primary_intents
+            if match.intent_code in active_intent_codes
+        ]
+        candidates = [
+            match
+            for match in decision.candidate_intents
+            if match.intent_code in active_intent_codes
+        ]
+        if not primary and decision.target_intent_code in active_intent_codes:
+            primary = [
+                IntentMatch(
+                    intent_code=decision.target_intent_code,
+                    confidence=1.0,
+                    reason=decision.reason,
+                )
+            ]
+        return RecognitionResult(primary=primary, candidates=candidates, diagnostics=[])
+
     async def _recognize_turn_message(
         self,
         *,
         session: GraphSessionState,
         content: str,
         mode: str,
+        recent_messages: list[str] | None = None,
+        long_term_memory: list[str] | None = None,
     ) -> RecognitionResult:
         """Recognize blocked-turn follow-ups via the lightest available path."""
-        recent_messages = self._blocked_turn_recent_messages(session=session, content=content)
-        long_term_memory = self._blocked_turn_long_term_memory(session)
+        if recent_messages is None:
+            recent_messages = self._blocked_turn_recent_messages(session=session, content=content)
+        if long_term_memory is None:
+            long_term_memory = self._blocked_turn_long_term_memory(session)
         fast_recognizer = self._resolve_fast_recognizer()
         if fast_recognizer is not None:
             try:
