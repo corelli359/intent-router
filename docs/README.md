@@ -2,6 +2,7 @@
 
 当前优先阅读：
 
+- `v3/router-service-需求梳理与TODO-v0.1.md`
 - `v3/router-service-需求说明文档.md`
 - `v3/router-service-架构设计文档.md`
 - `v3/router-service-助手对接接口文档-v0.5.md`
