@@ -2,6 +2,7 @@
 
 当前优先阅读：
 
+- `v4/skill-layered-loading-requirements-v0.1.md`
 - `v3/router-service-需求梳理与TODO-v0.1.md`
 - `v3/router-service-需求说明文档.md`
 - `v3/router-service-功能说明文档.md`
